@@ -1,0 +1,16 @@
+{
+  "lists": [
+    {
+      "name": "2 x 4 Frame V2",
+      "raw_text": "72.5\tBase Frame, Front\n35.25\tTop Wall, End\n35.25\tTop Wall, End\n72\tTop Wall, Back\n35\tRoof, End\n35.75\tBase Frame, End\n35\tRoof, End\n35.75\tBase Frame, End\n72.5\tBase Frame, Back\n78.75\tRoof, Front\n32\tBench Support, End\n32\tBench Support, End\n78.75\tRoof, Back\n18\tBench Support, Corner\n18\tBench Support, Corner\n18\tBench Support, Corner\n7\tUpper Bench Block\n20.625\tTop Wall Front\n20.625\tTop Wall Front\n67.75\tBack Wall Middle\n18\tBench Support, Wall\n7\tUpper Bench Block\n18\tBench Support, Wall\n38\tHeater Mount, Angled\n38\tHeater Mount, Angled"
+    },
+    {
+      "name": "Door Cut List",
+      "raw_text": "57.75\tDoor Main, Vertical\n57.75\tDoor Main, Vertical\n24\tDoor Top\n24\tDoor Bottom\n17.5\tDoor Mid"
+    },
+    {
+      "name": "Door Cut List TALL",
+      "raw_text": "57.75\tDoor Main, Vertical\n57.75\tDoor Main, Vertical\n24\tDoor Top\n24\tDoor Bottom\n17.5\tDoor Mid"
+    }
+  ]
+}
