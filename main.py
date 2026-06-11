@@ -1247,6 +1247,18 @@ class MinimalHMI(QMainWindow):
                     self.next_cut_number += 1
                 continue
 
+            # Length-first format: '<length> <description>' (e.g. '78.75  Roof Side #1').
+            # Must be checked before the last-number fallback, which would
+            # otherwise grab the '1' from '#1' as the cut length.
+            leading_match = re.match(r'^(\d+\.?\d*)\s*(.*)$', clean_line)
+            if leading_match:
+                length = float(leading_match.group(1))
+                description = leading_match.group(2).strip(' ,:"')
+                if length > 0:
+                    self.cut_list.append((self.next_cut_number, length, description))
+                    self.next_cut_number += 1
+                continue
+
             if ':' in clean_line:
                 data_part = clean_line.rsplit(':', 1)[-1]
             else:
