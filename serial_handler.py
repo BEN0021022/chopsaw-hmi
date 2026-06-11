@@ -18,6 +18,42 @@ class SignalBridge(QObject):
     overcurrent_updated = pyqtSignal(int)
     calibration_updated = pyqtSignal(float, float)
     home_position_updated = pyqtSignal(float)
+    disconnected = pyqtSignal(str)
+
+
+def _emit_number(signal, raw, cast):
+    """Emit a numeric signal only if the raw field parses cleanly."""
+    try:
+        value = cast(raw)
+    except (TypeError, ValueError):
+        return
+    signal.emit(value)
+
+
+def _parse_status_line(line, signal_bridge):
+    """Parse a 'POS:...,HOMED:...' status line and emit the matching signals."""
+    fields = {}
+    for part in line.split(','):
+        if ':' in part:
+            key, value = part.split(':', 1)
+            fields[key] = value
+    if 'POS' in fields:
+        _emit_number(signal_bridge.position_updated, fields['POS'], float)
+    if 'HOMED' in fields:
+        _emit_number(signal_bridge.homed_status_updated, fields['HOMED'], int)
+    if 'STATE' in fields:
+        signal_bridge.motor_state_updated.emit(fields['STATE'])
+    if 'SEN' in fields:
+        _emit_number(signal_bridge.sensor_state_updated, fields['SEN'], int)
+    if 'BSEN' in fields:
+        _emit_number(signal_bridge.board_sensor_state_updated, fields['BSEN'], int)
+    if 'CV' in fields:
+        _emit_number(signal_bridge.current_voltage_updated, fields['CV'], float)
+    if 'CUR' in fields:
+        _emit_number(signal_bridge.current_updated, fields['CUR'], float)
+    if 'OCT' in fields:
+        _emit_number(signal_bridge.overcurrent_updated, fields['OCT'], int)
+
 
 def listen_for_data(ser, signal_bridge):
     """
@@ -27,49 +63,30 @@ def listen_for_data(ser, signal_bridge):
     while True:
         try:
             if not ser.is_open:
+                signal_bridge.disconnected.emit("Serial port closed.")
                 break
             if ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
                 if line:
                     signal_bridge.message_received.emit(line)
                     if line.startswith("POS:"):
-                        parts = line.split(',')
-                        d = {p.split(':')[0]: p.split(':')[1] for p in parts if ':' in p}
-                        if 'POS' in d:
-                            try: signal_bridge.position_updated.emit(float(d['POS']))
-                            except: pass
-                        if 'HOMED' in d:
-                            try: signal_bridge.homed_status_updated.emit(int(d['HOMED']))
-                            except: pass
-                        if 'STATE' in d: signal_bridge.motor_state_updated.emit(d['STATE'])
-                        if 'SEN' in d:
-                            try: signal_bridge.sensor_state_updated.emit(int(d['SEN']))
-                            except: pass
-                        if 'BSEN' in d:
-                            try: signal_bridge.board_sensor_state_updated.emit(int(d['BSEN']))
-                            except: pass
-                        if 'CV' in d:
-                            try: signal_bridge.current_voltage_updated.emit(float(d['CV']))
-                            except: pass
-                        if 'CUR' in d:
-                            try: signal_bridge.current_updated.emit(float(d['CUR']))
-                            except: pass
-                        if 'OCT' in d:
-                            try: signal_bridge.overcurrent_updated.emit(int(d['OCT']))
-                            except: pass
+                        _parse_status_line(line, signal_bridge)
                     elif line.startswith("CAL_SUCCESS:"):
                         try:
-                            vals = line.split(':')[1].split(',')
+                            vals = line.split(':', 1)[1].split(',')
                             signal_bridge.calibration_updated.emit(float(vals[0]), float(vals[1]))
-                        except: pass
+                        except (IndexError, ValueError):
+                            signal_bridge.message_received.emit(f"Malformed calibration line: '{line}'")
                     elif line.startswith("STATUS:HOME_POS:"):
                         try:
                             home_pos = float(line.split(':')[2])
                             signal_bridge.home_position_updated.emit(home_pos)
-                        except: pass
+                        except (IndexError, ValueError):
+                            signal_bridge.message_received.emit(f"Malformed home position line: '{line}'")
             else:
                 time.sleep(0.01)
-        except (serial.SerialException, OSError):
+        except (serial.SerialException, OSError) as error:
+            signal_bridge.disconnected.emit(str(error) or "Serial connection lost.")
             break
         except Exception as e:
             print(f"Listener error: {e}")

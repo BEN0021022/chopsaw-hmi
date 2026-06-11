@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QTextEdit, QRadioButton, QComboBox, QProgressBar,
     QSpinBox, QFormLayout
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QSettings
 from PyQt6.QtGui import QTextCursor, QIcon
 
 # Import from our other modules
@@ -69,6 +69,7 @@ class MinimalHMI(QMainWindow):
         self.signal_bridge.calibration_updated.connect(self.update_calibration_factors)
         self.signal_bridge.home_position_updated.connect(self.update_home_position)
         self.signal_bridge.current_voltage_updated.connect(self.update_current_voltage)
+        self.signal_bridge.disconnected.connect(self.handle_serial_disconnect)
 
         # State
         self.stepper_steps_per_inch = 127.0
@@ -76,17 +77,22 @@ class MinimalHMI(QMainWindow):
         self.cut_list = []
         self.auto_cycle_state = "IDLE"
         self.next_cut_number = 1
-        
+        # Last position reported by the device. All cycle/clamp logic reads this,
+        # never the UI labels (which can show interpolated predictions).
+        self.current_position = 0.0
+
         self.home_position = 168.0
         self.standard_board_length = 144.5
-        self.short_board_length_135 = 120.0  # 10' board usable length
-        self.short_board_length_96 = 96.0    # 8' board usable length
-        self.short_board_length_72 = 72.0    # 6' board usable length
-        self.short_board_length_60 = 48.0    # 4' board usable length
-        self.short_load_pos_135 = self.short_board_length_135 + 15.0
-        self.short_load_pos_96 = self.short_board_length_96 + 15.0
-        self.short_load_pos_72 = self.short_board_length_72 + 15.0
-        self.short_load_pos_60 = self.short_board_length_60 + 15.0
+        # (radio label, usable board length, carriage load position).
+        # load_pos None = use the live home position. Load positions are
+        # usable length + 15" of lead-in.
+        self.board_load_options = [
+            ("Standard Load (Home position)", self.standard_board_length, None),
+            ("10' Load", 120.0, 135.0),
+            ("8' Load", 96.0, 111.0),
+            ("6' Load", 72.0, 87.0),
+            ("4' Load", 48.0, 63.0),
+        ]
 
         self.active_profile_name = "NORMAL"
         self.clamp_engaged = False
@@ -109,7 +115,8 @@ class MinimalHMI(QMainWindow):
         self.current_motor_state = "IDLE"
         self.current_log_path = os.path.join(get_app_dir(), "motor_current_log.csv")
         self.last_current_log_time = 0.0
-        self.selected_serial_port = SERIAL_PORT
+        self.settings = QSettings("ChopSawHMI", "ChopSawHMI")
+        self.selected_serial_port = self.settings.value("serial_port", SERIAL_PORT)
 
         # Prediction
         self.pred_timer = QTimer(self); self.pred_timer.setInterval(30); self.pred_timer.timeout.connect(self.tick_predict)
@@ -117,6 +124,7 @@ class MinimalHMI(QMainWindow):
 
         self.init_ui()
         self.apply_theme()
+        self._load_settings()
         self.update_current_monitor_ui()
 
     # ---------- Theme ----------
@@ -185,6 +193,13 @@ class MinimalHMI(QMainWindow):
         )
         return lbl
 
+    def set_pill(self, widget, text, bg, fg="white"):
+        """Set the text and background of any status pill label."""
+        widget.setText(text)
+        widget.setStyleSheet(
+            f"background-color:{bg}; color:{fg}; font-weight:bold; border-radius:10px; padding:4px 8px;"
+        )
+
     # ---------- UI ----------
     def init_ui(self):
         central = QWidget(); self.setCentralWidget(central)
@@ -226,6 +241,7 @@ class MinimalHMI(QMainWindow):
 
         # Log (hidden — keep object so log.append() calls don't crash)
         self.log = QTextBrowser()
+        self.log.document().setMaximumBlockCount(500)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
 
@@ -620,36 +636,18 @@ class MinimalHMI(QMainWindow):
         radio_layout.setContentsMargins(0, 5, 0, 5) # Reduce internal padding
         radio_layout.setSpacing(2) # Reduce spacing between radio buttons
 
-        self.radio_load_standard = QRadioButton(f"Standard Load (Home position)")
-        self.radio_load_135 = QRadioButton(f"10' Load ({self.short_load_pos_135:.2f}\")")
-        self.radio_load_96 = QRadioButton(f"8' Load ({self.short_load_pos_96:.2f}\")")
-        self.radio_load_72 = QRadioButton(f"6' Load ({self.short_load_pos_72:.2f}\")")
-        self.radio_load_60 = QRadioButton(f"4' Load ({self.short_load_pos_60:.2f}\")")
-
-        # Set the standard load as the default checked option
-        self.radio_load_standard.setChecked(True)
-        
-        # Apply a consistent font size and reduce padding for radio buttons
+        # Build one radio per entry in board_load_options; standard (index 0) is default
         radio_style = "font-size: 15px; padding: 2px 0; color: #e2e8f0;"
-        self.radio_load_standard.setStyleSheet(radio_style)
-        self.radio_load_135.setStyleSheet(radio_style)
-        self.radio_load_96.setStyleSheet(radio_style)
-        self.radio_load_72.setStyleSheet(radio_style)
-        self.radio_load_60.setStyleSheet(radio_style)
+        self.board_size_radios = []
+        for i, (label, board_length, load_pos) in enumerate(self.board_load_options):
+            text = label if load_pos is None else f"{label} ({load_pos:.2f}\")"
+            radio = QRadioButton(text)
+            radio.setStyleSheet(radio_style)
+            radio.setChecked(i == 0)
+            radio.toggled.connect(self.update_cut_list_display)
+            radio_layout.addWidget(radio)
+            self.board_size_radios.append((radio, board_length, load_pos))
 
-        self.radio_load_standard.toggled.connect(self.update_cut_list_display)
-        self.radio_load_135.toggled.connect(self.update_cut_list_display)
-        self.radio_load_96.toggled.connect(self.update_cut_list_display)
-        self.radio_load_72.toggled.connect(self.update_cut_list_display)
-        self.radio_load_60.toggled.connect(self.update_cut_list_display)
-
-        # Add them to the layout
-        radio_layout.addWidget(self.radio_load_standard)
-        radio_layout.addWidget(self.radio_load_135)
-        radio_layout.addWidget(self.radio_load_96)
-        radio_layout.addWidget(self.radio_load_72)
-        radio_layout.addWidget(self.radio_load_60)
-        
         cyc.addLayout(radio_layout) # Add the radio button layout to the main cycle_group layout
         # --- END MODIFIED SECTION ---
 
@@ -743,6 +741,7 @@ class MinimalHMI(QMainWindow):
         serial_layout.addWidget(serial_hint)
         self.speed_serial_console = QTextBrowser()
         self.speed_serial_console.setMinimumHeight(320)
+        self.speed_serial_console.document().setMaximumBlockCount(500)
         self.speed_serial_console.setOpenExternalLinks(False)
         serial_layout.addWidget(self.speed_serial_console)
         root.addWidget(serial_group, stretch=1)
@@ -989,22 +988,13 @@ class MinimalHMI(QMainWindow):
         if hasattr(self, pill_attr):
             pill_widget = getattr(self, pill_attr)
             if engaged:
-                pill_widget.setText("EXTENDED")
-                pill_widget.setStyleSheet(
-                    "background-color: #2563eb; color: white; font-weight: bold; border-radius:10px; padding:4px 8px;"
-                )
+                self.set_pill(pill_widget, "EXTENDED", "#2563eb")
             else:
-                pill_widget.setText("RETRACTED")
-                pill_widget.setStyleSheet(
-                    "background-color: #475569; color: #e2e8f0; font-weight: bold; border-radius:10px; padding:4px 8px;"
-                )
+                self.set_pill(pill_widget, "RETRACTED", "#475569", fg="#e2e8f0")
 
     def _update_saw_sensor_pill(self, text, color):
         if hasattr(self, 'fa_saw_position_label'):
-            self.fa_saw_position_label.setText(text)
-            self.fa_saw_position_label.setStyleSheet(
-                f"background-color: {color}; color: white; font-weight: bold; border-radius:10px; padding:4px 8px;"
-            )
+            self.set_pill(self.fa_saw_position_label, text, color)
 
     def update_saw_position_sensor_status(self, status):
         """
@@ -1042,63 +1032,38 @@ class MinimalHMI(QMainWindow):
         self.cylinder_retract(2)
         self.cylinder_retract(3)
 
-    def _engage_clamps_for_cut(self):
+    def _engage_clamps_for_cut(self, early_return=False):
         """
-        Clamp logic for normal cut positions (truing and mid-board cuts).
-        Applies clamp-engage delay, then saw-start delay before actuating.
-        Clamp release is sensor-gated via update_saw_position_sensor_status.
+        Clamp logic for cuts. Applies clamp-engage delay, then saw-start delay
+        before actuating. Clamp release is sensor-gated via
+        update_saw_position_sensor_status.
 
         Rules:
           Truing cut          → Left + Fence only
           position >= 3\"      → All three
           position < 3\"       → Right only
-        """
-        try:
-            position = float(self.position_label.text())
-        except ValueError:
-            position = 0.0
 
-        is_truing = (self.auto_cycle_state == "WAITING_FOR_TRUING_CUT")
+        early_return=True is the last cut on a board (carriage already
+        returning home); it skips truing detection and adjusts status text.
+        """
+        position = self.current_position
+        is_truing = (not early_return) and self.auto_cycle_state == "WAITING_FOR_TRUING_CUT"
 
         if is_truing:
             clamps = [1, 3]
             self._set_cycle_status("STATUS: Board in position — clamping L+F...")
         elif position >= 3.0:
             clamps = [1, 2, 3]
-            self._set_cycle_status("STATUS: Board in position — clamping all...")
+            if early_return:
+                self._set_cycle_status("STATUS: Last cut — clamping all, returning...")
+            else:
+                self._set_cycle_status("STATUS: Board in position — clamping all...")
         else:
             clamps = [2]
-            self._set_cycle_status(f"STATUS: Short tail ({position:.2f}\") — clamping R only...")
-
-        clamp_delay = self.fa_clamp_engage_delay.value() if hasattr(self, 'fa_clamp_engage_delay') else 300
-        saw_delay   = self.fa_saw_start_delay.value()    if hasattr(self, 'fa_saw_start_delay')    else 800
-
-        def _do_clamp():
-            for cid in clamps:
-                self.cylinder_extend(cid)
-            QTimer.singleShot(saw_delay, self._actuate_saw)
-
-        QTimer.singleShot(clamp_delay, _do_clamp)
-
-    def _engage_clamps_for_early_return(self):
-        """
-        Clamp logic for the last cut on a board (carriage already returning home).
-        Same delay chain as normal cuts; clamp release is sensor-gated.
-
-        position >= 3\" → all three clamps
-        position < 3\"  → right clamp only
-        """
-        try:
-            position = float(self.position_label.text())
-        except ValueError:
-            position = 0.0
-
-        if position >= 3.0:
-            clamps = [1, 2, 3]
-            self._set_cycle_status("STATUS: Last cut — clamping all, returning...")
-        else:
-            clamps = [2]
-            self._set_cycle_status(f"STATUS: Last cut, short tail ({position:.2f}\") — R clamp, returning...")
+            if early_return:
+                self._set_cycle_status(f"STATUS: Last cut, short tail ({position:.2f}\") — R clamp, returning...")
+            else:
+                self._set_cycle_status(f"STATUS: Short tail ({position:.2f}\") — clamping R only...")
 
         clamp_delay = self.fa_clamp_engage_delay.value() if hasattr(self, 'fa_clamp_engage_delay') else 300
         saw_delay   = self.fa_saw_start_delay.value()    if hasattr(self, 'fa_saw_start_delay')    else 800
@@ -1122,19 +1087,15 @@ class MinimalHMI(QMainWindow):
 
     def update_clamp_ui(self):
         if self.clamp_engaged:
-            active_style = "background-color: #2563eb; color: white; font-weight: bold;"
             if hasattr(self, 'clamp_button'):
                 self.clamp_button.setText("UNCLAMP")
-                self.clamp_button.setStyleSheet(active_style)
-            self.auto_clamp_status_label.setText("CLAMPED")
-            self.auto_clamp_status_label.setStyleSheet(f"{active_style} border-radius:10px; padding:4px 8px;")
+                self.clamp_button.setStyleSheet("background-color: #2563eb; color: white; font-weight: bold;")
+            self.set_pill(self.auto_clamp_status_label, "CLAMPED", "#2563eb")
         else:
-            inactive_style = "background-color: #4b5563; color: #e2e8f0; font-weight: bold;"
             if hasattr(self, 'clamp_button'):
                 self.clamp_button.setText("CLAMP")
-                self.clamp_button.setStyleSheet(inactive_style)
-            self.auto_clamp_status_label.setText("UNCLAMPED")
-            self.auto_clamp_status_label.setStyleSheet(f"{inactive_style} border-radius:10px; padding:4px 8px;")
+                self.clamp_button.setStyleSheet("background-color: #4b5563; color: #e2e8f0; font-weight: bold;")
+            self.set_pill(self.auto_clamp_status_label, "UNCLAMPED", "#4b5563", fg="#e2e8f0")
 
     # ---------- Enable/Disable ----------
     def set_controls_enabled(self, enabled):
@@ -1158,52 +1119,44 @@ class MinimalHMI(QMainWindow):
         self.update_cut_list_display()
 
     def get_active_board_length(self):
-        if self.radio_load_135.isChecked():
-            return self.short_board_length_135
-        if self.radio_load_96.isChecked():
-            return self.short_board_length_96
-        if self.radio_load_72.isChecked():
-            return self.short_board_length_72
-        if self.radio_load_60.isChecked():
-            return self.short_board_length_60
+        for radio, board_length, _ in self.board_size_radios:
+            if radio.isChecked():
+                return board_length
         return self.standard_board_length
+
+    def _set_board_fill(self, ratio, color, text):
+        """Update the board utilization bar and label on both AUTO and FULL AUTO tabs."""
+        for bar_attr, label_attr in (
+            ("board_fill_bar", "board_fill_label"),
+            ("fa_board_fill_bar", "fa_board_fill_label"),
+        ):
+            bar = getattr(self, bar_attr, None)
+            if bar is not None:
+                bar.setValue(int(ratio * 1000))
+                bar.setStyleSheet(f"""
+                    QProgressBar {{ background-color: #1e293b; border-radius: 8px; border: 1px solid #334155; }}
+                    QProgressBar::chunk {{ background-color: {color}; border-radius: 8px; }}
+                """)
+            label = getattr(self, label_attr, None)
+            if label is not None:
+                label.setText(text)
 
     def update_cut_list_display(self):
         if not self.cut_list:
             self.cut_list_display.setText("")
             self.cut_list_display.setPlaceholderText("No cuts in list.")
-            if hasattr(self, 'board_fill_bar'):
-                self.board_fill_bar.setValue(0)
-                self.board_fill_bar.setStyleSheet("""
-                    QProgressBar { background-color: #1e293b; border-radius: 8px; border: 1px solid #334155; }
-                    QProgressBar::chunk { background-color: #38bdf8; border-radius: 8px; }
-                """)
-            if hasattr(self, 'board_fill_label'):
-                self.board_fill_label.setText("No cuts loaded")
             if hasattr(self, 'fa_cut_list_display'):
                 self.fa_cut_list_display.setText("")
                 self.fa_cut_list_display.setPlaceholderText("No cuts in list.")
-            if hasattr(self, 'fa_board_fill_bar'):
-                self.fa_board_fill_bar.setValue(0)
-                self.fa_board_fill_bar.setStyleSheet("""
-                    QProgressBar { background-color: #1e293b; border-radius: 8px; border: 1px solid #334155; }
-                    QProgressBar::chunk { background-color: #38bdf8; border-radius: 8px; }
-                """)
-            if hasattr(self, 'fa_board_fill_label'):
-                self.fa_board_fill_label.setText("No cuts loaded")
+            self._set_board_fill(0.0, "#38bdf8", "No cuts loaded")
             return
 
         cursor = self.cut_list_display.textCursor()
-
-        html_lines = []
-        current_line_start_pos = 0
         board_length = self.get_active_board_length()
         kerf = self.kerf_input.value()
         group_colors = ["#38bdf8", "#f59e0b"]
-        group_index = 0
-        used_length = 0.0
 
-        # Pre-pass: compute which group each cut belongs to and each group's used length
+        # Single pass: which board group each cut lands on and each group's used length
         cut_groups = []
         group_used_map = {}
         gi, gu = 0, 0.0
@@ -1217,37 +1170,26 @@ class MinimalHMI(QMainWindow):
             cut_groups.append(gi)
         group_used_map[gi] = gu
 
-        # Determine the active board group (the one containing current_cut_index)
+        # The active board group is the one containing current_cut_index
         if self.current_cut_index < len(cut_groups):
             active_group = cut_groups[self.current_cut_index]
         else:
-            active_group = cut_groups[-1] if cut_groups else 0
+            active_group = cut_groups[-1]
 
         active_used = group_used_map.get(active_group, 0.0)
         fill_ratio = min(1.0, active_used / board_length) if board_length > 0 else 0.0
         fill_color = group_colors[active_group % len(group_colors)]
+        self._set_board_fill(
+            fill_ratio, fill_color,
+            f"Board {active_group + 1}: {active_used:.2f}\" / {board_length:.2f}\" ({fill_ratio * 100:.1f}%)"
+        )
 
-        if hasattr(self, 'board_fill_bar'):
-            self.board_fill_bar.setValue(int(fill_ratio * 1000))
-            self.board_fill_bar.setStyleSheet(f"""
-                QProgressBar {{ background-color: #1e293b; border-radius: 8px; border: 1px solid #334155; }}
-                QProgressBar::chunk {{ background-color: {fill_color}; border-radius: 8px; }}
-            """)
-        if hasattr(self, 'board_fill_label'):
-            self.board_fill_label.setText(
-                f"Board {active_group + 1}: {active_used:.2f}\" / {board_length:.2f}\" ({fill_ratio * 100:.1f}%)"
-            )
-
+        html_lines = []
+        current_line_start_pos = 0
         for i, (num, length, desc) in enumerate(self.cut_list):
-            needed = length + kerf
-            if used_length + needed > board_length and used_length > 0:
-                group_index += 1
-                used_length = 0.0
-            used_length += needed
-            color = group_colors[group_index % len(group_colors)]
-
+            color = group_colors[cut_groups[i] % len(group_colors)]
             line_text = f"Cut {num}: {length:<9.4f}\" {desc}"
-            
+
             if i == self.current_cut_index:
                 current_line_start_pos = len("<br>".join(html_lines))
                 html_lines.append(
@@ -1255,7 +1197,7 @@ class MinimalHMI(QMainWindow):
                 )
             else:
                 html_lines.append(f"<span style='color:{color};'>&nbsp; {line_text}</span>")
-        
+
         html = "<br>".join(html_lines)
         self.cut_list_display.setHtml(html)
 
@@ -1266,16 +1208,6 @@ class MinimalHMI(QMainWindow):
         # Mirror to FULL AUTO tab
         if hasattr(self, 'fa_cut_list_display'):
             self.fa_cut_list_display.setHtml(html)
-        if hasattr(self, 'fa_board_fill_bar'):
-            self.fa_board_fill_bar.setValue(int(fill_ratio * 1000))
-            self.fa_board_fill_bar.setStyleSheet(f"""
-                QProgressBar {{ background-color: #1e293b; border-radius: 8px; border: 1px solid #334155; }}
-                QProgressBar::chunk {{ background-color: {fill_color}; border-radius: 8px; }}
-            """)
-        if hasattr(self, 'fa_board_fill_label'):
-            self.fa_board_fill_label.setText(
-                f"Board {active_group + 1}: {active_used:.2f}\" / {board_length:.2f}\" ({fill_ratio * 100:.1f}%)"
-            )
 
     def load_list_from_file(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Cut List", "", "Text Files (*.txt);;All Files (*)")
@@ -1301,6 +1233,18 @@ class MinimalHMI(QMainWindow):
         for line in lines:
             clean_line = line.strip()
             if not clean_line:
+                continue
+
+            # Lines round-tripped from the on-screen list render as
+            # 'Cut 3: 18.0000  " description'. Parse those exactly so a
+            # description containing digits can't be mistaken for the length.
+            display_match = re.match(r'^[>\s]*Cut\s+\d+:\s*(\d+\.?\d*)\s*"?\s*(.*)$', clean_line)
+            if display_match:
+                length = float(display_match.group(1))
+                description = display_match.group(2).strip(' ,:"')
+                if length > 0:
+                    self.cut_list.append((self.next_cut_number, length, description))
+                    self.next_cut_number += 1
                 continue
 
             if ':' in clean_line:
@@ -1376,10 +1320,7 @@ class MinimalHMI(QMainWindow):
 
         # 3) Tell the UI/state machine what's happening
         cut_num, cut_length, _ = self.cut_list[self.current_cut_index]
-        status_text = f"STATUS: Resuming after reset at cut {cut_num} ({cut_length:.2f}\")"
-        self.auto_status_label.setText(status_text)
-        if hasattr(self, 'fa_auto_status_label'):
-            self.fa_auto_status_label.setText(status_text)
+        self._set_cycle_status(f"STATUS: Resuming after reset at cut {cut_num} ({cut_length:.2f}\")")
         self.update_cut_list_display()
 
         # 4) Choose a profile and state, then let the normal logic take over
@@ -1452,7 +1393,7 @@ class MinimalHMI(QMainWindow):
             if self.current_cut_index >= len(self.cut_list):
                 self.auto_cycle_state = "FINISHED"; self.advance_auto_cycle(); return
 
-            current_pos = float(self.position_label.text())
+            current_pos = self.current_position
             cut_num, cut_length, cut_desc = self.cut_list[self.current_cut_index]
             kerf = self.kerf_input.value()
             total_material_needed = cut_length + kerf
@@ -1522,7 +1463,7 @@ class MinimalHMI(QMainWindow):
                 return
             try:
                 self.ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
-                self.status_label.setText("Connected"); self.status_label.setStyleSheet("background-color:#22c55e; color:#0f172a; font-weight:bold; border-radius:12px; padding:6px 10px;")
+                self.set_pill(self.status_label, "Connected", "#22c55e", fg="#0f172a")
                 self.connect_button.setText("Disconnect"); self.set_controls_enabled(True)
                 self.listener_thread = threading.Thread(target=listen_for_data, args=(self.ser, self.signal_bridge), daemon=True); self.listener_thread.start()
                 self.log.append(f"Successfully connected to {port_name}")
@@ -1534,17 +1475,20 @@ class MinimalHMI(QMainWindow):
         else:
             try: self.ser.close()
             except Exception: pass
-            self.status_label.setText("Disconnected"); self.status_label.setStyleSheet("background-color:#ef4444; color:white; font-weight:bold; border-radius:12px; padding:6px 10px;")
+            self.set_pill(self.status_label, "Disconnected", "#ef4444")
             self.connect_button.setText("Connect"); self.set_controls_enabled(False); self.log.append("Disconnected.")
 
     def handle_serial_disconnect(self, error):
+        # Also fired by the listener thread after an intentional disconnect;
+        # skip if the UI already reflects the disconnected state.
+        if self.status_label.text() == "Disconnected":
+            return
         try:
             if self.ser and self.ser.is_open:
                 self.ser.close()
         except Exception:
             pass
-        self.status_label.setText("Disconnected")
-        self.status_label.setStyleSheet("background-color:#ef4444; color:white; font-weight:bold; border-radius:12px; padding:6px 10px;")
+        self.set_pill(self.status_label, "Disconnected", "#ef4444")
         self.connect_button.setText("Connect")
         self.set_controls_enabled(False)
         self.log.append(f"Serial connection lost: {error}")
@@ -1568,30 +1512,20 @@ class MinimalHMI(QMainWindow):
         self.log.append(f"Starting near calibration using board sensor offset {sensor_offset:.4f}\".")
         self.send_command(f"N{sensor_offset:.4f}")
 
-    # --- MODIFIED: Added logic for short load position ---
     def load_position(self):
         self.switch_profile("FAST", True)
-        
-        # Check which radio button is selected to determine the target position
-        if self.radio_load_135.isChecked():
-            target_pos = self.short_load_pos_135
-            log_msg = f"Moving to short load position: {target_pos:.2f}\""
-        elif self.radio_load_96.isChecked():
-            target_pos = self.short_load_pos_96
-            log_msg = f"Moving to short load position: {target_pos:.2f}\""
-        elif self.radio_load_72.isChecked():
-            target_pos = self.short_load_pos_72
-            log_msg = f"Moving to short load position: {target_pos:.2f}\""
-        elif self.radio_load_60.isChecked():
-            target_pos = self.short_load_pos_60
-            log_msg = f"Moving to short load position: {target_pos:.2f}\""
-        else: # Default case is the standard home position
-            target_pos = self.home_position
-            log_msg = f"Moving to HOME load position: {target_pos:.2f}\""
+
+        # The selected radio determines the load position; None means home position
+        target_pos = self.home_position
+        log_msg = f"Moving to HOME load position: {target_pos:.2f}\""
+        for radio, _, load_pos in self.board_size_radios:
+            if radio.isChecked() and load_pos is not None:
+                target_pos = load_pos
+                log_msg = f"Moving to short load position: {target_pos:.2f}\""
+                break
 
         self.log.append(log_msg)
         self.set_length(target_pos)
-    # --- END MODIFICATION ---
 
     def toggle_motor_power(self, checked): self.send_command("E" if checked else "X")
     def toggle_pid_control(self, checked): self.send_command("K1" if checked else "K0")
@@ -1608,18 +1542,13 @@ class MinimalHMI(QMainWindow):
             self.log.append(f"MOVE REJECTED: Target {target:.2f}\" is outside the valid range (0 to {self.home_position:.2f}\").")
     def move_relative(self):
         delta = self.rel_input.value()
-        current_pos = float(self.position_label.text())
-        target = current_pos + delta
+        target = self.current_position + delta
 
         # Instead of sending its own command, it now uses our safe function
         self.set_length(target)
-    # AUTO jog helper: move by a relative delta from current auto position
+    # AUTO jog helper: move by a relative delta from current position
     def auto_jog(self, delta):
-        try:
-            current_pos = float(self.auto_position_label.text())
-        except Exception:
-            current_pos = 0.0
-        target = current_pos + float(delta)
+        target = self.current_position + float(delta)
         self.set_length(target)
     def set_motor_parameters(self):
         speed = self.max_speed.value(); accel = self.acceleration.value(); self.send_command(f"A{speed:.0f},{accel:.0f}")
@@ -1651,11 +1580,9 @@ class MinimalHMI(QMainWindow):
             self.reset_overcurrent_btn.setEnabled(enabled)
         if hasattr(self, "current_status_label") and not self.overcurrent_tripped:
             if enabled:
-                self.current_status_label.setText("Current OK")
-                self.current_status_label.setStyleSheet("background-color:#22c55e; color:#0f172a; font-weight:bold; border-radius:12px; padding:6px 10px;")
+                self.set_pill(self.current_status_label, "Current OK", "#22c55e", fg="#0f172a")
             else:
-                self.current_status_label.setText("Monitoring Off")
-                self.current_status_label.setStyleSheet("background-color:#475569; color:#e2e8f0; font-weight:bold; border-radius:12px; padding:6px 10px;")
+                self.set_pill(self.current_status_label, "Monitoring Off", "#475569", fg="#e2e8f0")
         if not enabled:
             self.current_draw_amps = 0.0
             self.current_sensor_voltage = 0.0
@@ -1700,6 +1627,7 @@ class MinimalHMI(QMainWindow):
         if hasattr(self, "speed_serial_console"):
             self.speed_serial_console.append(msg)
     def update_position_label_from_device(self, pos):
+        self.current_position = pos
         self.position_label.setText(f"{pos:.4f}")
         self.auto_position_label.setText(f"{pos:.4f}")
         if hasattr(self, 'fa_position_label'):
@@ -1729,7 +1657,7 @@ class MinimalHMI(QMainWindow):
                 self.perform_early_return = False
                 self.is_early_returning = True
 
-                self._engage_clamps_for_early_return()  # clamps + 2 s auto-release
+                self._engage_clamps_for_cut(early_return=True)  # clamps + sensor-gated release
 
                 if self.current_cut_index < len(self.cut_list):
                     self.current_cut_index += 1
@@ -1757,21 +1685,18 @@ class MinimalHMI(QMainWindow):
 
     def update_sensor_status(self, status):
         text = "ON" if status == 1 else "OFF"; bg = "#22c55e" if status == 1 else "#ef4444"
-        self.sensor_label.setText(text); self.sensor_label.setStyleSheet(f"background-color: {bg}; color: white; font-weight: bold; border-radius:12px; padding:6px 10px;")
-        self.auto_homing_sensor_label.setText(text); self.auto_homing_sensor_label.setStyleSheet(f"background-color: {bg}; color: white; font-weight: bold; border-radius:10px; padding:4px 8px;")
-        if hasattr(self, 'fa_homing_sensor_label'):
-            self.fa_homing_sensor_label.setText(text)
-            self.fa_homing_sensor_label.setStyleSheet(f"background-color: {bg}; color: white; font-weight: bold; border-radius:10px; padding:4px 8px;")
+        for widget in (self.sensor_label, self.auto_homing_sensor_label,
+                       getattr(self, 'fa_homing_sensor_label', None)):
+            if widget is not None:
+                self.set_pill(widget, text, bg)
 
     def update_board_sensor_status(self, status):
         text = "ON" if status == 1 else "OFF"; bg = "#22c55e" if status == 1 else "#ef4444"
         self.board_sensor_tripped = (status == 1)
-
-        self.board_sensor_label.setText(text); self.board_sensor_label.setStyleSheet(f"background-color: {bg}; color: white; font-weight: bold; border-radius:10px; padding:4px 8px;")
-        self.auto_board_sensor_label.setText(text); self.auto_board_sensor_label.setStyleSheet(f"background-color: {bg}; color: white; font-weight: bold; border-radius:10px; padding:4px 8px;")
-        if hasattr(self, 'fa_board_sensor_label'):
-            self.fa_board_sensor_label.setText(text)
-            self.fa_board_sensor_label.setStyleSheet(f"background-color: {bg}; color: white; font-weight: bold; border-radius:10px; padding:4px 8px;")
+        for widget in (self.board_sensor_label, self.auto_board_sensor_label,
+                       getattr(self, 'fa_board_sensor_label', None)):
+            if widget is not None:
+                self.set_pill(widget, text, bg)
 
     def update_current_voltage(self, volts):
         self.current_sensor_voltage = max(0.0, volts)
@@ -1783,6 +1708,14 @@ class MinimalHMI(QMainWindow):
         self.last_current_log_time = now
 
         log_exists = os.path.exists(self.current_log_path)
+        # Roll the log when it grows past ~5 MB so it can't fill the disk
+        if log_exists:
+            try:
+                if os.path.getsize(self.current_log_path) > 5_000_000:
+                    os.replace(self.current_log_path, self.current_log_path + ".old")
+                    log_exists = False
+            except OSError:
+                pass
         row = (
             f"{datetime.now().isoformat(timespec='seconds')},"
             f"{self.current_sensor_voltage:.4f},"
@@ -1821,13 +1754,11 @@ class MinimalHMI(QMainWindow):
         self.overcurrent_tripped = (status == 1)
         if hasattr(self, 'current_status_label'):
             if self.overcurrent_tripped:
-                self.current_status_label.setText("Overcurrent Tripped")
-                self.current_status_label.setStyleSheet("background-color:#ef4444; color:white; font-weight:bold; border-radius:12px; padding:6px 10px;")
+                self.set_pill(self.current_status_label, "Overcurrent Tripped", "#ef4444")
                 if hasattr(self, 'auto_status_label'):
                     self._set_cycle_status("STATUS: Overcurrent protection tripped.")
             else:
-                self.current_status_label.setText("Current OK")
-                self.current_status_label.setStyleSheet("background-color:#22c55e; color:#0f172a; font-weight:bold; border-radius:12px; padding:6px 10px;")
+                self.set_pill(self.current_status_label, "Current OK", "#22c55e", fg="#0f172a")
 
     def update_calibration_factors(self, new_encoder_tpi, new_stepper_spi):
         self.encoder_ticks_per_inch = new_encoder_tpi; self.stepper_steps_per_inch = new_stepper_spi; self.log.append("HMI calibration factors updated.")
@@ -1851,8 +1782,7 @@ class MinimalHMI(QMainWindow):
 
     # ---------- Prediction model ----------
     def prepare_prediction(self, target_in):
-        try: start_in = float(self.position_label.text())
-        except ValueError: start_in = 0.0
+        start_in = self.current_position
         self.pred_start_pos = start_in; self.pred_target_pos = target_in; self.pred_dir = 1.0 if (target_in - start_in) >= 0 else -1.0
         if self.active_profile_name == "NORMAL": spd_steps, acc_steps = self.norm_speed.value(), self.norm_accel.value()
         elif self.active_profile_name == "GENTLE": spd_steps, acc_steps = self.gentle_speed.value(), self.gentle_accel.value()
@@ -1891,8 +1821,51 @@ class MinimalHMI(QMainWindow):
         pos = s0 + self.pred_dir * s
         if (self.pred_dir > 0 and pos > sf) or (self.pred_dir < 0 and pos < sf): pos = sf; self.pred_active = False
         self.position_label.setText(f"{pos:.4f}"); self.auto_position_label.setText(f"{pos:.4f}")
+        if hasattr(self, 'fa_position_label'): self.fa_position_label.setText(f"{pos:.4f}")
+
+    # ---------- Settings persistence ----------
+    def _settings_widgets(self):
+        """Spin boxes whose values persist across sessions, keyed for QSettings."""
+        return {
+            "norm_speed": self.norm_speed,
+            "norm_accel": self.norm_accel,
+            "gentle_speed": self.gentle_speed,
+            "gentle_accel": self.gentle_accel,
+            "fast_speed": self.fast_speed,
+            "fast_accel": self.fast_accel,
+            "manual_speed": self.max_speed,
+            "manual_accel": self.acceleration,
+            "kerf": self.kerf_input,
+            "cut_length": self.cut_length_input,
+            "board_sensor_location": self.board_sensor_location_input,
+            "current_limit": self.current_limit_input,
+            "current_trip_delay": self.current_delay_input,
+            "clamp_engage_delay": self.fa_clamp_engage_delay,
+            "saw_start_delay": self.fa_saw_start_delay,
+        }
+
+    def _load_settings(self):
+        for key, widget in self._settings_widgets().items():
+            value = self.settings.value(key)
+            if value is not None:
+                try:
+                    widget.setValue(type(widget.value())(value))
+                except (TypeError, ValueError):
+                    pass
+        self.current_monitoring_enabled = self.settings.value("current_monitoring", False, type=bool)
+        self.current_monitoring_checkbox.setChecked(self.current_monitoring_enabled)
+        self.current_limit_amps = self.current_limit_input.value()
+        self.current_trip_delay_ms = int(self.current_delay_input.value())
+        self.current_graph.set_limit(self.current_limit_amps)
+
+    def _save_settings(self):
+        for key, widget in self._settings_widgets().items():
+            self.settings.setValue(key, widget.value())
+        self.settings.setValue("current_monitoring", self.current_monitoring_checkbox.isChecked())
+        self.settings.setValue("serial_port", self.selected_serial_port)
 
     def closeEvent(self, event):
+        self._save_settings()
         try:
             if self.ser and self.ser.is_open: self.ser.close()
         except Exception: pass

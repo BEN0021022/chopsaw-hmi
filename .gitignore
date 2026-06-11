@@ -2,4 +2,4 @@ __pycache__/
 build/
 dist/
 *.zip
-motor_current_log*.csv
+motor_current_log*
