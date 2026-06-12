@@ -1272,7 +1272,6 @@ class MinimalHMI(QMainWindow):
             self._set_board_fill(0.0, "#38bdf8", "No cuts loaded")
             return
 
-        cursor = self.cut_list_display.textCursor()
         board_length = self.get_active_board_length()
         kerf = self.kerf_input.value()
         group_colors = ["#38bdf8", "#f59e0b"]
@@ -1306,13 +1305,11 @@ class MinimalHMI(QMainWindow):
         )
 
         html_lines = []
-        current_line_start_pos = 0
         for i, (num, length, desc) in enumerate(self.cut_list):
             color = group_colors[cut_groups[i] % len(group_colors)]
             line_text = f"Cut {num}: {length:<9.4f}\" {desc}"
 
             if i == self.current_cut_index:
-                current_line_start_pos = len("<br>".join(html_lines))
                 html_lines.append(
                     f"<div style='background-color:#334155;'><b><span style='color:{color};'>&gt; {line_text}</span></b></div>"
                 )
@@ -1322,14 +1319,31 @@ class MinimalHMI(QMainWindow):
         html = "<br>".join(html_lines)
         self.cut_list_display.setHtml(html)
 
-        cursor.setPosition(current_line_start_pos)
-        self.cut_list_display.setTextCursor(cursor)
-        self.cut_list_display.ensureCursorVisible()
-
         # Mirror to FULL AUTO tab
         if hasattr(self, 'fa_cut_list_display'):
             self.fa_cut_list_display.setHtml(html)
+
+        if self.current_cut_index < len(self.cut_list):
+            current_num = self.cut_list[self.current_cut_index][0]
+            self._center_cut_in_display(self.cut_list_display, current_num)
+            if hasattr(self, 'fa_cut_list_display'):
+                self._center_cut_in_display(self.fa_cut_list_display, current_num)
+
         self._refresh_sim_board()
+
+    def _center_cut_in_display(self, display, cut_num):
+        """Scroll the cut list so the highlighted current cut sits mid-viewport."""
+        doc = display.document()
+        cursor = doc.find(f"> Cut {cut_num}:")
+        if cursor.isNull():
+            return
+        display.setTextCursor(cursor)
+        # Document layout after setHtml is lazy (normally done at paint time);
+        # setting the text width forces it now so the geometry below is valid.
+        doc.setTextWidth(display.viewport().width())
+        block_rect = doc.documentLayout().blockBoundingRect(cursor.block())
+        scrollbar = display.verticalScrollBar()
+        scrollbar.setValue(int(block_rect.center().y()) - display.viewport().height() // 2)
 
     def load_list_from_file(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Cut List", "", "Text Files (*.txt);;All Files (*)")
