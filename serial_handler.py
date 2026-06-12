@@ -13,6 +13,7 @@ class SignalBridge(QObject):
     motor_state_updated = pyqtSignal(str)
     sensor_state_updated = pyqtSignal(int)
     board_sensor_state_updated = pyqtSignal(int)
+    saw_sensor_state_updated = pyqtSignal(int)
     current_voltage_updated = pyqtSignal(float)
     current_updated = pyqtSignal(float)
     overcurrent_updated = pyqtSignal(int)
@@ -47,6 +48,8 @@ def _parse_status_line(line, signal_bridge):
         _emit_number(signal_bridge.sensor_state_updated, fields['SEN'], int)
     if 'BSEN' in fields:
         _emit_number(signal_bridge.board_sensor_state_updated, fields['BSEN'], int)
+    if 'SSEN' in fields:
+        _emit_number(signal_bridge.saw_sensor_state_updated, fields['SSEN'], int)
     if 'CV' in fields:
         _emit_number(signal_bridge.current_voltage_updated, fields['CV'], float)
     if 'CUR' in fields:

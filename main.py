@@ -28,6 +28,8 @@ from config import SERIAL_PORT, BAUD_RATE, PROFILE_MAP
 from serial_handler import SignalBridge, listen_for_data
 from ui_components import KeypadWidget, CurrentGraphWidget
 from cutlist_manager import CutListManagerTab
+from simulator import VirtualController, TRUING_TRIM
+from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
 
 def get_app_dir():
     if getattr(sys, "frozen", False):
@@ -70,6 +72,7 @@ class MinimalHMI(QMainWindow):
         self.signal_bridge.home_position_updated.connect(self.update_home_position)
         self.signal_bridge.current_voltage_updated.connect(self.update_current_voltage)
         self.signal_bridge.disconnected.connect(self.handle_serial_disconnect)
+        self.signal_bridge.saw_sensor_state_updated.connect(self.update_saw_position_sensor_status)
 
         # State
         self.stepper_steps_per_inch = 127.0
@@ -100,6 +103,13 @@ class MinimalHMI(QMainWindow):
         self.clamp_right_engaged = False
         self.clamp_fence_engaged = False
         self.clamps_engaged_cutting = False   # True while saw is down, awaiting sensor return
+        # Line-view animation state: mirrors the physical board through the cycle
+        self.sim_board_remaining = None   # inches of board left (None = no board on the line)
+        self.sim_board_trimmed = False    # truing cut done
+        self.sim_edge_pos = 0.0           # leading edge, inches from blade (negative = past it)
+        self.sim_active_piece = None      # piece the current saw stroke is cutting
+        self.sim_next_piece_index = 0     # first cut_list index still on the board
+        self._last_saw_sensor = None      # last SSEN value, for rising-edge detection
         self.current_cut_index = 0
         self.perform_early_return = False
         self.pending_early_return = False
@@ -853,10 +863,11 @@ class MinimalHMI(QMainWindow):
         io_and_cycle = QVBoxLayout()
         io_and_cycle.setSpacing(6)
 
-        # Cylinders
+        # Cylinders — single compact row to leave room for the line simulation
         cylinders_group = QGroupBox("Air Cylinders")
         cyl_layout = QHBoxLayout(cylinders_group)
-        cyl_layout.setSpacing(12)
+        cyl_layout.setSpacing(8)
+        cyl_layout.setContentsMargins(10, 4, 10, 4)
 
         cyl_defs = [
             ("Left Clamp", 1, "fa_cyl1_status"),
@@ -864,19 +875,19 @@ class MinimalHMI(QMainWindow):
             ("Fence Clamp", 3, "fa_cyl3_status"),
         ]
         for cyl_name, cyl_id, pill_attr in cyl_defs:
-            cyl_col = QVBoxLayout()
             name_lbl = QLabel(cyl_name)
-            name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            name_lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
-            cyl_col.addWidget(name_lbl)
+            name_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
+            cyl_layout.addWidget(name_lbl)
 
             status_pill = self.pill("RETRACTED", "#475569")
+            status_pill.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            status_pill.setMinimumWidth(96)
             setattr(self, pill_attr, status_pill)
-            cyl_col.addWidget(status_pill)
+            cyl_layout.addWidget(status_pill)
+            cyl_layout.addSpacing(6)
 
-            cyl_col.addStretch()
-            cyl_layout.addLayout(cyl_col)
-
+        cyl_layout.addStretch()
+        cylinders_group.setMaximumHeight(64)
         io_and_cycle.addWidget(cylinders_group)
 
         # Timing Settings
@@ -901,7 +912,15 @@ class MinimalHMI(QMainWindow):
 
         io_and_cycle.addWidget(timing_group)
 
-        io_and_cycle.addStretch()
+        # Line simulation: carriage, board segments, saw, ejected pieces
+        sim_group = QGroupBox("Line Simulation")
+        sim_layout = QVBoxLayout(sim_group)
+        sim_layout.setContentsMargins(8, 8, 8, 8)
+        self.saw_sim = SawSimWidget(home_position=self.home_position)
+        self.saw_sim.set_sensor_location(self.board_sensor_location_input.value())
+        self.board_sensor_location_input.valueChanged.connect(self.saw_sim.set_sensor_location)
+        sim_layout.addWidget(self.saw_sim)
+        io_and_cycle.addWidget(sim_group, 1)
 
         middle_row.addLayout(io_and_cycle)
         root_layout.addLayout(middle_row, 1)
@@ -991,46 +1010,137 @@ class MinimalHMI(QMainWindow):
                 self.set_pill(pill_widget, "EXTENDED", "#2563eb")
             else:
                 self.set_pill(pill_widget, "RETRACTED", "#475569", fg="#e2e8f0")
+        if hasattr(self, 'saw_sim'):
+            self.saw_sim.set_clamps(self.clamp_left_engaged, self.clamp_right_engaged,
+                                    self.clamp_fence_engaged)
 
     def _update_saw_sensor_pill(self, text, color):
         if hasattr(self, 'fa_saw_position_label'):
             self.set_pill(self.fa_saw_position_label, text, color)
+        if hasattr(self, 'saw_sim'):
+            self.saw_sim.set_saw_state(text)
 
     def update_saw_position_sensor_status(self, status):
         """
-        Called by real serial handler (status=1 UP, status=0 DOWN) and by simulation.
-        Sensor-gated: release clamps only when saw confirms it is UP.
+        status=1 UP, status=0 DOWN. Fed by the SSEN serial field (virtual
+        controller, and real firmware once wired) or the hardware placeholder
+        timer. Clamps release on the rising edge only, so the streamed SSEN:1
+        lines before a stroke starts cannot release them early.
         """
-        text = "UP" if status == 1 else "DOWN"
-        color = "#22c55e" if status == 1 else "#ef4444"
-        self._update_saw_sensor_pill(text, color)
+        rising = (status == 1 and self._last_saw_sensor == 0)
+        if status != self._last_saw_sensor:
+            if status == 1:
+                self._update_saw_sensor_pill("UP", "#22c55e")
+            elif self.clamps_engaged_cutting:
+                self._update_saw_sensor_pill("CUTTING", "#ef4444")
+            else:
+                self._update_saw_sensor_pill("DOWN", "#ef4444")
+        self._last_saw_sensor = status
 
-        if status == 1 and self.clamps_engaged_cutting:
+        if rising and self.clamps_engaged_cutting:
             self.clamps_engaged_cutting = False
+            was_early = bool((self.sim_active_piece or {}).get("early")) or self.is_early_returning
             self._release_all_clamps()
-            if self.is_early_returning:
-                self._set_cycle_status("STATUS: Saw up — clamps released. Loading next board...")
+            self._on_cut_finished()
+            if was_early:
+                # Carriage may already have arrived; don't clobber that status
+                if self.auto_cycle_state not in ("FINISHED", "WAITING_FOR_NEW_BOARD"):
+                    self._set_cycle_status("STATUS: Saw up — clamps released. Loading next board...")
             else:
                 self._set_cycle_status("STATUS: Saw up — clamps released. Press CUT COMPLETE.")
 
     def _actuate_saw(self):
         """
-        Fire saw-down command (placeholder until hardware wired).
-        Sets clamps_engaged_cutting so update_saw_position_sensor_status
-        knows to release clamps when the saw returns UP.
+        Fire the saw-down command. Sets clamps_engaged_cutting so the saw-up
+        edge knows to release clamps and book the cut.
         """
         self.clamps_engaged_cutting = True
         self._update_saw_sensor_pill("CUTTING", "#ef4444")
         self._set_cycle_status("STATUS: Cutting...")
-        # TODO: self.send_command("V1")  ← real saw actuate command
-        # Simulate saw returning UP after 2 s
-        QTimer.singleShot(2000, lambda: self.update_saw_position_sensor_status(1))
+        if isinstance(self.ser, VirtualController) and self.ser.is_open:
+            self.send_command("V1")  # controller reports the stroke via SSEN
+        else:
+            # TODO: self.send_command("V1")  ← real saw actuate command
+            # Placeholder: simulate the stroke completing after 2 s
+            self._last_saw_sensor = 0
+            QTimer.singleShot(2000, lambda: self.update_saw_position_sensor_status(1))
 
     def _release_all_clamps(self):
         """Retract all three air cylinder clamps."""
         self.cylinder_retract(1)
         self.cylinder_retract(2)
         self.cylinder_retract(3)
+
+    # ---------- Line-view simulation tracking ----------
+    def _sync_sim_index(self):
+        self.sim_next_piece_index = self.current_cut_index
+
+    def _sim_track_carriage(self, pos):
+        """The carriage pushes the board toward the blade; retracting leaves it."""
+        if not hasattr(self, 'saw_sim'):
+            return
+        if self.sim_board_remaining is not None:
+            back = self.sim_edge_pos + self.sim_board_remaining
+            if pos < back - 1e-9:
+                self.sim_edge_pos = pos - self.sim_board_remaining
+                self.saw_sim.set_board_edge(self.sim_edge_pos)
+        self.saw_sim.set_carriage(pos)
+
+    def _refresh_sim_board(self):
+        """Rebuild the colored piece segments for the board currently on the line."""
+        if not hasattr(self, 'saw_sim'):
+            return
+        if self.sim_board_remaining is None or self.sim_board_remaining <= 0.01:
+            self.saw_sim.set_board(False, 0.0, [])
+            return
+        kerf = self.kerf_input.value()
+        segs = []
+        rem = self.sim_board_remaining
+        if not self.sim_board_trimmed:
+            trim = min(TRUING_TRIM, rem)
+            segs.append((trim, TRIM_COLOR, None))
+            rem -= trim
+        i = self.sim_next_piece_index
+        while rem > 0.01 and i < len(self.cut_list):
+            _, length, _ = self.cut_list[i]
+            if length + kerf > rem + 1e-6:
+                break
+            segs.append((length, PIECE_COLORS[i % len(PIECE_COLORS)], f'{length:g}"'))
+            segs.append((min(kerf, rem - length), None, None))
+            rem -= length + kerf
+            i += 1
+        if rem > 0.01:
+            segs.append((rem, SCRAP_COLOR, "scrap" if self.sim_board_trimmed else None))
+        self.saw_sim.set_board(True, self.sim_edge_pos, segs)
+
+    def _on_cut_finished(self):
+        """Book a completed saw stroke: consume board, eject the piece."""
+        piece = self.sim_active_piece
+        self.sim_active_piece = None
+        if piece is None:
+            return
+        kerf = self.kerf_input.value()
+        if self.sim_board_remaining is not None:
+            if piece.get("truing"):
+                self.sim_board_remaining -= min(TRUING_TRIM, self.sim_board_remaining)
+                self.sim_board_trimmed = True
+            else:
+                self.sim_board_remaining = max(
+                    0.0, self.sim_board_remaining - piece["length"] - kerf
+                )
+            self.sim_edge_pos = 0.0
+        if piece.get("truing"):
+            self._sync_sim_index()
+        elif piece.get("early"):
+            self.sim_next_piece_index = self.current_cut_index  # already incremented
+        else:
+            self.sim_next_piece_index = self.current_cut_index + 1
+        if hasattr(self, 'saw_sim'):
+            if piece.get("truing"):
+                self.saw_sim.eject_piece(TRUING_TRIM, TRIM_COLOR, "trim")
+            else:
+                self.saw_sim.eject_piece(piece["length"], piece["color"], f'{piece["length"]:g}"')
+        self._refresh_sim_board()
 
     def _engage_clamps_for_cut(self, early_return=False):
         """
@@ -1064,6 +1174,16 @@ class MinimalHMI(QMainWindow):
                 self._set_cycle_status(f"STATUS: Last cut, short tail ({position:.2f}\") — R clamp, returning...")
             else:
                 self._set_cycle_status(f"STATUS: Short tail ({position:.2f}\") — clamping R only...")
+
+        # Record what this stroke will cut, for the line-view animation
+        if is_truing:
+            self.sim_active_piece = {"truing": True}
+        elif self.current_cut_index < len(self.cut_list):
+            _, length, _ = self.cut_list[self.current_cut_index]
+            self.sim_active_piece = {
+                "truing": False, "early": early_return, "length": length,
+                "color": PIECE_COLORS[self.current_cut_index % len(PIECE_COLORS)],
+            }
 
         clamp_delay = self.fa_clamp_engage_delay.value() if hasattr(self, 'fa_clamp_engage_delay') else 300
         saw_delay   = self.fa_saw_start_delay.value()    if hasattr(self, 'fa_saw_start_delay')    else 800
@@ -1116,6 +1236,7 @@ class MinimalHMI(QMainWindow):
         self.cut_list.clear()
         self.next_cut_number = 1
         self.current_cut_index = 0
+        self._sync_sim_index()
         self.update_cut_list_display()
 
     def get_active_board_length(self):
@@ -1208,6 +1329,7 @@ class MinimalHMI(QMainWindow):
         # Mirror to FULL AUTO tab
         if hasattr(self, 'fa_cut_list_display'):
             self.fa_cut_list_display.setHtml(html)
+        self._refresh_sim_board()
 
     def load_list_from_file(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Cut List", "", "Text Files (*.txt);;All Files (*)")
@@ -1282,6 +1404,7 @@ class MinimalHMI(QMainWindow):
                 self.log.append(f"No number found in line: '{line}'")
 
         self.current_cut_index = 0
+        self._sync_sim_index()
         self.update_cut_list_display()
         self.log.append(f"Loaded {len(self.cut_list)} cuts into the list.")
 
@@ -1297,7 +1420,10 @@ class MinimalHMI(QMainWindow):
         self.auto_cycle_state = "IDLE"
         self.perform_early_return = False
         self.is_early_returning = False
+        self.clamps_engaged_cutting = False
+        self.sim_active_piece = None
         self.current_cut_index = 0
+        self._sync_sim_index()
 
         # 3. Update UI controls and status
         self._release_all_clamps()
@@ -1329,6 +1455,9 @@ class MinimalHMI(QMainWindow):
         # 2) Reset internal flags that affect the state machine
         self.perform_early_return = False
         self.is_early_returning = False
+        self.clamps_engaged_cutting = False
+        self.sim_active_piece = None
+        self._sync_sim_index()
 
         # 3) Tell the UI/state machine what's happening
         cut_num, cut_length, _ = self.cut_list[self.current_cut_index]
@@ -1353,13 +1482,18 @@ class MinimalHMI(QMainWindow):
             
         if self.auto_cycle_state == "IDLE" or self.auto_cycle_state == "FINISHED":
             self.current_cut_index = 0
-        
+            self._sync_sim_index()
+
         self.update_cut_list_display()
         self.switch_profile("GENTLE", True)
         self.auto_cycle_state = "DETECTING"
         self.advance_auto_cycle()
 
     def cut_complete_pressed(self):
+        if self.clamps_engaged_cutting:
+            # Acknowledged before the saw-up edge arrived; book the cut now
+            self.clamps_engaged_cutting = False
+            self._on_cut_finished()
         self._release_all_clamps()
         self._update_saw_sensor_pill("UP", "#22c55e")
         if self.auto_cycle_state == "WAITING_FOR_TRUING_CUT":
@@ -1397,6 +1531,14 @@ class MinimalHMI(QMainWindow):
         if self.auto_cycle_state == "DETECTING":
             self._set_cycle_status("STATUS: Detecting board edge...")
             sensor_offset = self.board_sensor_location_input.value()
+            # A fresh board lands against the carriage (operator load)
+            self.sim_board_remaining = self.get_active_board_length() + TRUING_TRIM
+            self.sim_board_trimmed = False
+            self.sim_edge_pos = self.current_position - self.sim_board_remaining
+            self._sync_sim_index()
+            if isinstance(self.ser, VirtualController):
+                self.ser.board_length = self.sim_board_remaining
+            self._refresh_sim_board()
             self.send_command(f"J{sensor_offset:.4f}")
             self.auto_cycle_state = "WAITING_FOR_TRUING_CUT"
             self._set_start_enabled(False)
@@ -1447,20 +1589,20 @@ class MinimalHMI(QMainWindow):
         ports = sorted(serial.tools.list_ports.comports(), key=lambda p: p.device)
         self.port_combo.blockSignals(True)
         self.port_combo.clear()
-        if not ports:
-            self.port_combo.addItem("No ports detected", "")
-            self.port_combo.setEnabled(False)
-            self.selected_serial_port = ""
+        for port in ports:
+            description = f"{port.device} - {port.description}" if port.description else port.device
+            self.port_combo.addItem(description, port.device)
+        self.port_combo.addItem("SIMULATOR - virtual machine", "SIM")
+        self.port_combo.setEnabled(True)
+        devices = [port.device for port in ports] + ["SIM"]
+        if previous_port in devices:
+            target_port = previous_port
         else:
-            for port in ports:
-                description = f"{port.device} - {port.description}" if port.description else port.device
-                self.port_combo.addItem(description, port.device)
-            self.port_combo.setEnabled(True)
-            target_port = previous_port if any(port.device == previous_port for port in ports) else ports[0].device
-            index = self.port_combo.findData(target_port)
-            if index >= 0:
-                self.port_combo.setCurrentIndex(index)
-                self.selected_serial_port = target_port
+            target_port = ports[0].device if ports else "SIM"
+        index = self.port_combo.findData(target_port)
+        if index >= 0:
+            self.port_combo.setCurrentIndex(index)
+            self.selected_serial_port = target_port
         self.port_combo.blockSignals(False)
 
     def on_serial_port_changed(self):
@@ -1474,8 +1616,12 @@ class MinimalHMI(QMainWindow):
                 self.log.append("ERROR: No serial ports detected.")
                 return
             try:
-                self.ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
-                self.set_pill(self.status_label, "Connected", "#22c55e", fg="#0f172a")
+                if port_name == "SIM":
+                    self.ser = VirtualController()
+                    self.set_pill(self.status_label, "SIM MODE", "#f59e0b", fg="#0f172a")
+                else:
+                    self.ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
+                    self.set_pill(self.status_label, "Connected", "#22c55e", fg="#0f172a")
                 self.connect_button.setText("Disconnect"); self.set_controls_enabled(True)
                 self.listener_thread = threading.Thread(target=listen_for_data, args=(self.ser, self.signal_bridge), daemon=True); self.listener_thread.start()
                 self.log.append(f"Successfully connected to {port_name}")
@@ -1644,6 +1790,7 @@ class MinimalHMI(QMainWindow):
         self.auto_position_label.setText(f"{pos:.4f}")
         if hasattr(self, 'fa_position_label'):
             self.fa_position_label.setText(f"{pos:.4f}")
+        self._sim_track_carriage(pos)
         if self.pred_active: self.pred_start_pos = pos; self.pred_start_time = time.monotonic()
 
     def update_homed_status(self, status):
@@ -1709,6 +1856,8 @@ class MinimalHMI(QMainWindow):
                        getattr(self, 'fa_board_sensor_label', None)):
             if widget is not None:
                 self.set_pill(widget, text, bg)
+        if hasattr(self, 'saw_sim'):
+            self.saw_sim.set_board_sensor(status == 1)
 
     def update_current_voltage(self, volts):
         self.current_sensor_voltage = max(0.0, volts)
@@ -1788,6 +1937,9 @@ class MinimalHMI(QMainWindow):
                 
             if hasattr(self, 'load_button') and self.load_button is not None:
                 self.load_button.setText(f"LOAD POSITION ({pos:.2f}\")")
+
+            if hasattr(self, 'saw_sim'):
+                self.saw_sim.set_home_position(pos)
                 
         except Exception as e:
             print("update_home_position guarded:", e)
@@ -1834,6 +1986,7 @@ class MinimalHMI(QMainWindow):
         if (self.pred_dir > 0 and pos > sf) or (self.pred_dir < 0 and pos < sf): pos = sf; self.pred_active = False
         self.position_label.setText(f"{pos:.4f}"); self.auto_position_label.setText(f"{pos:.4f}")
         if hasattr(self, 'fa_position_label'): self.fa_position_label.setText(f"{pos:.4f}")
+        self._sim_track_carriage(pos)
 
     # ---------- Settings persistence ----------
     def _settings_widgets(self):
