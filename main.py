@@ -18,9 +18,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QPushButton, QTextBrowser, QLabel, QGridLayout,
     QDoubleSpinBox, QGroupBox, QCheckBox, QTabWidget, QToolButton,
     QFileDialog, QTextEdit, QRadioButton, QComboBox, QProgressBar,
-    QSpinBox, QFormLayout
+    QSpinBox, QFormLayout, QMessageBox, QProgressDialog
 )
-from PyQt6.QtCore import Qt, QTimer, QSettings
+from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal
 from PyQt6.QtGui import QTextCursor, QIcon
 
 # Import from our other modules
@@ -30,6 +30,40 @@ from ui_components import KeypadWidget, CurrentGraphWidget
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
+from _version import __version__ as APP_VERSION
+import updater
+
+
+class _UpdateChecker(QThread):
+    """Background check for a newer GitHub release; won't freeze startup."""
+    update_found = pyqtSignal(dict)
+
+    def run(self):
+        try:
+            info = updater.check_for_update()
+        except Exception:
+            info = None
+        if info:
+            self.update_found.emit(info)
+
+
+class _UpdateDownloader(QThread):
+    """Downloads the release EXE off the UI thread, reporting progress."""
+    progress = pyqtSignal(int, int)       # downloaded, total bytes
+    finished_path = pyqtSignal(object)    # local Path, or None on failure
+
+    def __init__(self, info, parent=None):
+        super().__init__(parent)
+        self._info = info
+
+    def run(self):
+        try:
+            path = updater.download_update(
+                self._info, progress_cb=lambda d, t: self.progress.emit(d, t)
+            )
+        except Exception:
+            path = None
+        self.finished_path.emit(path)
 
 def get_app_dir():
     if getattr(sys, "frozen", False):
@@ -51,8 +85,11 @@ class MinimalHMI(QMainWindow):
         icon_path = get_icon_path()
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
-        self.setWindowTitle("Chop Saw HMI — Profiles & Touch UI")
+        self.setWindowTitle(f"Chop Saw HMI — Profiles & Touch UI  (v{APP_VERSION})")
         self.resize(1280, 900)
+        self._pending_update = None      # update info dict awaiting install
+        self._downloaded_exe = None      # local Path of a downloaded installer
+        self._update_dialog = None
 
         # Serial
         self.ser = None
@@ -136,6 +173,11 @@ class MinimalHMI(QMainWindow):
         self.apply_theme()
         self._load_settings()
         self.update_current_monitor_ui()
+
+        # Background update check (silent; only surfaces a banner if newer)
+        self._update_checker = _UpdateChecker(self)
+        self._update_checker.update_found.connect(self._on_update_found)
+        self._update_checker.start()
 
     # ---------- Theme ----------
     def apply_theme(self):
@@ -234,6 +276,26 @@ class MinimalHMI(QMainWindow):
         top.addStretch()
         root.addLayout(top)
         self.refresh_serial_ports()
+
+        # Update banner (hidden until a newer release is detected)
+        self.update_banner = QWidget()
+        self.update_banner.setStyleSheet(
+            "background-color:#1e3a8a; border:1px solid #2563eb; border-radius:10px;"
+        )
+        banner_row = QHBoxLayout(self.update_banner)
+        banner_row.setContentsMargins(12, 6, 12, 6)
+        self.update_banner_label = QLabel("Update available")
+        self.update_banner_label.setStyleSheet("color:#e2e8f0; font-weight:bold; background:transparent; border:none;")
+        banner_row.addWidget(self.update_banner_label, 1)
+        self.update_install_btn = QPushButton("Install && Restart")
+        self.update_install_btn.setStyleSheet("background-color:#22c55e; color:white; font-weight:700;")
+        self.update_install_btn.clicked.connect(self._install_update)
+        banner_row.addWidget(self.update_install_btn)
+        self.update_later_btn = QPushButton("Later")
+        self.update_later_btn.clicked.connect(lambda: self.update_banner.setVisible(False))
+        banner_row.addWidget(self.update_later_btn)
+        self.update_banner.setVisible(False)
+        root.addWidget(self.update_banner)
 
         # Tabs
         self.tabs = QTabWidget(); root.addWidget(self.tabs)
@@ -743,6 +805,17 @@ class MinimalHMI(QMainWindow):
 
         self.apply_profile_btn = QPushButton("Apply Selected Profile Settings Now"); self.apply_profile_btn.clicked.connect(self.apply_current_profile_params); pg.addWidget(self.apply_profile_btn, 3, 0, 1, 6)
         root.addWidget(profiles)
+
+        # Software updates
+        updates_group = QGroupBox("Software")
+        ug = QHBoxLayout(updates_group)
+        self.version_label = QLabel(f"Version {APP_VERSION}")
+        ug.addWidget(self.version_label)
+        ug.addStretch()
+        self.check_updates_btn = QPushButton("Check for Updates")
+        self.check_updates_btn.clicked.connect(self.check_updates_manual)
+        ug.addWidget(self.check_updates_btn)
+        root.addWidget(updates_group)
 
         serial_group = QGroupBox("Serial Monitor")
         serial_layout = QVBoxLayout(serial_group)
@@ -2042,6 +2115,107 @@ class MinimalHMI(QMainWindow):
             self.settings.setValue(key, widget.value())
         self.settings.setValue("current_monitoring", self.current_monitoring_checkbox.isChecked())
         self.settings.setValue("serial_port", self.selected_serial_port)
+
+    # ---------- Software updates ----------
+    def _on_update_found(self, info):
+        self._pending_update = info
+        notes = info.get("notes", "")
+        first_line = notes.splitlines()[0] if notes else ""
+        text = f"Update v{info.get('version')} is available"
+        if first_line:
+            text += f" — {first_line}"
+        self.update_banner_label.setText(text)
+        self.update_banner.setVisible(True)
+
+    def check_updates_manual(self):
+        self.check_updates_btn.setEnabled(False)
+        self.check_updates_btn.setText("Checking…")
+        QApplication.processEvents()
+        try:
+            info = updater.check_for_update()
+        except Exception:
+            info = None
+        self.check_updates_btn.setEnabled(True)
+        self.check_updates_btn.setText("Check for Updates")
+
+        if info:
+            self._on_update_found(info)
+            QMessageBox.information(
+                self, "Update Available",
+                f"Version {info.get('version')} is available.\n\n"
+                "Use the banner at the top to install and restart.")
+        else:
+            # Distinguish "offline / error" from "genuinely up to date"
+            reachable = False
+            try:
+                updater._http_get(updater.API_LATEST, updater.DEFAULT_TIMEOUT)
+                reachable = True
+            except Exception:
+                reachable = False
+            if reachable:
+                QMessageBox.information(
+                    self, "Up to Date",
+                    f"You are running the latest version (v{APP_VERSION}).")
+            else:
+                QMessageBox.warning(
+                    self, "Update Check Failed",
+                    "Could not reach the update server.\n"
+                    "Check your internet connection and try again.")
+
+    def _install_update(self):
+        info = self._pending_update
+        if not info:
+            QMessageBox.warning(self, "No Update", "No pending update to install.")
+            return
+        if not getattr(sys, "frozen", False):
+            QMessageBox.information(
+                self, "Developer Mode",
+                "Updates can only be installed from the packaged .exe, "
+                "not when running from source.")
+            return
+
+        # Download with a modal progress dialog
+        self._update_dialog = QProgressDialog(
+            "Downloading update…", "Cancel", 0, 100, self)
+        self._update_dialog.setWindowTitle("Updating")
+        self._update_dialog.setMinimumDuration(0)
+        self._update_dialog.setValue(0)
+
+        self._downloader = _UpdateDownloader(info, self)
+        self._downloader.progress.connect(self._on_download_progress)
+        self._downloader.finished_path.connect(self._on_download_finished)
+        self._update_dialog.canceled.connect(self._downloader.requestInterruption)
+        self.update_install_btn.setEnabled(False)
+        self._downloader.start()
+
+    def _on_download_progress(self, downloaded, total):
+        if self._update_dialog and total > 0:
+            self._update_dialog.setValue(int(downloaded * 100 / total))
+
+    def _on_download_finished(self, path):
+        if self._update_dialog:
+            self._update_dialog.close()
+            self._update_dialog = None
+        self.update_install_btn.setEnabled(True)
+
+        if not path:
+            QMessageBox.critical(
+                self, "Update Failed",
+                "The update could not be downloaded or failed its integrity "
+                "check. Please try again later.")
+            return
+
+        self._downloaded_exe = path
+        if not updater.schedule_update(path):
+            QMessageBox.critical(
+                self, "Update Failed",
+                "Could not schedule the update install.")
+            return
+        QMessageBox.information(
+            self, "Restarting",
+            "The update has been downloaded. The app will now close and "
+            "restart on the new version.")
+        self.close()
 
     def closeEvent(self, event):
         self._save_settings()
