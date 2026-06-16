@@ -21,7 +21,7 @@ class VirtualController:
     plus an SSEN field for the saw position sensor.
     """
 
-    def __init__(self, home_position=168.0):
+    def __init__(self, home_position=160.5):  # matches firmware HOME_POSITION_INCHES
         self.is_open = True
         self.home_position = home_position
         self.board_length = 145.5  # set by the HMI: usable length + truing trim

@@ -121,7 +121,7 @@ class MinimalHMI(QMainWindow):
         # never the UI labels (which can show interpolated predictions).
         self.current_position = 0.0
 
-        self.home_position = 168.0
+        self.home_position = 160.5  # matches firmware HOME_POSITION_INCHES (V2.5)
         self.standard_board_length = 144.5
         # (radio label, usable board length, carriage load position).
         # load_pos None = use the live home position. Load positions are
@@ -140,6 +140,12 @@ class MinimalHMI(QMainWindow):
         self.clamp_right_engaged = False
         self.clamp_fence_engaged = False
         self.clamps_engaged_cutting = False   # True while saw is down, awaiting sensor return
+        # Auto clamp/saw sequencing. OFF = manual mode: the HMI sends no cylinder
+        # (C1-3 / D1-3) or saw (V1) commands, so it stays compatible with firmware
+        # that has no cylinder support (e.g. Closed-Loop AUTO V2.5, where C1 would
+        # collide with the calibration command). Operator cuts and presses CUT
+        # COMPLETE, exactly like the 03.07 build.
+        self.auto_clamp_enabled = False
         # Line-view animation state: mirrors the physical board through the cycle
         self.sim_board_remaining = None   # inches of board left (None = no board on the line)
         self.sim_board_trimmed = False    # truing cut done
@@ -969,6 +975,18 @@ class MinimalHMI(QMainWindow):
         timing_form.setContentsMargins(10, 8, 10, 8)
         timing_form.setSpacing(8)
 
+        # Master switch for hardware clamp/saw automation. Default OFF keeps the
+        # HMI compatible with firmware that has no cylinder support.
+        self.auto_clamp_checkbox = QCheckBox("Enable auto clamp && saw (needs firmware support)")
+        self.auto_clamp_checkbox.setChecked(self.auto_clamp_enabled)
+        self.auto_clamp_checkbox.setToolTip(
+            "OFF (recommended for current firmware): the HMI never sends cylinder or saw\n"
+            "commands; you cut manually and press CUT COMPLETE.\n"
+            "ON: the HMI drives the air clamps and saw automatically. Only enable this\n"
+            "once the controller firmware supports the cylinder/saw commands.")
+        self.auto_clamp_checkbox.toggled.connect(self._on_auto_clamp_toggled)
+        timing_form.addRow(self.auto_clamp_checkbox)
+
         self.fa_clamp_engage_delay = QSpinBox()
         self.fa_clamp_engage_delay.setRange(0, 5000)
         self.fa_clamp_engage_delay.setValue(300)
@@ -1139,10 +1157,30 @@ class MinimalHMI(QMainWindow):
             QTimer.singleShot(2000, lambda: self.update_saw_position_sensor_status(1))
 
     def _release_all_clamps(self):
-        """Retract all three air cylinder clamps."""
+        """Retract all three air cylinder clamps (skipped in manual mode)."""
+        if not self.auto_clamp_enabled:
+            return
         self.cylinder_retract(1)
         self.cylinder_retract(2)
         self.cylinder_retract(3)
+
+    def _on_auto_clamp_toggled(self, checked):
+        self.auto_clamp_enabled = checked
+        mode = "Auto clamp/saw ENABLED" if checked else "Manual cut mode (no clamp/saw commands)"
+        self.log.append(mode)
+        if checked:
+            self._set_cycle_status("STATUS: Auto clamp/saw enabled — ensure firmware supports it.")
+
+    def _record_sim_piece(self, early_return, is_truing):
+        """Record what the next stroke cuts, for the line-view animation."""
+        if is_truing:
+            self.sim_active_piece = {"truing": True}
+        elif self.current_cut_index < len(self.cut_list):
+            _, length, _ = self.cut_list[self.current_cut_index]
+            self.sim_active_piece = {
+                "truing": False, "early": early_return, "length": length,
+                "color": PIECE_COLORS[self.current_cut_index % len(PIECE_COLORS)],
+            }
 
     # ---------- Line-view simulation tracking ----------
     def _sync_sim_index(self):
@@ -1248,15 +1286,7 @@ class MinimalHMI(QMainWindow):
             else:
                 self._set_cycle_status(f"STATUS: Short tail ({position:.2f}\") — clamping R only...")
 
-        # Record what this stroke will cut, for the line-view animation
-        if is_truing:
-            self.sim_active_piece = {"truing": True}
-        elif self.current_cut_index < len(self.cut_list):
-            _, length, _ = self.cut_list[self.current_cut_index]
-            self.sim_active_piece = {
-                "truing": False, "early": early_return, "length": length,
-                "color": PIECE_COLORS[self.current_cut_index % len(PIECE_COLORS)],
-            }
+        self._record_sim_piece(early_return, is_truing)
 
         clamp_delay = self.fa_clamp_engage_delay.value() if hasattr(self, 'fa_clamp_engage_delay') else 300
         saw_delay   = self.fa_saw_start_delay.value()    if hasattr(self, 'fa_saw_start_delay')    else 800
@@ -1581,6 +1611,9 @@ class MinimalHMI(QMainWindow):
             # Acknowledged before the saw-up edge arrived; book the cut now
             self.clamps_engaged_cutting = False
             self._on_cut_finished()
+        elif self.sim_active_piece is not None:
+            # Manual mode: the operator made the cut; book it for the animation
+            self._on_cut_finished()
         self._release_all_clamps()
         self._update_saw_sensor_pill("UP", "#22c55e")
         if self.auto_cycle_state == "WAITING_FOR_TRUING_CUT":
@@ -1898,12 +1931,17 @@ class MinimalHMI(QMainWindow):
 
         if state == "IDLE" and previous_motor_state in ["MOVING", "DETECTING"]:
             if self.perform_early_return:
-                # Last cut on this board — clamp, simulate cut, and return in parallel.
-                # Clamps auto-release after 2 s; no CUT COMPLETE needed.
+                # Last cut on this board — cut happens while the carriage returns.
                 self.perform_early_return = False
                 self.is_early_returning = True
 
-                self._engage_clamps_for_cut(early_return=True)  # clamps + sensor-gated release
+                if self.auto_clamp_enabled:
+                    self._engage_clamps_for_cut(early_return=True)  # clamps + sensor-gated release
+                else:
+                    # Manual mode: book the cut for the animation, no hardware commands
+                    self._record_sim_piece(early_return=True, is_truing=False)
+                    if self.sim_active_piece is not None:
+                        self._on_cut_finished()
 
                 if self.current_cut_index < len(self.cut_list):
                     self.current_cut_index += 1
@@ -1927,7 +1965,13 @@ class MinimalHMI(QMainWindow):
 
             elif self.auto_cycle_state in ["WAITING_FOR_TRUING_CUT", "WAITING_FOR_CUT"]:
                 self._set_cut_complete_enabled(True)
-                self._engage_clamps_for_cut()
+                if self.auto_clamp_enabled:
+                    self._engage_clamps_for_cut()
+                else:
+                    # Manual mode: just record the piece; CUT COMPLETE books it
+                    is_truing = self.auto_cycle_state == "WAITING_FOR_TRUING_CUT"
+                    self._record_sim_piece(early_return=False, is_truing=is_truing)
+                    self._set_cycle_status("STATUS: In position — make the cut, press CUT COMPLETE.")
 
     def update_sensor_status(self, status):
         text = "ON" if status == 1 else "OFF"; bg = "#22c55e" if status == 1 else "#ef4444"
@@ -2109,11 +2153,15 @@ class MinimalHMI(QMainWindow):
         self.current_limit_amps = self.current_limit_input.value()
         self.current_trip_delay_ms = int(self.current_delay_input.value())
         self.current_graph.set_limit(self.current_limit_amps)
+        # Default OFF: stay firmware-compatible unless explicitly enabled before
+        self.auto_clamp_enabled = self.settings.value("auto_clamp_enabled", False, type=bool)
+        self.auto_clamp_checkbox.setChecked(self.auto_clamp_enabled)
 
     def _save_settings(self):
         for key, widget in self._settings_widgets().items():
             self.settings.setValue(key, widget.value())
         self.settings.setValue("current_monitoring", self.current_monitoring_checkbox.isChecked())
+        self.settings.setValue("auto_clamp_enabled", self.auto_clamp_checkbox.isChecked())
         self.settings.setValue("serial_port", self.selected_serial_port)
 
     # ---------- Software updates ----------
@@ -2145,22 +2193,24 @@ class MinimalHMI(QMainWindow):
                 f"Version {info.get('version')} is available.\n\n"
                 "Use the banner at the top to install and restart.")
         else:
-            # Distinguish "offline / error" from "genuinely up to date"
-            reachable = False
+            # Distinguish "offline / error" from "genuinely up to date", and
+            # surface the real error so it can be diagnosed from the field.
+            error_detail = None
             try:
                 updater._http_get(updater.API_LATEST, updater.DEFAULT_TIMEOUT)
-                reachable = True
-            except Exception:
-                reachable = False
-            if reachable:
+            except Exception as exc:
+                error_detail = f"{type(exc).__name__}: {exc}"
+            if error_detail is None:
                 QMessageBox.information(
                     self, "Up to Date",
                     f"You are running the latest version (v{APP_VERSION}).")
             else:
                 QMessageBox.warning(
                     self, "Update Check Failed",
-                    "Could not reach the update server.\n"
-                    "Check your internet connection and try again.")
+                    "Could not reach the update server.\n\n"
+                    f"Update source:\n{updater.API_LATEST}\n\n"
+                    f"Details:\n{error_detail}\n\n"
+                    "Check the internet connection / firewall and try again.")
 
     def _install_update(self):
         info = self._pending_update

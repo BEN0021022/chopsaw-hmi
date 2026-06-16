@@ -42,7 +42,7 @@ w.fa_saw_start_delay.setValue(60)
 
 w.home_motor()
 pump_until(lambda: w.homed_label.text() == "HOMED", 15, "homing")
-assert abs(w.current_position - 168.0) < 0.01
+assert abs(w.current_position - 160.5) < 0.01
 print(f"homed at {w.current_position:.2f}")
 
 w.load_cut_list_lines(["18 A", "24 B", "30 C"])
@@ -76,7 +76,7 @@ expected_remaining = 145.5 - 1.0 - (18 + 0.1) - (24 + 0.1) - (30 + 0.1)
 assert abs(w.sim_board_remaining - expected_remaining) < 0.01, w.sim_board_remaining
 assert w.sim_next_piece_index == 3
 assert w.saw_sim._eject["label"] == '30"'
-assert abs(w.current_position - 168.0) < 0.01, "carriage should be back at load"
+assert abs(w.current_position - 160.5) < 0.01, "carriage should be back at load"
 
 # Widget paints without errors
 img = w.saw_sim.grab()
