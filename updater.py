@@ -35,6 +35,21 @@ USER_AGENT = f"{APP_EXE_NAME}-updater"
 DEFAULT_TIMEOUT = 8.0
 
 
+def _ssl_context():
+    """
+    Build an SSL context with a CA bundle that works inside a frozen
+    PyInstaller .exe. The bundled app has no system cert store, so verifying
+    GitHub's HTTPS cert fails with CERTIFICATE_VERIFY_FAILED unless we point
+    at certifi's bundled CA file. Falls back to the system default when running
+    from source. Verification is always ON (never disabled).
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def _current_version():
     """Running app version from _version.py; '0.0.0' if it can't be read."""
     try:
@@ -68,7 +83,7 @@ def _http_get(url, timeout, accept="application/vnd.github+json"):
         "User-Agent": USER_AGENT,
         "Accept": accept,
     })
-    context = ssl.create_default_context()
+    context = _ssl_context()
     with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         return resp.read()
 
@@ -146,7 +161,7 @@ def download_update(info, progress_cb=None, timeout=60.0):
     hasher = hashlib.sha256()
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        context = ssl.create_default_context()
+        context = _ssl_context()
         with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
             total = int(resp.headers.get("Content-Length") or info.get("size") or 0)
             downloaded = 0
