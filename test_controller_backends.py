@@ -1,6 +1,7 @@
 """Command-contract tests for every controller backend (no hardware required)."""
 
 from controller_backends import (
+    CONTROLLER_MODES,
     LEGACY_MEGA,
     TEENSY_GRBLHAL,
     TEENSY_HARDWARE_TEST,
@@ -8,8 +9,11 @@ from controller_backends import (
 )
 
 
-def test_legacy_mega_contract():
+def test_legacy_mega_is_archived_not_selectable():
+    assert LEGACY_MEGA not in {mode.key for mode in CONTROLLER_MODES}
     backend = create_controller_backend(LEGACY_MEGA)
+    # The implementation remains only to support the offline simulator and the
+    # archived baseline; the live Teensy UI cannot select it.
     assert backend.capabilities.manual_motion_ready
     assert backend.capabilities.automatic_cycle_ready
     assert backend.capabilities.automatic_cutting_ready
@@ -19,26 +23,16 @@ def test_legacy_mega_contract():
     assert backend.truing_cycle(10.8) == ["J10.8000"]
 
 
-def test_teensy_test_contract_and_actuator_interlock():
+def test_teensy_test_contract_is_diagnostics_only():
     backend = create_controller_backend(TEENSY_HARDWARE_TEST)
     assert not backend.capabilities.manual_motion_ready
     assert not backend.capabilities.automatic_cycle_ready
-    assert backend.capabilities.clamps
-    assert backend.capabilities.actuator
+    assert not backend.capabilities.clamps
+    assert not backend.capabilities.actuator
     assert backend.startup_commands() == ["PINMAP", "I2C", "STATUS"]
-    assert backend.clamp_extend(1) == ["OUT 0 1"]
-    assert backend.clamp_retract(3) == ["OUT 2 0"]
-    assert backend.actuator_direction("off") == ["OUT 3 0", "OUT 4 0"]
-    assert backend.actuator_direction("forward") == [
-        "OUT 3 0",
-        "OUT 4 0",
-        "OUT 3 1",
-    ]
-    assert backend.actuator_direction("reverse") == [
-        "OUT 3 0",
-        "OUT 4 0",
-        "OUT 4 1",
-    ]
+    assert backend.clamp_extend(1) == []
+    assert backend.clamp_retract(1) == []
+    assert backend.actuator_direction("forward") == []
     assert backend.actuator_direction("invalid") == []
 
 
@@ -56,8 +50,8 @@ def test_grblhal_is_motion_prototype_only():
 
 def main():
     tests = [
-        test_legacy_mega_contract,
-        test_teensy_test_contract_and_actuator_interlock,
+        test_legacy_mega_is_archived_not_selectable,
+        test_teensy_test_contract_is_diagnostics_only,
         test_grblhal_is_motion_prototype_only,
     ]
     for test in tests:

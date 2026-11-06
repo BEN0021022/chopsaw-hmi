@@ -34,7 +34,6 @@ class ControllerCapabilities:
 
 
 CONTROLLER_MODES = (
-    ControllerMode(LEGACY_MEGA, "Legacy Arduino Mega"),
     ControllerMode(TEENSY_HARDWARE_TEST, "Teensy Hardware Test"),
     ControllerMode(TEENSY_GRBLHAL, "Teensy grblHAL"),
 )
@@ -179,52 +178,13 @@ class LegacyMegaBackend(ControllerBackend):
 class TeensyHardwareTestBackend(ControllerBackend):
     key = TEENSY_HARDWARE_TEST
     label = "Teensy Hardware Test"
-    capabilities = ControllerCapabilities(
-        clamps=True,
-        actuator=True,
-    )
-
-    _CLAMP_OUTPUTS = {
-        1: 0,
-        2: 1,
-        3: 2,
-    }
+    # Live pneumatic outputs are deliberately unavailable to the full HMI.
+    # Commissioning is restricted to the separate Sensor Bench, which requires
+    # explicit arming, momentary controls, a keepalive, and firmware timeouts.
+    capabilities = ControllerCapabilities()
 
     def startup_commands(self):
         return ["PINMAP", "I2C", "STATUS"]
-
-    def clamp_extend(self, cylinder_id):
-        output = self._CLAMP_OUTPUTS.get(int(cylinder_id))
-        return [] if output is None else [f"OUT {output} 1"]
-
-    def clamp_retract(self, cylinder_id):
-        output = self._CLAMP_OUTPUTS.get(int(cylinder_id))
-        return [] if output is None else [f"OUT {output} 0"]
-
-    def clamp_all(self, enabled):
-        value = 1 if enabled else 0
-        return [f"OUT {output} {value}" for output in self._CLAMP_OUTPUTS.values()]
-
-    def actuator_forward(self, enabled):
-        return self.actuator_direction("forward" if enabled else "off")
-
-    def actuator_reverse(self, enabled):
-        return self.actuator_direction("reverse" if enabled else "off")
-
-    def actuator_direction(self, direction):
-        direction = str(direction).strip().lower()
-        if direction == "off":
-            return ["OUT 3 0", "OUT 4 0"]
-        if direction == "forward":
-            # De-energize both directions before selecting one. Firmware and
-            # hardware must enforce the same mutual exclusion independently.
-            return ["OUT 3 0", "OUT 4 0", "OUT 3 1"]
-        if direction == "reverse":
-            return ["OUT 3 0", "OUT 4 0", "OUT 4 1"]
-        return []
-
-    def motor_power(self, enabled):
-        return [f"EN {1 if enabled else 0}"]
 
     def stop_motion(self):
         return ["OFF"]
@@ -259,8 +219,12 @@ class TeensyGrblHalBackend(ControllerBackend):
 
 
 def create_controller_backend(mode_key):
+    if mode_key == LEGACY_MEGA:
+        # Retained only for the offline simulator and the archived baseline.
+        # It is not listed as a selectable live controller in the Teensy build.
+        return LegacyMegaBackend()
     if mode_key == TEENSY_HARDWARE_TEST:
         return TeensyHardwareTestBackend()
     if mode_key == TEENSY_GRBLHAL:
         return TeensyGrblHalBackend()
-    return LegacyMegaBackend()
+    return TeensyHardwareTestBackend()

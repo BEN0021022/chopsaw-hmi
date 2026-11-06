@@ -29,9 +29,9 @@ T41U5XBB V2.20 board. This is not yet an approved machine-wiring map.
 | AUX0 | D31 | AUX0 screw terminal | ULN2003 open-collector low-side sink | Do not use for the active-high MOSFET trigger |
 | AUX1 | D32 | AUX1 screw terminal | ULN2003 open-collector low-side sink | Do not use for the active-high MOSFET trigger |
 | AUX2 | D33 | AUX2 screw terminal | ULN2003 open-collector low-side sink | Do not use for the active-high MOSFET trigger |
-| AUX0 TTL | D31 | JP10 `AUX0` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Planned Clamp 1 MOSFET trigger |
-| AUX1 TTL | D32 | JP10 `AUX1` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Planned Clamp 2 MOSFET trigger |
-| AUX2 TTL | D33 | JP10 `AUX2` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Planned Clamp 3 MOSFET trigger |
+| AUX0 TTL | D31 | JP10 `AUX0` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Saw-cylinder MOSFET trigger for commissioning |
+| AUX1 TTL | D32 | JP10 `AUX1` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Main left-clamp MOSFET trigger for commissioning |
+| AUX2 TTL | D33 | JP10 `AUX2` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Spare pneumatic test channel |
 | Flood | D19 | Relay Flood | Open-collector relay driver | Reported; load unassigned |
 | Mist | D18 | Relay Mist | Open-collector relay driver | Reported; load unassigned |
 | I2C SCL | D24 | I2C `SC`/SCL | 3.3 V | Bench-verified with MCP23017 and INA228 |
@@ -101,7 +101,7 @@ insert bare strands or ferrules into the plated holes.
 5. For the first powered test, leave every MCP23017 PA/PB I/O pin unconnected
    and run the I2C scan; expect the default 7-bit address `0x27`.
 
-## Clamp MOSFET trigger mapping
+## Pneumatic MOSFET trigger mapping
 
 The board schematic confirms that the AUX screw terminals and JP10 logic header
 are two different electrical interfaces. The owned MOSFET modules require an
@@ -112,18 +112,19 @@ right hole is `Gnd`.
 
 | Sensor Bench command | Planned use | JP10 connection | Teensy pin | Approval |
 |---|---|---|---|---|
-| `OUT 0 0/1` | Clamp 1 | JP10 AUX0 `Sig` and adjacent `Gnd` | D31 | Firmware mapped; electrical test pending |
-| `OUT 1 0/1` | Clamp 2 | JP10 AUX1 `Sig` and adjacent `Gnd` | D32 | Firmware mapped; electrical test pending |
-| `OUT 2 0/1` | Clamp 3 | JP10 AUX2 `Sig` and adjacent `Gnd` | D33 | Trigger LED bench-verified; no load connected; valve test pending |
+| `OUT 0 0/1` | Saw cylinder valve | JP10 AUX0 `Sig` and adjacent `Gnd` | D31 | Assign for current commissioning; verify OFF=saw up before use |
+| `OUT 1 0/1` | Main clamp valve, left of blade | JP10 AUX1 `Sig` and adjacent `Gnd` | D32 | Assign for current commissioning; verify OFF=clamp released before use |
+| `OUT 2 0/1` | Spare pneumatic channel | JP10 AUX2 `Sig` and adjacent `Gnd` | D33 | Trigger LED bench-verified; keep load disconnected until assigned |
 
 Do not connect the module `TRIG/PWM` input to an AUX screw-terminal output: that
 path is an inverting open-collector sink and does not supply the active-high
 trigger this module expects. The JP10 logic grounds are trigger-return grounds;
 the MOSFET module load supply and valve wiring use the module power terminals.
 
-The Sensor Bench intentionally exposes only these three clamp-test outputs.
-Actuator forward/reverse remain unavailable and still require independent
-electrical and firmware direction exclusion.
+The Sensor Bench intentionally exposes only these three momentary pneumatic-test
+outputs. The full HMI cannot command them. Automatic saw/clamp sequencing remains
+unavailable until position feedback, pressure state, interlocks, and an approved
+state machine have been validated.
 
 ## Observed validation inputs
 
@@ -140,7 +141,7 @@ behavior, active polarity, and fail-safe wiring have not been established.
 `firmware/chopsaw_sensor_bench/chopsaw_sensor_bench.ino` is the source-controlled
 commissioning firmware. It remaps `BOARD_EDGE` from Probe/D15 to the intact
 Limit Y/D21 screw terminal, configures the eight documented direct inputs and
-all MCP23017 channels as inputs, and configures only D31-D33 as guarded clamp
+all MCP23017 channels as inputs, and configures only D31-D33 as guarded pneumatic
 test outputs. They latch LOW before output mode, require explicit HMI arming and
 a 500 ms keepalive, shut off after 1.5 seconds without keepalive, and have a
 5-second maximum continuous-on time. No motion, actuator, saw, or enable output

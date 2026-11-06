@@ -1,19 +1,15 @@
 # Preliminary Power Architecture
 
-Status: planning only - do not use this document as a finished wiring diagram.
+Status: commissioning draft - do not use this document as a finished wiring diagram.
 
 ## Safe configuration for the current bench stage
 
 ```text
-Laptop USB (normal cable for USB-only bench testing)
-   |
-   +----> Teensy 4.1 USB connector
-              |
-              +----> T41U5XBB logic rail
+Dell 19.5 VDC / 9.23 A source
+   +--> 5.00 V buck --> externally powered T41U5XBB and Teensy logic
+   +--> 12.0 V buck --> fused sensor/valve branches and MOSFET VIN
 
-12 V supply: OFF / disconnected
-Buck converter output: disconnected from T41U5XBB
-Field loads and MOSFET loads: disconnected
+Laptop USB --> verified data-only power blocker/cable --> Teensy communications
 ```
 
 This matches the successful communications test and prevents an external supply
@@ -26,14 +22,12 @@ AC mains
    |
    +-- fused machine power / safety contactor --> motor and other high-energy loads
    |
-   +-- protected DC supply branch(es)
+   +-- Dell 180 W adapter: 19.5 VDC, 9.23 A source rail
           |
-          +-- 12 V field/relay branch --> T41U5XBB +12 V input when required
+          +-- 5.00 V buck --> T41U5XBB logic input
           |
-          +-- 12 V --> buck converter --> regulated 5.00 V logic branch
-                                      --> T41U5XBB +5 V
-                                      --> compatible sensors/modules as budgeted
-
+          +-- 12.0 V buck --> sensors and individually protected valve branches
+          |
 Laptop USB --> dedicated data-only cable (VBUS conductor removed) --> Teensy communications
 ```
 
@@ -68,7 +62,7 @@ contains a V2.07 label. The selected data-only USB cable avoids modifying JP105.
 
 ## Required protections and decisions
 
-- Fuse the 12 V feed and each material load branch based on verified wire and
+- Fuse the 5 V and 12 V feeds and each material load branch based on verified wire and
   device ratings.
 - Add reverse-polarity and transient protection where it is not already present.
 - Confirm whether each MOSFET module switches the high or low side and whether it
@@ -80,17 +74,18 @@ contains a V2.07 label. The selected data-only USB cable avoids modifying JP105.
 - Add strain relief, terminal labels, guarded power distribution, and a service
   disconnect in the final enclosure.
 
-## Next no-load electrical checks
+## Current commissioning checks
 
-1. With both ends disconnected, verify that the dedicated USB cable has no VBUS
-   continuity while D+, D-, and ground remain continuous; label it DATA ONLY.
-2. Confirm the relay-voltage selector position and map its three pins.
-3. Power only the buck from a current-limited 12 V source; adjust and verify
-   5.00 V output and polarity.
-4. Do not connect MOSFET loads. Identify each module and bench-check its inactive
-   state before deciding which signals may drive it.
-5. Repeat the Teensy USB diagnostics first in the known USB-only state, then in
-   the externally powered state using only the verified data-only cable.
+1. Keep the verified USB power blocker/data-only connection permanently labeled;
+   never substitute an ordinary powered USB cable while external 5 V is present.
+2. Measure both buck outputs before every reconnection: 5.00 V for logic and
+   12.0 V for sensors/valves.
+3. Confirm the 12 V valve feed is fused before its distribution split and that
+   the fuse rating protects the smallest downstream conductor and connector.
+4. Confirm each MOSFET output is OFF at boot, USB disconnect, HMI disconnect,
+   watchdog timeout, and firmware reset.
+5. Verify the saw returns up and the main clamp releases when their valve coils
+   are de-energized before permitting higher pressure or combined sequencing.
 
 ## Reference
 

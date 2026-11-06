@@ -14,9 +14,9 @@ from sensor_bench.serial_link import is_allowed_command
 
 
 def test_protocol():
-    hello = parse_line("BENCH_HELLO,PROTO:2,FW:0.2.0,MOTION:0,TEST_OUTPUTS:3")
+    hello = parse_line("BENCH_HELLO,PROTO:2,FW:0.3.0,MOTION:0,TEST_OUTPUTS:3")
     assert hello and hello.kind == "BENCH_HELLO"
-    assert hello.fields["FW"] == "0.2.0"
+    assert hello.fields["FW"] == "0.3.0"
 
     inputs = parse_line("BENCH_INPUTS,SEQ:8,HOME:1,BOARD_EDGE:0")
     assert inputs and inputs.fields["BOARD_EDGE"] == "0"
@@ -49,6 +49,9 @@ def test_ui():
             settings_path, RealQSettings.Format.IniFormat
         )
         window = window_module.SensorBenchWindow()
+        assert "Saw Cylinder" in window_module.PNEUMATIC_OUTPUTS[0][1]
+        assert "Main Clamp" in window_module.PNEUMATIC_OUTPUTS[1][1]
+        assert "Spare" in window_module.PNEUMATIC_OUTPUTS[2][1]
 
         class FakeSerial:
             is_open = True

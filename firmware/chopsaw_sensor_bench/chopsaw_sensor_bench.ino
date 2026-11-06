@@ -1,8 +1,8 @@
 /*
   Chop Saw Sensor Bench - Teensy 4.1 / T41U5XBB V2.20
 
-  Input commissioning firmware plus three guarded, momentary clamp outputs.
-  It never issues motion. Clamp outputs boot OFF, require an explicit arm and
+  Input commissioning firmware plus three guarded, momentary pneumatic outputs.
+  It never issues motion. Pneumatic outputs boot OFF, require an explicit arm and
   host keepalive, and shut off on communications or maximum-on timeout.
 
   I2C header: Wire2, SDA D25, SCL D24, 3.3 V logic.
@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.2.0";
+constexpr char FIRMWARE_VERSION[] = "0.3.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -27,8 +27,10 @@ constexpr uint8_t SAW_DOWN_PIN = 30;      // ST1
 constexpr uint8_t FENCE_CLOSED_PIN = 34;  // ST2
 constexpr uint8_t OUTFEED_PIN = 35;       // ST3
 
-constexpr uint8_t CLAMP_PINS[] = {31, 32, 33};  // AUX0, AUX1, AUX2 TTL/SSR signals
-constexpr uint8_t CLAMP_COUNT = sizeof(CLAMP_PINS) / sizeof(CLAMP_PINS[0]);
+// Commissioning map: AUX0=saw cylinder, AUX1=main clamp left of blade,
+// AUX2=spare. The physical valve plumbing must make OFF the safe direction.
+constexpr uint8_t OUTPUT_PINS[] = {31, 32, 33};  // AUX0, AUX1, AUX2 TTL/SSR signals
+constexpr uint8_t OUTPUT_COUNT = sizeof(OUTPUT_PINS) / sizeof(OUTPUT_PINS[0]);
 
 constexpr uint32_t INPUT_INTERVAL_MS = 200;
 constexpr uint32_t HEALTH_INTERVAL_MS = 1000;
@@ -49,18 +51,18 @@ uint32_t lastHealthAt = 0;
 char commandBuffer[64];
 size_t commandLength = 0;
 bool outputsArmed = false;
-bool clampStates[CLAMP_COUNT] = {false, false, false};
-uint32_t clampOnAt[CLAMP_COUNT] = {0, 0, 0};
+bool outputStates[OUTPUT_COUNT] = {false, false, false};
+uint32_t outputOnAt[OUTPUT_COUNT] = {0, 0, 0};
 uint32_t lastKeepaliveAt = 0;
 const char *outputFault = "NONE";
 
 void publishOutputs();
 
 void allOutputsOff() {
-  for (uint8_t index = 0; index < CLAMP_COUNT; ++index) {
-    digitalWrite(CLAMP_PINS[index], LOW);
-    clampStates[index] = false;
-    clampOnAt[index] = 0;
+  for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
+    digitalWrite(OUTPUT_PINS[index], LOW);
+    outputStates[index] = false;
+    outputOnAt[index] = 0;
   }
 }
 
@@ -145,17 +147,17 @@ void publishPinMap() {
       "BENCH_PINMAP,HOME:D20/LIMIT_X,BOARD_EDGE:D21/LIMIT_Y,"
       "FENCE_DOOR:D29/DOOR,CL57T_ALM:D14/HALT,SAW_UP:D36/ST0,"
       "SAW_DOWN:D30/ST1,FENCE_CLOSED:D34/ST2,OUTFEED:D35/ST3,"
-      "CLAMP1:D31/AUX0_TTL,CLAMP2:D32/AUX1_TTL,CLAMP3:D33/AUX2_TTL");
+      "SAW_CYLINDER:D31/AUX0_TTL,MAIN_CLAMP:D32/AUX1_TTL,SPARE_OUT:D33/AUX2_TTL");
 }
 
 void publishOutputs() {
   Serial.print("BENCH_OUTPUTS,ARMED:");
   Serial.print(outputsArmed ? 1 : 0);
-  for (uint8_t index = 0; index < CLAMP_COUNT; ++index) {
+  for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
     Serial.print(",CLAMP");
     Serial.print(index + 1);
     Serial.print(':');
-    Serial.print(clampStates[index] ? 1 : 0);
+    Serial.print(outputStates[index] ? 1 : 0);
   }
   Serial.print(",FAULT:");
   Serial.println(outputFault);
@@ -301,24 +303,24 @@ void handleCommand(char *command) {
     int state = -1;
     char extra = '\0';
     if (sscanf(command, "OUT %d %d %c", &output, &state, &extra) != 2 ||
-        output < 0 || output >= CLAMP_COUNT || (state != 0 && state != 1)) {
+        output < 0 || output >= OUTPUT_COUNT || (state != 0 && state != 1)) {
       disarmOutputs("COMMAND");
       Serial.println("BENCH_ERROR,CODE:BAD_OUTPUT_COMMAND");
       publishOutputs();
       return;
     }
     if (state == 0) {
-      digitalWrite(CLAMP_PINS[output], LOW);
-      clampStates[output] = false;
-      clampOnAt[output] = 0;
+      digitalWrite(OUTPUT_PINS[output], LOW);
+      outputStates[output] = false;
+      outputOnAt[output] = 0;
       publishOutputs();
     } else if (!outputsArmed) {
       Serial.println("BENCH_ERROR,CODE:NOT_ARMED");
       publishOutputs();
-    } else if (!clampStates[output]) {
-      digitalWrite(CLAMP_PINS[output], HIGH);
-      clampStates[output] = true;
-      clampOnAt[output] = millis();
+    } else if (!outputStates[output]) {
+      digitalWrite(OUTPUT_PINS[output], HIGH);
+      outputStates[output] = true;
+      outputOnAt[output] = millis();
       publishOutputs();
     }
   } else if (startsWith(command, "EN") || startsWith(command, "G") ||
@@ -337,8 +339,8 @@ void enforceOutputSafety(uint32_t now) {
     publishOutputs();
     return;
   }
-  for (uint8_t index = 0; index < CLAMP_COUNT; ++index) {
-    if (clampStates[index] && now - clampOnAt[index] > OUTPUT_MAX_ON_MS) {
+  for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
+    if (outputStates[index] && now - outputOnAt[index] > OUTPUT_MAX_ON_MS) {
       disarmOutputs("MAX_ON");
       publishOutputs();
       return;
@@ -366,11 +368,11 @@ void readSerialCommands() {
 }  // namespace
 
 void setup() {
-  // Latch every clamp signal LOW before changing its pin to output. This keeps
+  // Latch every pneumatic signal LOW before changing its pin to output. This keeps
   // all three MOSFET triggers off during startup.
-  for (uint8_t index = 0; index < CLAMP_COUNT; ++index) {
-    digitalWrite(CLAMP_PINS[index], LOW);
-    pinMode(CLAMP_PINS[index], OUTPUT);
+  for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
+    digitalWrite(OUTPUT_PINS[index], LOW);
+    pinMode(OUTPUT_PINS[index], OUTPUT);
   }
   pinMode(HOME_PIN, INPUT_PULLUP);
   pinMode(BOARD_EDGE_PIN, INPUT_PULLUP);

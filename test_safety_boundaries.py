@@ -53,10 +53,10 @@ def main_test():
         assert not window.clamps_engaged_cutting
 
         window.controller = create_controller_backend(TEENSY_HARDWARE_TEST)
-        assert window.set_actuator_direction("forward")
-        assert window.ser.writes[-3:] == ["OUT 3 0", "OUT 4 0", "OUT 3 1"]
-        assert window.set_actuator_direction("reverse")
-        assert window.ser.writes[-3:] == ["OUT 3 0", "OUT 4 0", "OUT 4 1"]
+        writes_before = list(window.ser.writes)
+        assert not window.set_actuator_direction("forward")
+        assert not window.cylinder_extend(1)
+        assert window.ser.writes == writes_before
 
         window.close()
         app.processEvents()

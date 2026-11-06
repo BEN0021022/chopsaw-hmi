@@ -1,4 +1,4 @@
-"""Dark PyQt6 dashboard for sensor and guarded clamp-output bring-up."""
+"""Dark PyQt6 dashboard for sensor and guarded pneumatic-output bring-up."""
 
 from __future__ import annotations
 
@@ -54,10 +54,10 @@ DIRECT_SENSORS = (
     SensorDefinition("OUTFEED", "Outfeed Position", "ST3", "D35"),
 )
 
-CLAMP_OUTPUTS = (
-    (0, "Clamp 1", "AUX0 TTL", "D31"),
-    (1, "Clamp 2", "AUX1 TTL", "D32"),
-    (2, "Clamp 3", "AUX2 TTL", "D33"),
+PNEUMATIC_OUTPUTS = (
+    (0, "Saw Cylinder (verify OFF = UP)", "AUX0 TTL", "D31", "CLAMP1"),
+    (1, "Main Clamp - Left of Blade (verify OFF = RELEASED)", "AUX1 TTL", "D32", "CLAMP2"),
+    (2, "Spare Pneumatic Channel", "AUX2 TTL", "D33", "CLAMP3"),
 )
 
 
@@ -203,7 +203,7 @@ class SensorBenchWindow(QMainWindow):
         splitter.setSizes([760, 500])
         root.addWidget(splitter, 1)
 
-        log_group = QGroupBox("Serial Log (telemetry + guarded clamp-test commands)")
+        log_group = QGroupBox("Serial Log (telemetry + guarded pneumatic-test commands)")
         log_layout = QVBoxLayout(log_group)
         self.log = QTextBrowser()
         self.log.document().setMaximumBlockCount(400)
@@ -212,12 +212,12 @@ class SensorBenchWindow(QMainWindow):
         root.addWidget(log_group)
 
     def _output_panel(self) -> QWidget:
-        group = QGroupBox("Air Clamp MOSFET Output Test")
+        group = QGroupBox("Guarded Pneumatic MOSFET Output Test")
         outer = QVBoxLayout(group)
 
         warning = QLabel(
-            "FIRST TEST: isolate the air supply and disconnect the solenoid loads. "
-            "Verify the MOSFET module LED/output with a meter before connecting a valve."
+            "PNEUMATIC TEST: verify fused 12 V valve branches and confirm each power-OFF "
+            "direction before testing. Start at low pressure and use momentary controls only."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet(
@@ -227,7 +227,10 @@ class SensorBenchWindow(QMainWindow):
         outer.addWidget(warning)
 
         controls = QHBoxLayout()
-        self.output_confirmation = QCheckBox("Air is isolated and the test area is clear")
+        self.output_confirmation = QCheckBox(
+            "Pressure is regulated low; cylinders are secured; travel and pinch zones are clear; "
+            "manual air dump is within reach"
+        )
         self.output_confirmation.toggled.connect(self._confirmation_changed)
         controls.addWidget(self.output_confirmation)
         controls.addStretch()
@@ -243,7 +246,7 @@ class SensorBenchWindow(QMainWindow):
         row = QHBoxLayout()
         self.output_buttons: dict[int, QPushButton] = {}
         self.output_state_pills: dict[str, QLabel] = {}
-        for index, label, terminal, pin in CLAMP_OUTPUTS:
+        for index, label, terminal, pin, state_field in PNEUMATIC_OUTPUTS:
             tile = QFrame()
             tile.setObjectName("outputTile")
             tile_layout = QVBoxLayout(tile)
@@ -252,10 +255,10 @@ class SensorBenchWindow(QMainWindow):
             state = _pill("OFF", SLATE)
             button = QPushButton("HOLD TO ENERGIZE")
             button.setProperty("class", "output")
-            button.pressed.connect(lambda output=index: self._set_clamp_output(output, True))
-            button.released.connect(lambda output=index: self._set_clamp_output(output, False))
+            button.pressed.connect(lambda output=index: self._set_pneumatic_output(output, True))
+            button.released.connect(lambda output=index: self._set_pneumatic_output(output, False))
             self.output_buttons[index] = button
-            self.output_state_pills[f"CLAMP{index + 1}"] = state
+            self.output_state_pills[state_field] = state
             tile_layout.addWidget(heading)
             tile_layout.addWidget(state)
             tile_layout.addWidget(button)
@@ -404,7 +407,7 @@ class SensorBenchWindow(QMainWindow):
         fields = message.fields
         if message.kind == "BENCH_HELLO":
             self.output_capable = parse_int(fields.get("TEST_OUTPUTS"), 0) == 3
-            capability = "3 guarded clamp outputs" if self.output_capable else "input telemetry only"
+            capability = "3 guarded pneumatic outputs" if self.output_capable else "input telemetry only"
             detail = f"Firmware {fields.get('FW', '?')} | Protocol {fields.get('PROTO', '?')} | {capability}"
             self.teensy_card.set_state("HEALTHY", GREEN, detail)
             self._refresh_output_controls()
@@ -438,7 +441,7 @@ class SensorBenchWindow(QMainWindow):
                     _set_pill(pill, "UNKNOWN", SLATE)
             fault = fields.get("FAULT", "NONE")
             if fault != "NONE":
-                self.log.append(f"SAFETY: clamp outputs disarmed ({fault})")
+                self.log.append(f"SAFETY: pneumatic outputs disarmed ({fault})")
             self._refresh_output_controls()
         elif message.kind == "LEGACY_I2C_FOUND":
             address = fields.get("ADDRESS", "").upper()
@@ -481,7 +484,7 @@ class SensorBenchWindow(QMainWindow):
         elif self.output_confirmation.isChecked():
             self.link.send("ARM 1")
 
-    def _set_clamp_output(self, output: int, energized: bool) -> None:
+    def _set_pneumatic_output(self, output: int, energized: bool) -> None:
         # State pills change only when firmware echoes BENCH_OUTPUTS.
         if energized and not (self.outputs_armed and self.output_confirmation.isChecked()):
             return

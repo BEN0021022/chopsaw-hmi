@@ -16,7 +16,7 @@ OUTPUT_COMMAND = re.compile(r"OUT [0-2] [01]")
 
 
 def is_allowed_command(command: str) -> bool:
-    """Allow only telemetry and the three guarded clamp-test outputs."""
+    """Allow only telemetry and the three guarded pneumatic-test outputs."""
     normalized = " ".join(command.strip().upper().split())
     return (
         normalized in READ_COMMANDS

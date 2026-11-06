@@ -5,8 +5,10 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Safety status
 
-The Legacy Arduino Mega backend and virtual simulator are the working baseline.
-Teensy Hardware Test is diagnostics-only. Teensy grblHAL contains prototype
+The Arduino Mega hardware path was retired on 2026-11-06. Its last verified
+source is preserved in the sibling `ChopSawHMI` repository at tag
+`legacy-mega-last-working-2026-11-06`; it is not selectable as a live controller
+in this Teensy build. Teensy Hardware Test is diagnostics-only. Teensy grblHAL contains prototype
 motion commands but remains locked from operational UI controls until response
 parsing, alarms, limits, position feedback, and hardware validation are complete.
 
@@ -81,7 +83,7 @@ notes, Git status, and hardware compatibility before creating a release.
 
 ## Controller modes
 
-- **Legacy Arduino Mega:** working command protocol and simulator baseline.
+- **Legacy Arduino Mega:** archived only; retained internally for the offline simulator.
 - **Teensy Hardware Test:** output and diagnostics protocol for bench bring-up;
   operational tabs remain disabled.
 - **Teensy grblHAL:** prototype `$H` and absolute X-motion commands only;

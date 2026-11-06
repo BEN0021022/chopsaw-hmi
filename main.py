@@ -31,7 +31,12 @@ from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
 from _version import __version__ as APP_VERSION
-from controller_backends import CONTROLLER_MODES, LEGACY_MEGA, create_controller_backend
+from controller_backends import (
+    CONTROLLER_MODES,
+    LEGACY_MEGA,
+    TEENSY_HARDWARE_TEST,
+    create_controller_backend,
+)
 import updater
 
 
@@ -174,7 +179,9 @@ class MinimalHMI(QMainWindow):
         self.last_current_log_time = 0.0
         self.settings = QSettings("ChopSawHMI", "ChopSawHMI")
         self.selected_serial_port = self.settings.value("serial_port", SERIAL_PORT)
-        self.selected_controller_mode = self.settings.value("controller_mode", LEGACY_MEGA)
+        self.selected_controller_mode = self.settings.value(
+            "controller_mode", TEENSY_HARDWARE_TEST
+        )
         self.controller = create_controller_backend(self.selected_controller_mode)
 
         # Prediction
@@ -279,10 +286,12 @@ class MinimalHMI(QMainWindow):
             self.controller_combo.addItem(mode.label, mode.key)
         controller_index = self.controller_combo.findData(self.selected_controller_mode)
         if controller_index < 0:
-            controller_index = self.controller_combo.findData(LEGACY_MEGA)
+            controller_index = self.controller_combo.findData(TEENSY_HARDWARE_TEST)
         if controller_index >= 0:
             self.controller_combo.setCurrentIndex(controller_index)
-            self.selected_controller_mode = self.controller_combo.currentData() or LEGACY_MEGA
+            self.selected_controller_mode = (
+                self.controller_combo.currentData() or TEENSY_HARDWARE_TEST
+            )
             self.controller = create_controller_backend(self.selected_controller_mode)
         self.controller_combo.currentIndexChanged.connect(self.on_controller_mode_changed)
         top.addWidget(self.controller_combo)
@@ -1901,7 +1910,7 @@ class MinimalHMI(QMainWindow):
             if hasattr(self, "log"):
                 self.log.append("SAFETY BLOCK: disconnect before changing controller mode.")
             return
-        mode_key = self.controller_combo.currentData() or LEGACY_MEGA
+        mode_key = self.controller_combo.currentData() or TEENSY_HARDWARE_TEST
         self.selected_controller_mode = mode_key
         self.controller = create_controller_backend(mode_key)
         if hasattr(self, "log"):
