@@ -1,8 +1,21 @@
+import os
+import tempfile
 import time
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import QSettings as RealQSettings
 from PyQt6.QtWidgets import QApplication
 
 app = QApplication([])
 import main
+
+settings_dir = tempfile.TemporaryDirectory()
+settings_path = os.path.join(settings_dir.name, "settings.ini")
+main.QSettings = lambda *args, **kwargs: RealQSettings(
+    settings_path, RealQSettings.Format.IniFormat
+)
+main.updater.check_for_update = lambda *args, **kwargs: None
 
 w = main.MinimalHMI()
 w.show()
@@ -15,6 +28,8 @@ assert w.selected_serial_port == "SIM"
 w.toggle_connection()
 assert w.ser is not None and w.ser.is_open
 assert w.status_label.text() == "SIM MODE"
+w.auto_clamp_checkbox.setChecked(True)
+assert w.auto_clamp_enabled
 print("connected to virtual controller")
 
 seen_bsen = {"v": False}
@@ -86,3 +101,4 @@ w.toggle_connection()
 assert not w.ser.is_open
 w.close()
 print("FULL CYCLE SIM TEST OK")
+settings_dir.cleanup()

@@ -58,15 +58,25 @@ def _parse_status_line(line, signal_bridge):
         _emit_number(signal_bridge.overcurrent_updated, fields['OCT'], int)
 
 
-def listen_for_data(ser, signal_bridge):
+def _safe_emit(signal, *args):
+    """Return False when Qt has already destroyed the receiving QObject."""
+    try:
+        signal.emit(*args)
+        return True
+    except RuntimeError:
+        return False
+
+
+def listen_for_data(ser, signal_bridge, stop_event=None):
     """
     Listens for incoming data from the serial port in a separate thread
     and emits signals via the signal_bridge.
     """
-    while True:
+    while stop_event is None or not stop_event.is_set():
         try:
             if not ser.is_open:
-                signal_bridge.disconnected.emit("Serial port closed.")
+                if stop_event is None or not stop_event.is_set():
+                    _safe_emit(signal_bridge.disconnected, "Serial port closed.")
                 break
             if ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
@@ -89,7 +99,16 @@ def listen_for_data(ser, signal_bridge):
             else:
                 time.sleep(0.01)
         except (serial.SerialException, OSError) as error:
-            signal_bridge.disconnected.emit(str(error) or "Serial connection lost.")
+            if stop_event is None or not stop_event.is_set():
+                _safe_emit(
+                    signal_bridge.disconnected,
+                    str(error) or "Serial connection lost.",
+                )
             break
-        except Exception as e:
-            print(f"Listener error: {e}")
+        except RuntimeError:
+            # Qt has destroyed the bridge during application shutdown.
+            break
+        except Exception as error:
+            if stop_event is None or not stop_event.is_set():
+                _safe_emit(signal_bridge.disconnected, f"Listener error: {error}")
+            break

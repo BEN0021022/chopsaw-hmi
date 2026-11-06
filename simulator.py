@@ -80,6 +80,8 @@ class VirtualController:
 
     def close(self):
         self.is_open = False
+        if self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(timeout=1.0)
 
     # ---------- internals ----------
     def _send(self, text):

@@ -1,8 +1,21 @@
+import os
+import tempfile
 import time
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import QSettings as RealQSettings
 from PyQt6.QtWidgets import QApplication
 
 app = QApplication([])
 import main
+
+settings_dir = tempfile.TemporaryDirectory()
+settings_path = os.path.join(settings_dir.name, "settings.ini")
+main.QSettings = lambda *args, **kwargs: RealQSettings(
+    settings_path, RealQSettings.Format.IniFormat
+)
+main.updater.check_for_update = lambda *args, **kwargs: None
 
 
 def pump(seconds):
@@ -86,3 +99,4 @@ w.close()
 print("home_position default 160.5  OK")
 
 print("ALL MANUAL-MODE TESTS OK")
+settings_dir.cleanup()

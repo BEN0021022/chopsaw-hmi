@@ -31,6 +31,7 @@ from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
 from _version import __version__ as APP_VERSION
+from controller_backends import CONTROLLER_MODES, LEGACY_MEGA, create_controller_backend
 import updater
 
 
@@ -94,6 +95,7 @@ class MinimalHMI(QMainWindow):
         # Serial
         self.ser = None
         self.listener_thread = None
+        self.listener_stop_event = threading.Event()
         self.signal_bridge = SignalBridge()
 
         # Signals
@@ -116,6 +118,7 @@ class MinimalHMI(QMainWindow):
         self.encoder_ticks_per_inch = self.stepper_steps_per_inch * 20.0
         self.cut_list = []
         self.auto_cycle_state = "IDLE"
+        self.cycle_generation = 0  # invalidates delayed clamp/saw callbacks
         self.next_cut_number = 1
         # Last position reported by the device. All cycle/clamp logic reads this,
         # never the UI labels (which can show interpolated predictions).
@@ -140,6 +143,7 @@ class MinimalHMI(QMainWindow):
         self.clamp_right_engaged = False
         self.clamp_fence_engaged = False
         self.clamps_engaged_cutting = False   # True while saw is down, awaiting sensor return
+        self.actuator_direction = "off"
         # Auto clamp/saw sequencing. OFF = manual mode: the HMI sends no cylinder
         # (C1-3 / D1-3) or saw (V1) commands, so it stays compatible with firmware
         # that has no cylinder support (e.g. Closed-Loop AUTO V2.5, where C1 would
@@ -170,6 +174,8 @@ class MinimalHMI(QMainWindow):
         self.last_current_log_time = 0.0
         self.settings = QSettings("ChopSawHMI", "ChopSawHMI")
         self.selected_serial_port = self.settings.value("serial_port", SERIAL_PORT)
+        self.selected_controller_mode = self.settings.value("controller_mode", LEGACY_MEGA)
+        self.controller = create_controller_backend(self.selected_controller_mode)
 
         # Prediction
         self.pred_timer = QTimer(self); self.pred_timer.setInterval(30); self.pred_timer.timeout.connect(self.tick_predict)
@@ -265,6 +271,21 @@ class MinimalHMI(QMainWindow):
 
         # Top bar
         top = QHBoxLayout()
+        top.addWidget(QLabel("Controller:"))
+        self.controller_combo = QComboBox()
+        self.controller_combo.setMinimumWidth(190)
+        self.controller_combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        for mode in CONTROLLER_MODES:
+            self.controller_combo.addItem(mode.label, mode.key)
+        controller_index = self.controller_combo.findData(self.selected_controller_mode)
+        if controller_index < 0:
+            controller_index = self.controller_combo.findData(LEGACY_MEGA)
+        if controller_index >= 0:
+            self.controller_combo.setCurrentIndex(controller_index)
+            self.selected_controller_mode = self.controller_combo.currentData() or LEGACY_MEGA
+            self.controller = create_controller_backend(self.selected_controller_mode)
+        self.controller_combo.currentIndexChanged.connect(self.on_controller_mode_changed)
+        top.addWidget(self.controller_combo)
         top.addWidget(QLabel("COM Port:"))
         self.port_combo = QComboBox()
         self.port_combo.setMinimumWidth(210)
@@ -1067,7 +1088,11 @@ class MinimalHMI(QMainWindow):
         return w
 
     def cylinder_extend(self, cyl_id):
-        self.send_command(f"C{cyl_id}")
+        if not self.send_backend_commands(
+            self.active_controller().clamp_extend(cyl_id),
+            f"extend cylinder {cyl_id}",
+        ):
+            return False
         if cyl_id == 1:
             self.clamp_left_engaged = True
         elif cyl_id == 2:
@@ -1075,9 +1100,14 @@ class MinimalHMI(QMainWindow):
         elif cyl_id == 3:
             self.clamp_fence_engaged = True
         self._update_cylinder_ui(cyl_id)
+        return True
 
     def cylinder_retract(self, cyl_id):
-        self.send_command(f"D{cyl_id}")
+        if not self.send_backend_commands(
+            self.active_controller().clamp_retract(cyl_id),
+            f"retract cylinder {cyl_id}",
+        ):
+            return False
         if cyl_id == 1:
             self.clamp_left_engaged = False
         elif cyl_id == 2:
@@ -1085,6 +1115,27 @@ class MinimalHMI(QMainWindow):
         elif cyl_id == 3:
             self.clamp_fence_engaged = False
         self._update_cylinder_ui(cyl_id)
+        return True
+
+    def set_actuator_direction(self, direction):
+        """Set off/forward/reverse through the backend's off-first interlock."""
+        direction = str(direction).strip().lower()
+        if direction not in {"off", "forward", "reverse"}:
+            self.log.append(f"ACTUATOR BLOCKED: invalid direction '{direction}'.")
+            return False
+        controller = self.active_controller()
+        if not controller.capabilities.actuator:
+            self.log.append(
+                f"UNSUPPORTED: {controller.label} has no validated actuator output."
+            )
+            return False
+        if not self.send_backend_commands(
+            controller.actuator_direction(direction),
+            f"set actuator direction to {direction}",
+        ):
+            return False
+        self.actuator_direction = direction
+        return True
 
     def _update_cylinder_ui(self, cyl_id):
         engaged_map = {
@@ -1145,16 +1196,32 @@ class MinimalHMI(QMainWindow):
         Fire the saw-down command. Sets clamps_engaged_cutting so the saw-up
         edge knows to release clamps and book the cut.
         """
+        controller = self.active_controller()
+        if not controller.capabilities.automatic_cutting_ready:
+            self.clamps_engaged_cutting = False
+            self._release_all_clamps()
+            self._update_saw_sensor_pill("BLOCKED", "#ef4444")
+            self._set_cycle_status(
+                f"STATUS: Saw blocked — {controller.label} lacks verified saw feedback."
+            )
+            self.log.append(
+                f"SAFETY BLOCK: automatic saw is not ready for {controller.label}."
+            )
+            return False
+
+        if not self.send_backend_commands(controller.saw_actuate(), "actuate saw"):
+            self.clamps_engaged_cutting = False
+            self._release_all_clamps()
+            self._update_saw_sensor_pill("BLOCKED", "#ef4444")
+            self._set_cycle_status("STATUS: Saw command failed — clamps released.")
+            return False
+
+        # Both simulator and real hardware must report a genuine SSEN 0 -> 1
+        # transition. Real connections never synthesize a successful cut.
         self.clamps_engaged_cutting = True
         self._update_saw_sensor_pill("CUTTING", "#ef4444")
-        self._set_cycle_status("STATUS: Cutting...")
-        if isinstance(self.ser, VirtualController) and self.ser.is_open:
-            self.send_command("V1")  # controller reports the stroke via SSEN
-        else:
-            # TODO: self.send_command("V1")  ← real saw actuate command
-            # Placeholder: simulate the stroke completing after 2 s
-            self._last_saw_sensor = 0
-            QTimer.singleShot(2000, lambda: self.update_saw_position_sensor_status(1))
+        self._set_cycle_status("STATUS: Cutting — waiting for saw-up feedback...")
+        return True
 
     def _release_all_clamps(self):
         """Retract all three air cylinder clamps (skipped in manual mode)."""
@@ -1165,6 +1232,19 @@ class MinimalHMI(QMainWindow):
         self.cylinder_retract(3)
 
     def _on_auto_clamp_toggled(self, checked):
+        controller = self.active_controller()
+        if checked and not controller.capabilities.automatic_cutting_ready:
+            self.auto_clamp_checkbox.blockSignals(True)
+            self.auto_clamp_checkbox.setChecked(False)
+            self.auto_clamp_checkbox.blockSignals(False)
+            self.auto_clamp_enabled = False
+            self.log.append(
+                f"SAFETY BLOCK: auto clamp/saw is unavailable for {controller.label}."
+            )
+            self._set_cycle_status(
+                f"STATUS: Auto clamp/saw unavailable for {controller.label}."
+            )
+            return
         self.auto_clamp_enabled = checked
         mode = "Auto clamp/saw ENABLED" if checked else "Manual cut mode (no clamp/saw commands)"
         self.log.append(mode)
@@ -1290,11 +1370,21 @@ class MinimalHMI(QMainWindow):
 
         clamp_delay = self.fa_clamp_engage_delay.value() if hasattr(self, 'fa_clamp_engage_delay') else 300
         saw_delay   = self.fa_saw_start_delay.value()    if hasattr(self, 'fa_saw_start_delay')    else 800
+        cycle_generation = self.cycle_generation
 
         def _do_clamp():
-            for cid in clamps:
-                self.cylinder_extend(cid)
-            QTimer.singleShot(saw_delay, self._actuate_saw)
+            if cycle_generation != self.cycle_generation:
+                return
+            if not all(self.cylinder_extend(cid) for cid in clamps):
+                self._release_all_clamps()
+                self._set_cycle_status("STATUS: Clamp command failed — automatic cut blocked.")
+                return
+
+            def _do_saw():
+                if cycle_generation == self.cycle_generation:
+                    self._actuate_saw()
+
+            QTimer.singleShot(saw_delay, _do_saw)
 
         QTimer.singleShot(clamp_delay, _do_clamp)
 
@@ -1303,9 +1393,13 @@ class MinimalHMI(QMainWindow):
 
     # ---------- Clamp Control Methods ----------
     def toggle_clamp(self):
-        self.clamp_engaged = not self.clamp_engaged
-        cmd = 'L' if self.clamp_engaged else 'U'
-        self.send_command(cmd)
+        requested_state = not self.clamp_engaged
+        if not self.send_backend_commands(
+            self.active_controller().clamp_all(requested_state),
+            "engage all clamps" if requested_state else "release all clamps",
+        ):
+            return
+        self.clamp_engaged = requested_state
         self.update_clamp_ui()
 
     def update_clamp_ui(self):
@@ -1322,10 +1416,45 @@ class MinimalHMI(QMainWindow):
 
     # ---------- Enable/Disable ----------
     def set_controls_enabled(self, enabled):
-        self.legacy_tab.setEnabled(enabled)
-        self.auto_tab.setEnabled(enabled)
-        if hasattr(self, 'full_auto_tab'):
-            self.full_auto_tab.setEnabled(enabled)
+        self.connection_controls_enabled = bool(enabled)
+        self.apply_controller_capabilities()
+
+    def is_connected(self):
+        return bool(self.ser and self.ser.is_open)
+
+    def apply_controller_capabilities(self):
+        """Expose only operations that are verified safe for the live backend."""
+        connected = bool(getattr(self, "connection_controls_enabled", False)) and self.is_connected()
+        controller = self.active_controller()
+        capabilities = controller.capabilities
+
+        if hasattr(self, "controller_combo"):
+            self.controller_combo.setEnabled(not connected)
+        if hasattr(self, "port_combo"):
+            self.port_combo.setEnabled(not connected)
+        if hasattr(self, "refresh_ports_button"):
+            self.refresh_ports_button.setEnabled(not connected)
+
+        manual_ready = connected and capabilities.manual_motion_ready
+        auto_ready = connected and capabilities.automatic_cycle_ready
+        self.legacy_tab.setEnabled(manual_ready)
+        self.auto_tab.setEnabled(auto_ready)
+        if hasattr(self, "full_auto_tab"):
+            self.full_auto_tab.setEnabled(auto_ready)
+
+        if hasattr(self, "auto_clamp_checkbox"):
+            cutting_ready = auto_ready and capabilities.automatic_cutting_ready
+            self.auto_clamp_checkbox.setEnabled(cutting_ready)
+            if not cutting_ready and self.auto_clamp_checkbox.isChecked():
+                self.auto_clamp_checkbox.blockSignals(True)
+                self.auto_clamp_checkbox.setChecked(False)
+                self.auto_clamp_checkbox.blockSignals(False)
+                self.auto_clamp_enabled = False
+
+        if connected and not manual_ready and not auto_ready:
+            self._set_cycle_status(
+                f"STATUS: {controller.label} is diagnostics-only until validation is complete."
+            )
 
     # ---------- Cut list ----------
     def add_cut_to_list(self):
@@ -1530,7 +1659,10 @@ class MinimalHMI(QMainWindow):
     def cancel_auto_cycle(self):
         """Stops any active auto cycle and resets the state."""
         # 1. Send a command to stop the motor's current movement. M0 (Move 0) is a safe stop command.
-        self.send_command("M0")
+        self.cycle_generation += 1
+        self.send_backend_commands(
+            self.active_controller().stop_motion(), "stop carriage motion"
+        )
         self.log.append("Auto cycle canceled by user.")
 
         # 2. Reset the state machine and related flags
@@ -1558,6 +1690,12 @@ class MinimalHMI(QMainWindow):
         # It does NOT increment the cut; it re-advances for the same cut length.
         
         # 0) Guard rails
+        if not self.active_controller().capabilities.automatic_cycle_ready:
+            self.log.append(
+                f"RESUME BLOCKED: {self.active_controller().label} is not approved for automatic cycles."
+            )
+            return
+        self.cycle_generation += 1
         if self.homed_label.text() != "HOMED":
             self.log.append("RESUME ERROR: Home the system first, then press RESUME ON RESET.")
             return
@@ -1592,6 +1730,16 @@ class MinimalHMI(QMainWindow):
 
 
     def start_auto_cycle(self):
+        controller = self.active_controller()
+        if not controller.capabilities.automatic_cycle_ready:
+            self.log.append(
+                f"AUTO MODE BLOCKED: {controller.label} is not approved for automatic cycles."
+            )
+            self._set_cycle_status(
+                f"STATUS: Automatic cycle unavailable for {controller.label}."
+            )
+            return
+        self.cycle_generation += 1
         if self.homed_label.text() != "HOMED":
             self.log.append("AUTO MODE ERROR: System must be homed first."); return
         if not self.cut_list:
@@ -1637,9 +1785,14 @@ class MinimalHMI(QMainWindow):
             self.fa_auto_status_label.setText(text)
 
     def _set_start_enabled(self, enabled):
-        self.start_cycle_button.setEnabled(enabled)
+        allowed = (
+            enabled
+            and self.is_connected()
+            and self.active_controller().capabilities.automatic_cycle_ready
+        )
+        self.start_cycle_button.setEnabled(allowed)
         if hasattr(self, 'fa_start_cycle_button'):
-            self.fa_start_cycle_button.setEnabled(enabled)
+            self.fa_start_cycle_button.setEnabled(allowed)
 
     def _set_cut_complete_enabled(self, enabled):
         self.cut_complete_button.setEnabled(enabled)
@@ -1659,7 +1812,14 @@ class MinimalHMI(QMainWindow):
             if isinstance(self.ser, VirtualController):
                 self.ser.board_length = self.sim_board_remaining
             self._refresh_sim_board()
-            self.send_command(f"J{sensor_offset:.4f}")
+            if not self.send_backend_commands(
+                self.active_controller().truing_cycle(sensor_offset),
+                "start truing cycle",
+            ):
+                self.auto_cycle_state = "IDLE"
+                self._set_cycle_status("STATUS: Truing cycle unsupported or command failed.")
+                self._set_start_enabled(True)
+                return
             self.auto_cycle_state = "WAITING_FOR_TRUING_CUT"
             self._set_start_enabled(False)
             self._set_cut_complete_enabled(False)
@@ -1729,6 +1889,26 @@ class MinimalHMI(QMainWindow):
         if hasattr(self, "port_combo"):
             self.selected_serial_port = self.port_combo.currentData() or ""
 
+    def on_controller_mode_changed(self):
+        if not hasattr(self, "controller_combo"):
+            return
+        if self.is_connected():
+            self.controller_combo.blockSignals(True)
+            previous_index = self.controller_combo.findData(self.selected_controller_mode)
+            if previous_index >= 0:
+                self.controller_combo.setCurrentIndex(previous_index)
+            self.controller_combo.blockSignals(False)
+            if hasattr(self, "log"):
+                self.log.append("SAFETY BLOCK: disconnect before changing controller mode.")
+            return
+        mode_key = self.controller_combo.currentData() or LEGACY_MEGA
+        self.selected_controller_mode = mode_key
+        self.controller = create_controller_backend(mode_key)
+        if hasattr(self, "log"):
+            self.log.append(f"Controller mode: {self.controller.label}")
+        if hasattr(self, "legacy_tab"):
+            self.apply_controller_capabilities()
+
     def toggle_connection(self):
         if self.ser is None or not self.ser.is_open:
             port_name = self.selected_serial_port or SERIAL_PORT
@@ -1742,30 +1922,53 @@ class MinimalHMI(QMainWindow):
                 else:
                     self.ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
                     self.set_pill(self.status_label, "Connected", "#22c55e", fg="#0f172a")
-                self.connect_button.setText("Disconnect"); self.set_controls_enabled(True)
-                self.listener_thread = threading.Thread(target=listen_for_data, args=(self.ser, self.signal_bridge), daemon=True); self.listener_thread.start()
+                self.listener_stop_event = threading.Event()
+                self.connect_button.setText("Disconnect")
+                self.set_controls_enabled(True)
+                self.listener_thread = threading.Thread(
+                    target=listen_for_data,
+                    args=(self.ser, self.signal_bridge, self.listener_stop_event),
+                    daemon=True,
+                    name="chopsaw-serial-listener",
+                )
+                self.listener_thread.start()
                 self.log.append(f"Successfully connected to {port_name}")
-                self.apply_current_protection_settings()
+                for command in self.active_controller().startup_commands():
+                    self.send_command(command)
+                if self.active_controller().capabilities.current_monitoring:
+                    self.apply_current_protection_settings()
                 self.update_current_monitor_ui()
             except serial.SerialException as e:
+                self._stop_listener()
+                self.set_controls_enabled(False)
                 self.log.append(f"ERROR: {e}")
                 self.refresh_serial_ports()
         else:
-            try: self.ser.close()
-            except Exception: pass
+            self._stop_listener()
             self.set_pill(self.status_label, "Disconnected", "#ef4444")
-            self.connect_button.setText("Connect"); self.set_controls_enabled(False); self.log.append("Disconnected.")
+            self.connect_button.setText("Connect")
+            self.set_controls_enabled(False)
+            self.log.append("Disconnected.")
+
+    def _stop_listener(self):
+        self.cycle_generation += 1
+        self.listener_stop_event.set()
+        try:
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+        except Exception:
+            pass
+        thread = self.listener_thread
+        if thread and thread.is_alive() and threading.current_thread() is not thread:
+            thread.join(timeout=2.0)
+        self.listener_thread = None
 
     def handle_serial_disconnect(self, error):
         # Also fired by the listener thread after an intentional disconnect;
         # skip if the UI already reflects the disconnected state.
         if self.status_label.text() == "Disconnected":
             return
-        try:
-            if self.ser and self.ser.is_open:
-                self.ser.close()
-        except Exception:
-            pass
+        self._stop_listener()
         self.set_pill(self.status_label, "Disconnected", "#ef4444")
         self.connect_button.setText("Connect")
         self.set_controls_enabled(False)
@@ -1776,11 +1979,31 @@ class MinimalHMI(QMainWindow):
             try:
                 self.ser.write((cmd + '\n').encode('utf-8'))
                 self.log.append(f"Sent: '{cmd}'")
+                return True
             except (serial.SerialException, OSError) as error:
                 self.handle_serial_disconnect(error)
-        else: self.log.append("Cannot send command, not connected.")
+                return False
+        self.log.append("Cannot send command, not connected.")
+        return False
 
-    def home_motor(self): self.send_command("H")
+    def active_controller(self):
+        if isinstance(self.ser, VirtualController):
+            return create_controller_backend(LEGACY_MEGA)
+        return self.controller
+
+    def send_backend_commands(self, commands, action="requested operation"):
+        if not commands:
+            self.log.append(
+                f"UNSUPPORTED: {self.active_controller().label} cannot {action}."
+            )
+            return False
+        sent_all = True
+        for command in commands:
+            sent_all = self.send_command(command) and sent_all
+        return sent_all
+
+    def home_motor(self):
+        self.send_backend_commands(self.active_controller().home(), "home the carriage")
     def near_calibrate(self):
         if self.homed_label.text() != "HOMED":
             self.log.append("NEAR CAL ERROR: System must be homed first.")
@@ -1788,7 +2011,10 @@ class MinimalHMI(QMainWindow):
         sensor_offset = self.board_sensor_location_input.value() if hasattr(self, 'board_sensor_location_input') else self.board_sensor_distance_inches
         self.board_sensor_distance_inches = sensor_offset
         self.log.append(f"Starting near calibration using board sensor offset {sensor_offset:.4f}\".")
-        self.send_command(f"N{sensor_offset:.4f}")
+        self.send_backend_commands(
+            self.active_controller().near_calibrate(sensor_offset),
+            "run near calibration",
+        )
 
     def load_position(self):
         self.switch_profile("FAST", True)
@@ -1805,8 +2031,15 @@ class MinimalHMI(QMainWindow):
         self.log.append(log_msg)
         self.set_length(target_pos)
 
-    def toggle_motor_power(self, checked): self.send_command("E" if checked else "X")
-    def toggle_pid_control(self, checked): self.send_command("K1" if checked else "K0")
+    def toggle_motor_power(self, checked):
+        self.send_backend_commands(
+            self.active_controller().motor_power(checked), "change motor power"
+        )
+
+    def toggle_pid_control(self, checked):
+        self.send_backend_commands(
+            self.active_controller().pid_control(checked), "change PID control"
+        )
 
     # Replace the current set_length function with this:
     def set_length(self, length=None):
@@ -1814,8 +2047,11 @@ class MinimalHMI(QMainWindow):
 
         # --- THIS IS THE GATEKEEPER CHECK ---
         if 0.0 <= target <= self.home_position:
-            self.prepare_prediction(target)
-            self.send_command(f"S{target:.4f}")
+            if self.send_backend_commands(
+                self.active_controller().move_absolute_inches(target),
+                "move the carriage",
+            ):
+                self.prepare_prediction(target)
         else:
             self.log.append(f"MOVE REJECTED: Target {target:.2f}\" is outside the valid range (0 to {self.home_position:.2f}\").")
     def move_relative(self):
@@ -1829,7 +2065,11 @@ class MinimalHMI(QMainWindow):
         target = self.current_position + float(delta)
         self.set_length(target)
     def set_motor_parameters(self):
-        speed = self.max_speed.value(); accel = self.acceleration.value(); self.send_command(f"A{speed:.0f},{accel:.0f}")
+        speed = self.max_speed.value(); accel = self.acceleration.value()
+        self.send_backend_commands(
+            self.active_controller().set_motor_parameters(speed, accel),
+            "set motor parameters",
+        )
     def toggle_current_settings(self, visible):
         if hasattr(self, 'current_settings_panel'):
             self.current_settings_panel.setVisible(visible)
@@ -1873,30 +2113,61 @@ class MinimalHMI(QMainWindow):
         self.current_limit_amps = self.current_limit_input.value()
         self.current_trip_delay_ms = int(self.current_delay_input.value())
         self.current_graph.set_limit(self.current_limit_amps)
-        self.send_command(f"W{1 if self.current_monitoring_enabled else 0}")
+        if not self.active_controller().capabilities.current_monitoring:
+            self.current_monitoring_enabled = False
+            self.current_monitoring_checkbox.setChecked(False)
+            self.log.append(
+                f"UNSUPPORTED: current monitoring is unavailable for {self.active_controller().label}."
+            )
+            self.update_current_monitor_ui()
+            return
+        self.send_backend_commands(
+            self.active_controller().current_monitoring(self.current_monitoring_enabled),
+            "change current monitoring",
+        )
         if self.current_monitoring_enabled:
-            self.send_command(f"O{self.current_limit_amps:.2f},{self.current_trip_delay_ms}")
+            self.send_backend_commands(
+                self.active_controller().current_protection(
+                    self.current_limit_amps, self.current_trip_delay_ms
+                ),
+                "configure current protection",
+            )
         self.update_current_monitor_ui()
 
     def reset_overcurrent_trip(self):
         if not self.current_monitoring_enabled:
             return
-        self.send_command("R")
+        self.send_backend_commands(
+            self.active_controller().reset_overcurrent(), "reset overcurrent protection"
+        )
         self.update_overcurrent_status(0)
         if hasattr(self, "auto_status_label"):
             self._set_cycle_status("STATUS: Overcurrent reset requested.")
 
-    def initiate_calibration(self): self.send_command(f"C{self.calibrate_input.value():.4f}")
+    def initiate_calibration(self):
+        self.send_backend_commands(
+            self.active_controller().calibration(self.calibrate_input.value()),
+            "calibrate travel",
+        )
 
     # ---------- Profiles ----------
     def switch_profile(self, name, push_params=True):
         if name not in PROFILE_MAP: self.log.append(f"Unknown profile '{name}'"); return
-        idx = PROFILE_MAP[name]; self.send_command(f"Z{idx}"); self.active_profile_name = name
+        idx = PROFILE_MAP[name]
+        if not self.send_backend_commands(
+            self.active_controller().profile_select(idx), "select a motion profile"
+        ):
+            return
+        self.active_profile_name = name
         if push_params:
             if name == "NORMAL": spd, acc = self.norm_speed.value(), self.norm_accel.value()
             elif name == "GENTLE": spd, acc = self.gentle_speed.value(), self.gentle_accel.value()
             else: spd, acc = self.fast_speed.value(), self.fast_accel.value()
-            self.send_command(f"A{spd:.0f},{acc:.0f}"); self.log.append(f"Applied {name} profile params: speed={spd:.0f}, accel={acc:.0f}")
+            self.send_backend_commands(
+                self.active_controller().set_motor_parameters(spd, acc),
+                "set motion profile parameters",
+            )
+            self.log.append(f"Applied {name} profile params: speed={spd:.0f}, accel={acc:.0f}")
     def apply_current_profile_params(self): self.switch_profile(self.active_profile_name, True)
 
     # ---------- Position updates ----------
@@ -2163,6 +2434,7 @@ class MinimalHMI(QMainWindow):
         self.settings.setValue("current_monitoring", self.current_monitoring_checkbox.isChecked())
         self.settings.setValue("auto_clamp_enabled", self.auto_clamp_checkbox.isChecked())
         self.settings.setValue("serial_port", self.selected_serial_port)
+        self.settings.setValue("controller_mode", self.selected_controller_mode)
 
     # ---------- Software updates ----------
     def _on_update_found(self, info):
@@ -2269,9 +2541,7 @@ class MinimalHMI(QMainWindow):
 
     def closeEvent(self, event):
         self._save_settings()
-        try:
-            if self.ser and self.ser.is_open: self.ser.close()
-        except Exception: pass
+        self._stop_listener()
         event.accept()
 
 if __name__ == "__main__":

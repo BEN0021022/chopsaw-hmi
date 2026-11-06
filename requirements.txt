@@ -1,0 +1,4 @@
+PyQt6==6.10.2
+pyserial==3.5
+certifi==2025.6.15
+pyinstaller==6.18.0
