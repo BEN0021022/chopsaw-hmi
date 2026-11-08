@@ -5,6 +5,13 @@ existing LF-terminated ASCII BENCH records plus CARRIAGE_V5. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
+Prepared offline source 0.12.0 changes the app identity to CARRIAGE_V6, replaces
+HELLO RATE_PPS with BASE_RATE:40/MAX_RATE:127/PROFILES:RAMP_V1, and adds
+`XPROFILE 0..3` (disarmed only). BENCH_X gains PROFILE_ID, selected RATE_PPS and
+ACCEL_PPS2. See [motion profiles](MOTION_PROFILES.md) for the exact limits and
+pending physical acceptance. The protocol below describes the last flashed
+0.11.0; the prepared app intentionally rejects that older identity for motion.
+
 ## Identity
 
 Main-app motion requires all of:

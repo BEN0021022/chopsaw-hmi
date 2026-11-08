@@ -344,6 +344,7 @@ class MinimalHMI(QMainWindow):
         self.preset_tab = self.create_preset_tab()
 
         self.carriage_tab = TeensyCarriagePanel(self.send_command, lambda line: self.log.append(line), self)
+        self.carriage_tab.profile_changed.connect(self.update_teensy_profile)
         self.carriage_tab.homed_changed.connect(self.update_homed_status)
         self.carriage_tab.machine_position_changed.connect(self.update_position_label_from_device)
         self.tabs.addTab(self.carriage_tab, "CARRIAGE")
@@ -1482,6 +1483,10 @@ class MinimalHMI(QMainWindow):
         if hasattr(self, "refresh_ports_button"):
             self.refresh_ports_button.setEnabled(not connected)
 
+        for name in ("norm_speed","norm_accel","gentle_speed","gentle_accel","fast_speed","fast_accel","max_speed","acceleration"):
+            widget = getattr(self,name,None)
+            if widget is not None:
+                widget.setEnabled(controller.key != TEENSY_CARRIAGE)
         manual_ready = connected and capabilities.manual_motion_ready
         auto_ready = connected and capabilities.automatic_cycle_ready
         self.legacy_tab.setEnabled(manual_ready)
@@ -2222,7 +2227,13 @@ class MinimalHMI(QMainWindow):
         )
 
     # ---------- Profiles ----------
+    def update_teensy_profile(self, profile):
+        self.active_profile_name = {0:"COMMISSIONING",1:"GENTLE",2:"NORMAL",3:"FAST"}.get(profile,"COMMISSIONING")
+
     def switch_profile(self, name, push_params=True):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            profile = {"COMMISSIONING":0,"GENTLE":1,"NORMAL":2,"FAST":3}.get(name)
+            return False if profile is None else self.carriage_tab.select_profile(profile)
         if name not in PROFILE_MAP: self.log.append(f"Unknown profile '{name}'"); return
         idx = PROFILE_MAP[name]
         if not self.send_backend_commands(

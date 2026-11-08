@@ -193,6 +193,10 @@ class TeensyCarriageBackend(ControllerBackend):
             return []
         return [f"XMOVE {int(math.floor(target_inches*1000+0.5))}"]
 
+    def profile_select(self, profile_index):
+        mapping = {0:2,1:1,2:3}
+        return [f"XPROFILE {mapping[profile_index]}"] if profile_index in mapping else []
+
     def home(self):
         return ["XHOME 254"]
 

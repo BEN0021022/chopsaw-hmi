@@ -30,7 +30,7 @@ def packet(panel, **changes):
                   POS_STEPS=0, MOVE_ID=0, UP_MS=1000, CAL_SPI="127.12", FAULT="NONE",
                   POS_KNOWN=0, HOME_OFFSET=0, HOME_REF="160.5", HOME_STATE="IDLE", HOME_ERROR="NONE",
                   SOFT_MIN_OFFSET=-20402, SOFT_MAX_OFFSET=-14, SOFT_MAX_MILLI=160389,
-                  MAX_MOVE=20594, TARGET_OFFSET=0, MOVE_KIND="IDLE")
+                  MAX_MOVE=20594, TARGET_OFFSET=0, MOVE_KIND="IDLE", PROFILE_ID=0, ACCEL_PPS2=0)
     fields.update(changes)
     if fields["ARMED"] == 1 and "JOG_READY" not in changes:
         fields["JOG_READY"] = 1
@@ -217,6 +217,22 @@ def run():
         packet(p, FAULT="DRIVER_ALARM", POS_KNOWN=0)
         assert not p.move_to(135) and not p.go_button.isEnabled()
         assert "Stage 4" in w.migration_checklist.toPlainText()
+
+        ready(p)
+        p.consent.setChecked(True)
+        assert p.select_profile(2)
+        assert wire.writes[-1] == "XPROFILE 2"
+        assert p.x["PROFILE_ID"] == "0", "Wait for actual controller profile ACK"
+        packet(p, PROFILE_ID=2, RATE_PPS=80, ACCEL_PPS2=160)
+        assert "80 pulses/s" in p.profile_label.text()
+        assert w.active_profile_name == "NORMAL"
+        assert w.switch_profile("GENTLE") and wire.writes[-1] == "XPROFILE 1"
+        assert w.active_profile_name == "NORMAL", "Legacy buttons also wait for controller ACK"
+        assert create_controller_backend(TEENSY_CARRIAGE).profile_select(2) == ["XPROFILE 3"]
+        packet(p, ARMED=1, PROFILE_ID=2, RATE_PPS=80, ACCEL_PPS2=160)
+        assert not p.select_profile(3) and not p.profile_apply.isEnabled()
+        packet(p, ARMED=0, PROFILE_ID=2, RATE_PPS=40, ACCEL_PPS2=160)
+        assert p.local_fault, "Inconsistent profile limits must fail closed"
 
         # Invalid packets and missing move ACKs fail closed.
         ready(p)

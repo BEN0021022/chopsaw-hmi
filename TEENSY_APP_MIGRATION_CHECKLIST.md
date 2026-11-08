@@ -2,6 +2,8 @@
 
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Active firmware: custom **0.11.0** in `firmware/chopsaw_controller`.
+Prepared source: **0.12.0**, motion profiles; compiled/software-tested offline,
+not flashed or physically accepted. See [profile plan](docs/MOTION_PROFILES.md).
 Main app mode: **Teensy Carriage**. The breakout is a grblHAL-compatible board;
 the currently flashed firmware is custom, not stock grblHAL.
 
@@ -18,7 +20,9 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 - [x] In-app MIGRATION tab displays this master checklist; Refresh reloads it.
 - [ ] Rehome after flash, try an absolute target about 0.1 inch toward the saw,
       then return to Home/load position. Confirm travel/direction and STOP.
-- [ ] Add/accept acceleration and NORMAL/GENTLE/FAST speed profiles.
+- [x] Prepare controlled acceleration and Commissioning/Gentle/Normal/Fast profiles
+      in 0.12.0; software tests pass. Default remains the proven constant 40 pulses/s.
+- [ ] Load the matching profile app/firmware and physically accept the new profiles.
 - [ ] Migrate board-edge search, offsets/truing and stock workflow.
 - [ ] Fit coil suppression, then accept each pneumatic output with saw unplugged.
 - [ ] Integrate clamp/saw sequence and automatic cut-list completion/recovery.
@@ -126,8 +130,10 @@ remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
       reference and zero queued motion after restart. No motion commanded by agent.
 - [ ] Physically accept short absolute out-and-back, load moves, lower travel
       limit and recovered 160.5-inch physical blade reference before production use.
-- [ ] Add controlled acceleration and migrate NORMAL/GENTLE/FAST profiles with limits.
-      Legacy profile values must not silently override the commissioning speed.
+- [x] Prepare 0.12.0 controlled acceleration and bounded profiles; RAM-only,
+      disarmed-only selection and acknowledged app feedback. Legacy editable
+      speed fields cannot override them. Native ramp and main-app tests pass.
+- [ ] Flash/read back 0.12.0 and accept profile behavior on the physical carriage.
 
 ## Stage 5 - Blade-disconnected dry runs and operating workflow
 

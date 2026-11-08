@@ -19,14 +19,16 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V5", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V6", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "VALVES_ISOLATED", "CAL_SPI": "127.12",
-    "MAX_JOG": "254", "RATE_PPS": "40", "HOME_CHECK": "LEVEL_ONLY",
+    "MAX_JOG": "254", "BASE_RATE": "40", "MAX_RATE": "127", "PROFILES": "RAMP_V1", "HOME_CHECK": "LEVEL_ONLY",
     "HOMING": "BOUNDED_V1", "HOME_MAX": "20594", "HOME_REF": "160.5",
     "ABSOLUTE": "REFERENCED_V1", "MAX_MOVE": "20594",
 }
+PROFILE = re.compile(r"XPROFILE ([0-3])")
+PROFILE_LIMITS = {0:(40,0),1:(40,40),2:(80,160),3:(127,254)}
 ABSOLUTE = re.compile(r"XMOVE (0|[1-9][0-9]{0,5})")
 HOME = re.compile(r"XHOME ([1-9][0-9]{0,4})")
 HOME_STAGES = {"SEEK", "RELEASE", "BACKOFF", "LATCH", "PULL_RELEASE", "PULL_OFF"}
@@ -34,6 +36,7 @@ JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
 
 
 class TeensyCarriagePanel(QWidget):
+    profile_changed = pyqtSignal(int)
     homed_changed = pyqtSignal(int)
     machine_position_changed = pyqtSignal(float)
     stale_seconds = 2.0
@@ -106,6 +109,20 @@ class TeensyCarriagePanel(QWidget):
         self.setup_note.setWordWrap(True)
         setup_layout.addWidget(self.setup_note)
         row = QHBoxLayout()
+        profile_row = QHBoxLayout()
+        self.profile_combo = QComboBox()
+        for name, profile in (("Commissioning - 40 pulses/s (proven)",0),
+                              ("Gentle - 40 pulses/s, ramped",1),
+                              ("Normal - 80 pulses/s, ramped",2),
+                              ("Fast - 127 pulses/s, ramped",3)):
+            self.profile_combo.addItem(name,profile)
+        self.profile_apply = QPushButton("Apply profile (disarmed)")
+        self.profile_apply.clicked.connect(lambda: self.select_profile(self.profile_combo.currentData()))
+        self.profile_label = QLabel("Controller profile: unknown")
+        profile_row.addWidget(self.profile_combo)
+        profile_row.addWidget(self.profile_apply)
+        setup_layout.addLayout(profile_row)
+        setup_layout.addWidget(self.profile_label)
         self.configure_button = QPushButton("Confirm driver setup")
         self.configure_button.clicked.connect(lambda: self.send("XCONFIG 0 1"))
         self.arm_button = QPushButton("ARM MANUAL CONTROL")
@@ -197,7 +214,7 @@ class TeensyCarriagePanel(QWidget):
         absolute_layout.addWidget(self.absolute_progress)
         absolute_layout.addWidget(QLabel(
             "Home successfully, arm carriage motion, then select a target. Confirm the entire path is clear. "
-            "Moves use the current conservative 40 pulses/s rate. STOP cancels; moves never queue or resume automatically."
+            "Moves use the acknowledged controller profile. STOP cancels; moves never queue or resume automatically."
         ))
         layout.addWidget(absolute_box)
         row = QHBoxLayout()
@@ -260,6 +277,8 @@ class TeensyCarriagePanel(QWidget):
                 or self.safety.get("SAW_POSITION") != "UP"
                 or self.x.get("ALARM_RAW") != "1"):
             return False
+        if PROFILE.fullmatch(command):
+            return not self.armed and not self.pending and self.x.get("REMAINING") == "0"
         if command == "KEEPALIVE":
             return self.armed and (self.homing or self.x.get("HOME_RAW") == "1")
         idle = not self.armed and self.x.get("REMAINING") == "0"
@@ -304,7 +323,7 @@ class TeensyCarriagePanel(QWidget):
             self.compatible = compatible
         elif message.kind == "BENCH_X":
             numeric = ("ARMED", "CONFIGURED", "READY", "HOME_VERIFIED", "HOME_RAW", "ALARM_RAW",
-                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS", "POS_KNOWN", "HOME_OFFSET", "SOFT_MIN_OFFSET", "SOFT_MAX_OFFSET", "SOFT_MAX_MILLI", "MAX_MOVE", "TARGET_OFFSET")
+                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS", "POS_KNOWN", "HOME_OFFSET", "SOFT_MIN_OFFSET", "SOFT_MAX_OFFSET", "SOFT_MAX_MILLI", "MAX_MOVE", "TARGET_OFFSET", "PROFILE_ID", "ACCEL_PPS2")
             if any(parse_int(f.get(k)) is None for k in numeric) or f.get("CAL_SPI") != "127.12":
                 self.trip_local("Invalid carriage telemetry")
                 return
@@ -315,7 +334,8 @@ class TeensyCarriagePanel(QWidget):
                     or (f["POS_KNOWN"] == "1" and f.get("HOME_STATE") in HOME_STAGES)):
                 self.trip_local("Invalid homing telemetry")
                 return
-            if (f["MAX_JOG"] != "254" or f["RATE_PPS"] != "40"
+            if (f["MAX_JOG"] != "254" or
+                    PROFILE_LIMITS.get(int(f["PROFILE_ID"])) != (int(f["RATE_PPS"]),int(f["ACCEL_PPS2"]))
                     or f.get("MAX_MOVE") != "20594" or f.get("MOVE_KIND") not in {"IDLE", "JOG", "ABSOLUTE"}
                     or not 0 <= int(f["REMAINING"]) <= int(f["MAX_MOVE"])
                     or (f["MOVE_KIND"] == "JOG" and int(f["REMAINING"]) > int(f["MAX_JOG"]))):
@@ -335,6 +355,7 @@ class TeensyCarriagePanel(QWidget):
                 self.trip_local("Invalid referenced move telemetry")
                 return
             self.x = f
+            self.profile_changed.emit(int(f["PROFILE_ID"]))
             self.homed_changed.emit(int(f["POS_KNOWN"]))
             if f["POS_KNOWN"] == "1":
                 self.machine_position_changed.emit(160.5 + int(f["HOME_OFFSET"]) / STEPS_PER_INCH)
@@ -390,6 +411,10 @@ class TeensyCarriagePanel(QWidget):
     def toggle_arm(self):
         self.send("XARM 0" if self.armed else "XARM 1")
 
+    def select_profile(self, profile):
+        command = f"XPROFILE {profile}"
+        return self.allowed(command) and self.send(command)
+
     def selected_load_position(self):
         value = self.load_preset.currentData()
         return int(self.x.get("SOFT_MAX_MILLI", "0")) / 1000 if value is None else float(value)
@@ -444,7 +469,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible manual-jog firmware 0.11.0 and verified machine pin map"
+            text = "Waiting for compatible manual-jog firmware 0.12.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":
@@ -484,7 +509,7 @@ class TeensyCarriagePanel(QWidget):
             ("Home limit clear" if home_clear else "Home limit active or unknown - manual jog blocked; Home can release it")
             + " | Enable LOW; healthy alarm HIGH. No sensor trip is required after restart."
         )
-        self.progress.setText(f"Current move: {remaining} pulses left | Jog limit: {max_jog} pulses (~2 in) | 40 pulses/s")
+        self.progress.setText(f"Current move: {remaining} pulses left | Jog limit: {max_jog} pulses (~2 in) | {self.x.get('RATE_PPS', '?')} pulses/s")
         if self.x.get("MOVE_KIND") == "ABSOLUTE" and self.fresh("X"):
             destination = 160.5 + int(self.x["TARGET_OFFSET"]) / STEPS_PER_INCH
             self.absolute_progress.setText(f"Moving to {destination:.3f} in; {remaining/STEPS_PER_INCH:.3f} in remaining. STOP cancels.")
@@ -514,6 +539,11 @@ class TeensyCarriagePanel(QWidget):
                                 else "Home required before absolute or load-position moves")
         self.home_button.setEnabled(self.allowed(f"XHOME {count_home}"))
         self.home_search.setEnabled(not self.armed and not self.pending)
+        profile = parse_int(self.x.get("PROFILE_ID"))
+        self.profile_label.setText("Controller profile: unknown" if profile not in PROFILE_LIMITS else
+                                  f"Controller profile: {profile} | {self.x['RATE_PPS']} pulses/s | acceleration {self.x['ACCEL_PPS2']} pulses/s?")
+        self.profile_combo.setEnabled(not self.armed and not self.pending)
+        self.profile_apply.setEnabled(self.allowed(f"XPROFILE {self.profile_combo.currentData()}"))
         self.configure_button.setEnabled(self.allowed("XCONFIG 0 1"))
         self.arm_button.setText("DISARM MANUAL CONTROL" if self.armed else "ARM MANUAL CONTROL")
         self.arm_button.setEnabled(self.connected and (self.armed or self.allowed("XARM 1")))

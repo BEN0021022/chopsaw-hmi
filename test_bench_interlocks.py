@@ -21,7 +21,7 @@ def main():
         if not zig.exists():
             raise SystemExit("Install a C++ compiler, or pip install --target tmp/native-compiler ziglang==0.14.1")
         command = [str(zig), "c++", "-target", "x86_64-windows-gnu"]
-    for name in ("test_bench_interlocks", "test_bench_commands", "test_controller_commands", "test_homing", "test_positioning"):
+    for name in ("test_bench_interlocks", "test_bench_commands", "test_controller_commands", "test_homing", "test_positioning", "test_motion_profiles"):
         exe = output_dir / (name + (".exe" if os.name == "nt" else ""))
         subprocess.run(command + ["-std=c++11", "-Wall", "-Wextra", "-Werror",
                        "-I", str(root / "tests" / "firmware" / "stubs"),

@@ -21,7 +21,7 @@ close it before opening the main app on the same COM port.
 | Home | H, positive seek, home coordinate 160.5 in | XHOME selected search limit; seek/release/backoff/slow latch/pull-off | User confirmed Home success; repeatability/reference acceptance remains |
 | Absolute length / load positions | S inches | XMOVE integer milliinches; known position + explicit arm | Implemented 0.11.0; native inch target and load presets; physical acceptance pending |
 | Soft limits | Legacy target clamping | Firmware target-time and per-pulse bounds | Implemented; physical envelope acceptance pending |
-| Profiles / speed / acceleration | Z, A speed,accel | Fixed conservative 40 pulses/s for commissioning | Planner/acceleration and profile migration pending |
+| Profiles / speed / acceleration | Z, A speed,accel | Commissioning default plus disarmed-only Gentle/Normal/Fast selection | Prepared 0.12.0, tested offline; flash and physical acceptance pending; see MOTION_PROFILES.md |
 | Board detection / truing | J / N, board-edge offset | Limit Y/D21 telemetry available | Geometry, offsets and bounded controller-side sequence pending |
 | Door | Ad hoc/old hardware | Door/D29 active LOW, controller interlock | User confirmed input; firmware/app cancellation tested |
 | Saw endpoints | Old SSEN | UP Limit Z/D22; DOWN Fd/Hld/D16 | User-confirmed inputs, controller interlocks |

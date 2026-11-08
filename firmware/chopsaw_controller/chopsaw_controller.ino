@@ -13,10 +13,11 @@
 #include "bench_interlocks.h"
 #include "homing.h"
 #include "positioning.h"
+#include "motion_profile.h"
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.11.0";
+constexpr char FIRMWARE_VERSION[] = "0.12.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -74,6 +75,8 @@ int32_t xHomeOffset = 0;
 int32_t xSoftMaxOffset = 0;
 int32_t xTargetOffset = 0;
 bool xAbsoluteMove = false;
+uint8_t xProfile = 0;
+carriage::MotionRamp xRamp;
 int32_t xCommandedSteps = 0;  // pulse-count displacement since boot, not encoder position
 int8_t xDirection = 1;
 uint32_t xMoveId = 0;
@@ -212,7 +215,7 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V5,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V6,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:127,PROFILES:RAMP_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594");
 }
 
 void publishPinMap() {
@@ -264,7 +267,10 @@ void publishX() {
   Serial.print(",DIR:"); Serial.print(digitalRead(X_DIR_PIN));
   Serial.print(",ENA:"); Serial.print(digitalRead(X_ENABLE_PIN));
   Serial.print(",MAX_JOG:"); Serial.print(X_MAX_JOG_PULSES);
-  Serial.print(",RATE_PPS:40,JOG_READY:");
+  Serial.print(",PROFILE_ID:"); Serial.print(xProfile);
+  Serial.print(",RATE_PPS:"); Serial.print(carriage::MotionProfile::get(xProfile).maxRate);
+  Serial.print(",ACCEL_PPS2:"); Serial.print(carriage::MotionProfile::get(xProfile).acceleration);
+  Serial.print(",JOG_READY:");
   Serial.print(outputsArmed && testMode == TestMode::Stepper &&
                static_cast<uint32_t>(millis() - xArmAt) >= 200 ? 1 : 0);
   Serial.print(",REMAINING:"); Serial.print(xRemaining);
@@ -392,7 +398,7 @@ bool startsWith(const char *text, const char *prefix) {
   return strncmp(text, prefix, strlen(prefix)) == 0;
 }
 
-void handleCommand(char *command) {
+void __attribute__((noinline)) handleCommand(char *command) {
   // An overdue heartbeat or open door must trip before a new command can refresh it.
   updateSafety();
   for (char *cursor = command; *cursor; ++cursor) {
@@ -498,6 +504,16 @@ void handleCommand(char *command) {
     xHomeActive = bench::StableAssertion{};
     xHomeInactive = bench::StableAssertion{};
     publishOutputs(); publishSafety(); publishX();
+  } else if (startsWith(command, "XPROFILE ")) {
+    int id = -1; char extra = '\0';
+    if (sscanf(command + 9, "%d %c", &id, &extra) != 1 || id < 0 || id > 3) {
+      commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_PROFILE");
+    } else if (outputsArmed || testMode != TestMode::None) {
+      Serial.println("BENCH_ERROR,CODE:DISARM_FIRST");
+    } else {
+      xProfile = id;  // RAM only; selecting a profile never enables or moves
+    }
+    publishX();
   } else if (startsWith(command, "XHOME ")) {
     int pulses = 0; char extra = '\0';
     if (sscanf(command + 6, "%d %c", &pulses, &extra) != 1 || pulses < 1 || pulses > carriage::Homing::MaxSearch) {
@@ -534,8 +550,9 @@ void handleCommand(char *command) {
       xDirection = delta >= 0 ? 1 : -1;
       xRemaining = static_cast<uint16_t>(delta >= 0 ? delta : -delta);
       xAbsoluteMove = xRemaining != 0;
+      xRamp.start(xRemaining, xProfile);
       digitalWrite(X_DIR_PIN, xDirection == 1 ? HIGH : LOW);
-      const uint32_t directionReady = micros() + 10;
+      const uint32_t directionReady = micros() + (xProfile ? xRamp.intervalUs() : 10);
       if (static_cast<uint32_t>(millis() - xLastStepAt) >= 26 ||
           static_cast<int32_t>(xNextPulseUs - directionReady) < 0) xNextPulseUs = directionReady;
     }
@@ -561,7 +578,8 @@ void handleCommand(char *command) {
       xDirection = direction;
       ++xMoveId;
       xRemaining = static_cast<uint16_t>(pulses);
-      const uint32_t directionReady = micros() + 10;
+      xRamp.start(xRemaining, xProfile);
+      const uint32_t directionReady = micros() + (xProfile ? xRamp.intervalUs() : 10);
       // Keep the previous pulse deadline across jogs. Rapid clicks cannot
       // bypass the 40 pulses/s limit or create a catch-up burst.
       if (static_cast<uint32_t>(millis() - xLastStepAt) >= 26 ||
@@ -627,9 +645,9 @@ void __attribute__((noinline)) serviceXJog() {
   digitalWrite(X_STEP_PIN, LOW);
   xCommandedSteps += xDirection;
   if (xPositionKnown) xHomeOffset += xDirection;
-  --xRemaining;
+  --xRemaining; xRamp.pulsed();
   xLastStepAt = millis();
-  xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
+  xNextPulseUs = micros() + xRamp.intervalUs();
   if (!xRemaining) { xAbsoluteMove = false; publishOutputs(); publishSafety(); publishX(); }
 }
 
