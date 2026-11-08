@@ -1,6 +1,6 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-08. The active implementation is **custom controller 0.7.0**,
+Updated 2026-11-08. The active implementation is **custom controller 0.9.0**,
 not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
@@ -11,11 +11,11 @@ close it before opening the main app on the same COM port.
 | Feature | Old MEGA path | Current Teensy path | Status / next acceptance |
 |---|---|---|---|
 | Connect / identity | Implicit serial protocol | HELLO, PINMAP, STATUS; exact machine identity and calibration match | Implemented; connect is reads only |
-| Manual carriage jog | M inches / HMI absolute target | XJOG direction pulses, 127.12 pulses/inch | Native CARRIAGE tab, 0.01-2 in per click, 254 pulses/arm, 40 pulses/s; operator acceptance pending |
+| Manual carriage jog | M inches / HMI absolute target | XJOG direction pulses, 127.12 pulses/inch | Native CARRIAGE tab, 0.01-2 in per click, 254 pulses maximum per click; repeatable while armed, 40 pulses/s; operator acceptance pending |
 | Direction | Old DIR conventions | A/DIR LOW toward saw; B/HIGH toward Home | Physically user-confirmed |
 | Enable / holding | E / X | ARM sets verified LOW; XDISABLE stops and sets HIGH | Verified hardware via Axis Y En/D40; original X En unused |
 | Stop / cancel | M0 | OFF, XARM 0; heartbeat fallback | Implemented, native and app tests; physical stop/fault acceptance pending |
-| Driver setup / arming | Implicit enabled startup | Explicit Home-input verification, setup ACK and arm ACK | No auto-enable/auto-arm on connect, reset or reconnect |
+| Driver setup / arming | Implicit enabled startup | Home input clear, explicit setup ACK and arm ACK; no sensor-trip ritual | No auto-enable/auto-arm on connect, reset or reconnect |
 | Position display | Encoder POS plus step estimate | POS_STEPS / 127.12; signed pulse-count displacement since boot | Clearly marked unreferenced; never used as blade distance |
 | Closed-loop error | MEGA encoder/PID fields | CL57T closes loop; ALM on Halt/D14 | Alarm trips motion; real 7-flash fault traced to loose encoder wire and resolved |
 | Home | H, positive seek, home coordinate 160.5 in | Reserved controller state machine | NOT implemented; next carriage feature |
@@ -35,21 +35,33 @@ close it before opening the main app on the same COM port.
 | MEGA PID toggle | K0/K1 | Driver-managed closed loop | Retired on live Teensy; no duplicate HMI PID loop |
 | Diagnostics / settings | Raw legacy console | Live raw records in SETTINGS; bounded command boundary | Legacy motion/output writes rejected in Carriage mode |
 
+## Manual-control behavior
+
+The previous 0.7.0 firmware stopped after 254 total pulses per arm. That was a
+commissioning allowance, not a timer. Version 0.9.0 removes that cumulative
+allowance from the main app: every click is independently bounded to 254 pulses
+(~2 inches), but jogs can be repeated while armed and interlocks remain healthy.
+No continuous movement, autorepeat, queued moves or automatic rearming is added.
+The current manual mode also removes the restart Home-trip requirement; it
+checks the real Home input level instead. An active limit still blocks motion,
+and no homed coordinate is inferred from a clear input.
+
 ## Operator flow for the first main-app carriage acceptance
 
 1. Keep saw mains unplugged, valve supply disconnected and air isolated. Keep
    suspect INA/MCP disconnected. Launch `python main.py`, select Teensy Carriage,
-   choose the Teensy COM port and connect. Verify firmware 0.7.0 telemetry.
-2. Verify actual Home sensor transitions after reboot. Door closed, saw UP only,
+   choose the Teensy COM port and connect. Verify firmware 0.9.0 telemetry.
+2. Check Home sensor is inactive (no trip/release sequence is required). Door closed, saw UP only,
    driver green ON/red OFF, alarm raw HIGH. Confirm isolation/driver checks.
-3. Confirm driver setup. Wait for controller acknowledgment, then ARM CARRIAGE.
+3. Confirm driver setup. Wait for controller acknowledgment, then ARM MANUAL CONTROL.
    No motion occurs on either action.
 4. Start at 0.1 in. A moves toward saw; B toward Home. Pulses are rounded to the
-   nearest full step. View displacement and remaining move/arm budget.
+   nearest full step. View displacement and remaining pulses in that move. There is no cumulative
+   travel allowance; completed jogs remain armed until an explicit stop or fault.
 5. Verify STOP, door opening, alarm and communications-loss responses in
    controlled tests. No cancellation may resume automatically. ACK does not arm.
 6. Release motor holding torque only when ready for a free carriage. This clears
-   input/setup verification. Position is always labeled commanded displacement.
+   setup confirmation; a Home-sensor trip is not required. Position is always labeled commanded displacement.
 
 ## Next controller/app slice
 

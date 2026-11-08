@@ -5,13 +5,10 @@ uint32_t fakeTime = 0;
 int fakePins[64];
 int fakeModes[64], fakeLatches[64];
 unsigned fakePulses = 0, fakeUs = 0, fakeDirAt = 0, fakeHighAt = 0, fakePulseWidth = 0, fakeSetupUs = 0;
+uint32_t fakeMinGapUs = UINT32_MAX, fakeLastPulseUs = 0;
 FakeSerial Serial;
 FakeWire Wire2;
-#ifdef CHOPSAW_CONTROLLER_TEST
-#include "../../firmware/chopsaw_controller/chopsaw_controller.ino"
-#else
 #include "../../firmware/chopsaw_sensor_bench/chopsaw_sensor_bench.ino"
-#endif
 
 static unsigned checks = 0;
 #define CHECK(value) do { ++checks; if (!(value)) { \
@@ -31,9 +28,6 @@ void restart() {
   xHomeActive = bench::StableAssertion{};
   xHomeInactive = bench::StableAssertion{};
   xBudget = xRemaining = 0;
-#ifdef CHOPSAW_CONTROLLER_TEST
-  xCommandedSteps = 0; xMoveId = 0; xDirection = 1;
-#endif
   Serial.incoming.clear();
   Serial.outgoing.clear();
   fakeTime = lastInputAt = lastHealthAt = 0;
@@ -41,6 +35,7 @@ void restart() {
   for (int &mode : fakeModes) mode = 0;
   for (int &latch : fakeLatches) latch = 0;
   fakePulses = fakeUs = fakeDirAt = fakeHighAt = fakePulseWidth = fakeSetupUs = 0;
+  fakeMinGapUs = UINT32_MAX; fakeLastPulseUs = 0;
   fakePins[29] = LOW;  // closed door
   fakePins[22] = LOW;  // saw fully up on Limit Z; retired Cyc/St stays HIGH
   setup();
@@ -67,12 +62,7 @@ void finishJog() {
 int main() {
   restart();
   CHECK(!outputsArmed && fakePins[33] == LOW && fakePins[32] == LOW && fakePins[19] == LOW);
-#ifdef CHOPSAW_CONTROLLER_TEST
-  CHECK(Serial.outgoing.find("FW:0.7.0") != std::string::npos);
-  CHECK(Serial.outgoing.find("X_APP:CARRIAGE_V1,CAL_SPI:127.12") != std::string::npos);
-#else
   CHECK(Serial.outgoing.find("FW:0.6.0") != std::string::npos);
-#endif
   CHECK(Serial.outgoing.find("INPUT_MAP:DOOR29_UP22_DOWN16") != std::string::npos);
   CHECK(Serial.outgoing.find("INTERLOCKS:DOOR_POSITION_V1") != std::string::npos);
   CHECK(Serial.outgoing.find("X_MAP:STEP2_DIR3_EN40") != std::string::npos);
@@ -227,18 +217,5 @@ int main() {
   prepareJog(); fakeTime = 4294967u; xArmAt = xLastStepAt = fakeTime - 200;
   interlocks.keepalive(fakeTime); command("XJOG -1 13"); finishJog();
   CHECK(fakePulses == 13);  // microsecond counter rollover
-#ifdef CHOPSAW_CONTROLLER_TEST
-  prepareJog(); command("XJOG -1 32"); finishJog();
-  CHECK(fakePulses == 32 && xCommandedSteps == -32 && xMoveId == 1);
-  fakeTime += 200; command("XJOG 1 64"); finishJog();
-  CHECK(fakePulses == 96 && xCommandedSteps == 32 && xMoveId == 2);
-  CHECK(Serial.outgoing.find("POS_KNOWN:0,CAL_SPI:127.12") != std::string::npos);
-  command("XDISABLE");
-  CHECK(!outputsArmed && !xConfigured && !xHomeVerified && fakePins[40] == HIGH);
-  command("XARM 1"); CHECK(!outputsArmed);
-  CHECK(xCommandedSteps == 32);  // no position inferred from free manual movement
-  printf("Controller integration: %u checks passed\n", checks);
-#else
   printf("Bench serial integration: %u checks passed\n", checks);
-#endif
 }

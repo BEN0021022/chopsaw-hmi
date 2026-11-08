@@ -26,9 +26,11 @@ class FakeSerial:
 
 def packet(panel, **changes):
     fields = dict(ARMED=0, CONFIGURED=0, READY=0, HOME_VERIFIED=0, HOME_RAW=1,
-                  ALARM_RAW=1, STEP=0, DIR=0, ENA=1, BUDGET=0, REMAINING=0,
+                  ALARM_RAW=1, STEP=0, DIR=0, ENA=1, MAX_JOG=254, RATE_PPS=40, JOG_READY=0, REMAINING=0,
                   POS_STEPS=0, MOVE_ID=0, UP_MS=1000, CAL_SPI="127.12", FAULT="NONE")
     fields.update(changes)
+    if fields["ARMED"] == 1 and "JOG_READY" not in changes:
+        fields["JOG_READY"] = 1
     panel.handle_line("BENCH_X," + ",".join(f"{k}:{v}" for k, v in fields.items()))
 
 
@@ -37,7 +39,7 @@ def ready(panel):
     panel.handle_line("BENCH_HELLO," + ",".join(f"{k}:{v}" for k, v in IDENTITY.items()))
     panel.handle_line("BENCH_SAFETY,READY:1,RESET_READY:1,DOOR_CLOSED:1,SAW_POSITION:UP,FAULT:NONE,BLOCKER:NONE")
     panel.handle_line("BENCH_INPUTS,HOME:1,BOARD_EDGE:0,FENCE_DOOR:0,SAW_UP:0,SAW_DOWN:1,CL57T_ALM:1")
-    packet(panel, HOME_VERIFIED=1)
+    packet(panel)  # manual setup must work without ever tripping Home
 
 
 def run():
@@ -67,6 +69,11 @@ def run():
         assert not p.configure_button.isEnabled()
         p.consent.setChecked(True)
         assert p.configure_button.isEnabled()
+        assert p.x["HOME_VERIFIED"] == "0", "A fresh restart must not require a Home trip"
+        packet(p, HOME_RAW=0)
+        assert not p.configure_button.isEnabled(), "An active Home limit still blocks setup"
+        packet(p, HOME_RAW=1)
+        assert p.configure_button.isEnabled()
         p.configure_button.click()
         assert wire.writes[-1] == "XCONFIG 0 1"
         assert not p.arm_button.isEnabled(), "Wait for configuration ACK"
@@ -74,38 +81,50 @@ def run():
         p.arm_button.click()
         assert wire.writes[-1] == "XARM 1"
         assert not p.toward_saw.isEnabled(), "Wait for arm ACK"
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, JOG_READY=0)
+        assert not p.toward_saw.isEnabled(), "Wait for enable settling in firmware"
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, JOG_READY=1)
         assert p.toward_saw.isEnabled() and not p.toward_saw.autoRepeat()
         p.toward_saw.click()
         assert wire.writes[-1] == "XJOG -1 13"
         before = len(wire.writes)
         p.jog(1)
         assert len(wire.writes) == before, "No duplicate while awaiting ACK"
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0)
         assert p.pending is not None, "Old telemetry must not acknowledge a new move"
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=250, REMAINING=9, POS_STEPS=-4, MOVE_ID=1)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, REMAINING=9, POS_STEPS=-4, MOVE_ID=1)
         assert p.pending is None and not p.toward_home.isEnabled() and not p.distance.isEnabled()
         p.tick()
         assert wire.writes[-1] == "KEEPALIVE"
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=241, POS_STEPS=-13, MOVE_ID=1)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, POS_STEPS=-13, MOVE_ID=1)
         assert "-0.1023" in p.position.text()
         assert w.homed_label.text() == "NOT HOMED", "Pulse count is not an absolute or encoder position"
         for distance, count in ((0.25, 32), (0.5, 64), (1, 127), (2, 254)):
-            packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254, MOVE_ID=count)
+            packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, MOVE_ID=count)
             p.distance.setValue(distance)
             p.toward_home.click()
             assert wire.writes[-1] == f"XJOG 1 {count}"
-            packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254, MOVE_ID=count+1)
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=10)
-        assert not p.toward_saw.isEnabled(), "Enforce remaining budget"
+            packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, MOVE_ID=count+1)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0)
+        assert p.toward_saw.isEnabled(), "Completed jogs do not exhaust a session allowance"
+        for move in range(20):
+            packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0,
+                   POS_STEPS=move*254, MOVE_ID=move+100)
+            p.distance.setValue(2)
+            p.toward_home.click()
+            assert wire.writes[-1] == "XJOG 1 254"
+            packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0,
+                   POS_STEPS=(move+1)*254, MOVE_ID=move+101)
+        assert "session travel budget" not in p.progress.text()
         assert not w.send_command("XJOG 1 255") and not w.send_command("XJOG 1 1 EXTRA")
 
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0)
         p.stop()
         assert p.stopping and not p.allowed("XJOG 1 13"), "Wait for stop ACK"
-        packet(p, ARMED=0, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254)
+        packet(p, ARMED=0, CONFIGURED=1, HOME_VERIFIED=1, ENA=0)
         assert not p.stopping
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0)
         # Stale safety alone must stop, even with fresh motion telemetry.
         p.received["SAFETY"] -= 3
         p.tick()
@@ -117,7 +136,7 @@ def run():
         assert wire.writes[-1] == "RESET" and not p.consent.isChecked()
         ready(p)
         p.consent.setChecked(True)
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254, UP_MS=3000)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, UP_MS=3000)
         packet(p, UP_MS=100)
         assert "restarted" in p.local_fault and not p.consent.isChecked()
 
@@ -127,7 +146,7 @@ def run():
         assert p.local_fault and wire.writes[-1] == "OFF"
         ready(p)
         p.consent.setChecked(True)
-        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, BUDGET=254)
+        packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0)
         p.pending = (0, time.monotonic()-2)
         p.tick()
         assert p.local_fault == "Move acknowledgment timed out" and wire.writes[-1] == "OFF"

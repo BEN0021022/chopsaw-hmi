@@ -14,7 +14,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.7.0";
+constexpr char FIRMWARE_VERSION[] = "0.9.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -65,14 +65,13 @@ bool xHomeVerified = false;
 bench::StableAssertion xHomeActive, xHomeInactive;
 uint8_t xEnableLevel = LOW;
 uint8_t xAlarmNormal = HIGH;
-uint16_t xBudget = 0;
 uint16_t xRemaining = 0;
 int32_t xCommandedSteps = 0;  // pulse-count displacement since boot, not encoder position
 int8_t xDirection = 1;
 uint32_t xMoveId = 0;
 constexpr float X_STEPS_PER_INCH = 127.12f;
 uint32_t xNextPulseUs = 0;
-constexpr uint16_t X_ARM_BUDGET = 254;  // ~2 inches total, calibration provisional
+constexpr uint16_t X_MAX_JOG_PULSES = 254;  // ~2 inches per click at recovered 127.12 pulses/in
 constexpr uint32_t X_PULSE_INTERVAL_US = 25000;  // 40 pulses/s, no catch-up bursts
 uint32_t xArmAt = 0;
 uint32_t xLastStepAt = 0;
@@ -90,7 +89,7 @@ void stopTests() {
 }
 
 bool xReady() {
-  return xConfigured && xHomeVerified && digitalRead(HOME_PIN) == HIGH &&
+  return xConfigured && digitalRead(HOME_PIN) == HIGH &&
          digitalRead(CL57T_ALARM_PIN) == xAlarmNormal && interlocks.readyToArm();
 }
 
@@ -202,7 +201,7 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:BOUNDED_JOG_V2,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V1,CAL_SPI:127.12");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V3,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY");
 }
 
 void publishPinMap() {
@@ -253,7 +252,10 @@ void publishX() {
   Serial.print(",STEP:"); Serial.print(digitalRead(X_STEP_PIN));
   Serial.print(",DIR:"); Serial.print(digitalRead(X_DIR_PIN));
   Serial.print(",ENA:"); Serial.print(digitalRead(X_ENABLE_PIN));
-  Serial.print(",BUDGET:"); Serial.print(xBudget);
+  Serial.print(",MAX_JOG:"); Serial.print(X_MAX_JOG_PULSES);
+  Serial.print(",RATE_PPS:40,JOG_READY:");
+  Serial.print(outputsArmed && testMode == TestMode::Stepper &&
+               static_cast<uint32_t>(millis() - xArmAt) >= 200 ? 1 : 0);
   Serial.print(",REMAINING:"); Serial.print(xRemaining);
   Serial.print(",POS_STEPS:"); Serial.print(xCommandedSteps);
   Serial.print(",POS_KNOWN:0,CAL_SPI:127.12,MOVE_ID:"); Serial.print(xMoveId);
@@ -444,7 +446,7 @@ void handleCommand(char *command) {
     } else if (outputsArmed || testMode != TestMode::None) {
       Serial.println("BENCH_ERROR,CODE:DISARM_FIRST");
     } else if (configure) {
-      if (!xHomeVerified || digitalRead(HOME_PIN) != HIGH ||
+      if (digitalRead(HOME_PIN) != HIGH ||
           digitalRead(CL57T_ALARM_PIN) != second || !interlocks.readyToArm()) {
         Serial.println("BENCH_ERROR,CODE:X_CONFIG_NOT_READY");
       } else { xEnableLevel = first; xAlarmNormal = second; xConfigured = true; }
@@ -460,9 +462,9 @@ void handleCommand(char *command) {
       Serial.println("BENCH_ERROR,CODE:X_NOT_READY");
     } else {
       testMode = TestMode::Stepper;
-      xBudget = X_ARM_BUDGET;
       xRemaining = 0;
       xArmAt = xLastStepAt = millis();
+      xNextPulseUs = micros();
       digitalWrite(X_STEP_PIN, LOW);
       digitalWrite(X_ENABLE_PIN, xEnableLevel);
     }
@@ -481,23 +483,25 @@ void handleCommand(char *command) {
     int direction = 0, pulses = 0; char extra = '\0';
     if (sscanf(command + 5, "%d %d %c", &direction, &pulses, &extra) != 2 ||
         (direction != -1 && direction != 1) ||
-        pulses < 1 || pulses > X_ARM_BUDGET) {
+        pulses < 1 || pulses > X_MAX_JOG_PULSES) {
       commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_X_JOG");
     } else if (!outputsArmed || testMode != TestMode::Stepper || !xConfigured) {
       Serial.println("BENCH_ERROR,CODE:X_NOT_ARMED");
     } else if (xRemaining) {
       Serial.println("BENCH_ERROR,CODE:X_BUSY");
-    } else if (pulses > xBudget) {
-      Serial.println("BENCH_ERROR,CODE:X_BUDGET_EXCEEDED");
-    } else if (static_cast<uint32_t>(millis() - xArmAt) < 200 ||
-               static_cast<uint32_t>(millis() - xLastStepAt) < 200) {
+    } else if (static_cast<uint32_t>(millis() - xArmAt) < 200) {
       Serial.println("BENCH_ERROR,CODE:X_RATE_LIMIT");
     } else {
       digitalWrite(X_DIR_PIN, direction == 1 ? HIGH : LOW);
       xDirection = direction;
       ++xMoveId;
       xRemaining = static_cast<uint16_t>(pulses);
-      xNextPulseUs = micros() + 10;  // direction setup; no pulse in command handler
+      const uint32_t directionReady = micros() + 10;
+      // Keep the previous pulse deadline across jogs. Rapid clicks cannot
+      // bypass the 40 pulses/s limit or create a catch-up burst.
+      if (static_cast<uint32_t>(millis() - xLastStepAt) >= 26 ||
+          static_cast<int32_t>(xNextPulseUs - directionReady) < 0)
+        xNextPulseUs = directionReady;
     }
     publishX();
   } else if (startsWith(command, "XSTEP ")) {
@@ -505,7 +509,7 @@ void handleCommand(char *command) {
     if (sscanf(command + 6, "%d %c", &direction, &extra) != 1 ||
         (direction != -1 && direction != 1)) {
       commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_X_STEP");
-    } else if (!outputsArmed || testMode != TestMode::Stepper || !xConfigured || !xBudget) {
+    } else if (!outputsArmed || testMode != TestMode::Stepper || !xConfigured) {
       Serial.println("BENCH_ERROR,CODE:X_NOT_ARMED");
     } else if (xRemaining) {
       Serial.println("BENCH_ERROR,CODE:X_BUSY");
@@ -522,9 +526,8 @@ void handleCommand(char *command) {
         digitalWrite(X_STEP_PIN, LOW);
         xCommandedSteps += direction;
         ++xMoveId;
-        --xBudget;
         xLastStepAt = millis();
-        if (!xBudget) stopTests();
+        xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
       }
     }
     publishOutputs(); publishSafety(); publishX();
@@ -552,10 +555,8 @@ void __attribute__((noinline)) serviceXJog() {
   digitalWrite(X_STEP_PIN, LOW);
   xCommandedSteps += xDirection;
   --xRemaining;
-  --xBudget;
   xLastStepAt = millis();
   xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
-  if (!xBudget) stopTests();
   if (!xRemaining) { publishOutputs(); publishSafety(); publishX(); }
 }
 

@@ -9,22 +9,26 @@ The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active firmware is **0.7.0**, source
+Active firmware is **0.9.0**, source
 `firmware/chopsaw_controller/chopsaw_controller.ino`. The separate Sensor Bench
 0.6.0 sketch is preserved for diagnostics. The active controller keeps those
-input/interlock functions and adds the main-app carriage contract. This is
+input/interlock functions and adds the main-app manual-carriage contract. This is
 custom firmware; stock grblHAL is not running on the board.
 
 - Verified hardware map: X STEP D2, X DIR D3, X enable remapped to **Axis Y En/D40**.
 - Recovered scale: **127.12 pulses/inch**, full stepping. A=toward saw;
   B=away from saw toward Home. Enabled LOW; healthy driver alarm HIGH.
 - Main-app jogs: 0.01-2 inches per click, rounded to whole pulses; 254 pulses
-  total per arm, 40 pulses/s. Start small. One jog at a time; no queued motion.
+  maximum per click, 40 pulses/s. Repeated jogs stay armed; no session travel
+  allowance. Start small. One jog at a time; no queued motion.
 - Live Home/board-edge/door/saw-up/saw-down/driver-alarm feedback and commanded
   displacement. Commanded travel is not an encoder reading or absolute blade position.
+- No Home-sensor trip/release ritual is needed after restart; the actual Home
+  limit must still be clear. Absolute position remains unknown.
 - Fault acknowledgment never arms. Stop/disarm, disconnect, stale telemetry,
   controller reboot and interlocks revoke permission. Motor release explicitly
-  disables the driver and requires renewed input/setup validation.
+  disables the driver and requires setup confirmation again, without walking
+  down to trip the Home sensor.
 - Automatic homing, absolute cut-length moves, profiles and cutting cycles are
   not implemented for this controller yet. The old operational tabs stay blocked
   on real hardware. Cut-list editing and the offline simulator are retained.
@@ -105,7 +109,7 @@ notes, Git status, and hardware compatibility before creating a release.
 
 ## Controller modes
 
-- **Teensy Carriage:** active custom 0.7.0 firmware; native guarded carriage jogs.
+- **Teensy Carriage:** active custom 0.9.0 firmware; native guarded carriage jogs.
 - **Legacy Arduino Mega:** archived, internal to the offline simulator only.
 - **Teensy Hardware Test:** separate diagnostics protocol; old operational tabs locked.
 - **Teensy grblHAL:** retained prototype only; operational controls locked. It

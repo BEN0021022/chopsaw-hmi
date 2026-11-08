@@ -1,7 +1,7 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Active firmware: custom **0.7.0** in `firmware/chopsaw_controller`.
+Active firmware: custom **0.9.0** in `firmware/chopsaw_controller`.
 Main app mode: **Teensy Carriage**. The breakout is a grblHAL-compatible board;
 the currently flashed firmware is custom, not stock grblHAL.
 
@@ -33,7 +33,7 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
       before main-app motion. Connect is reads only; no configure/enable/arm on connect.
 - [x] Guard every main-app serial write in Carriage mode; reject legacy motion,
       PID, clamp/saw, G-code, raw output and voltage-test commands.
-- [x] Require explicit isolation/driver confirmation, verified Home-input transition,
+- [x] Require explicit isolation/driver confirmation, inactive Home input,
       setup acknowledgment and arm acknowledgment before a jog can be requested.
 - [x] Controller-side door, saw-UP/conflicting endpoints, Home and driver alarm checks;
       first fault latched, cancellation of pending pulses, no automatic resume.
@@ -73,14 +73,23 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 - [x] Native CARRIAGE screen: live Home, board edge, door, saw endpoints, driver
       alarm, configuration, arm, stop/disarm, fault ACK and explicit motor release.
 - [x] Main-app inch jogs rounded at 127.12 pulses/inch, 0.01-2 in per click,
-      254 total pulses per arm, fixed 40 pulses/s. No queued jogs or autorepeat.
+      254 pulses per click, fixed 40 pulses/s. No queued jogs or autorepeat.
+- [x] Replace the old 254-pulse per-arm diagnostic allowance with repeatable
+      manual jogs in 0.9.0. Each move is bounded; completion stays armed.
+      Stop, faults and watchdog still cancel/disarm. New manual identity rejects
+      old budget-based firmware; UI waits for enable-settling feedback.
+- [x] Remove restart Home-trip ritual from manual mode as requested; actual
+      Home input must still be clear and remains a stop input. Absolute position
+      stays unknown until real homing is implemented and accepted.
 - [x] Signed commanded displacement and move acknowledgment IDs from the controller.
       Absolute position remains unknown; no encoder/absolute claim is fabricated.
 - [x] Backend, main-app integration, safety-boundary, Sensor Bench, native firmware,
       and existing simulator/manual-cycle regression tests pass. Teensy build passes.
 - [x] Flash and identify controller 0.7.0 on COM4, correct D40 map and calibration;
       disarmed, zero budget/remaining, STEP/DIR LOW, ENA HIGH. No motion sent by agent.
-- [ ] Operator acceptance of the new main-app jog/stop workflow on hardware.
+- [x] Flash/read back 0.9.0 on COM4: CARRIAGE_V3 / MANUAL_JOG_V1, MAX_JOG=254,
+      RATE_PPS=40; disarmed/unconfigured, no queued pulses, ENA HIGH.
+- [ ] Operator acceptance of repeatable main-app manual jog/stop workflow on hardware.
 - [ ] Implement bounded homing state machine: B seek, release/backoff, slow re-latch,
       sensor-stuck/travel/time limits and cancellation. Hardware validation required.
 - [ ] Establish/invalidate homed machine coordinates; verify recovered 160.5-inch

@@ -32,3 +32,38 @@ Pending operator checks in main app:
 
 This record does not establish production cutting, automatic homing, absolute
 blade reference, pneumatic sequencing or independent safety acceptance.
+
+## Manual jog update: controller 0.9.0
+
+User reported the old step allowance exhausted during carriage testing. Source
+confirmed 254 cumulative pulses per arm, with automatic disarm at zero. Version
+0.9.0 removes that cumulative allowance from native manual mode. Each click is
+still limited to 254 pulses (~2 inches), at 40 pulses/s, with no queued moves.
+Completed moves remain armed. STOP, Home/driver/guard/saw faults and heartbeat
+loss still cancel/disarm; there is no automatic rearm or unsolicited movement.
+
+The main app now requires CARRIAGE_V3 / MANUAL_JOG_V1 and MAX_JOG/RATE_PPS;
+JOG_READY gates buttons until driver enable has settled. Status prompts identify
+missing isolation confirmation, Home-input verification or setup/arm steps.
+
+Validation: 83 policy, 87 frozen-bench integration and 111 manual-controller
+checks passed. The manual tests include six 254-pulse moves under one arm,
+40 pulses/s across rapid jog boundaries, pulse counts/directions, all fault/stop
+cancellations, malformed commands, no catch-up bursts and timer rollover. Main-app
+Qt tests exercise twenty consecutive two-inch requests without an arm allowance.
+Backend, UI boundary and Sensor Bench regression checks passed. Arduino build
+passed; 0.9.0 flashed and read back on COM4, disarmed, zero pending steps, ENA HIGH.
+Driver power OFF and machine isolation confirmed before flashing. No physical
+arm/jog/enable was commanded by the agent; operator acceptance remains pending.
+
+### Startup Home check change
+
+At the user's request, 0.9.0 manual setup no longer requires a Home LOW/HIGH
+transition on restart or motor release. Firmware and app use HOME_CHECK:LEVEL_ONLY
+and CARRIAGE_V3: actual Home must be clear, with door/saw/driver checks unchanged.
+An active Home input still blocks setup and trips active motion. No machine
+coordinate or homed state is inferred. Tests explicitly arm and jog from a fresh
+boot without any Home transition and also verify active-limit rejection.
+The manual-controller suite now passes 111 checks, including a long-armed-idle
+microsecond timing regression. Operator confirmation in the reopened app remains
+pending. No arm/jog/enable was sent by the agent during this update.

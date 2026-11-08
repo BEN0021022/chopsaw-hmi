@@ -11,6 +11,7 @@ extern uint32_t fakeTime;
 extern int fakePins[64];
 extern int fakeModes[64], fakeLatches[64];
 extern unsigned fakePulses, fakeUs, fakeDirAt, fakeHighAt, fakePulseWidth, fakeSetupUs;
+extern uint32_t fakeMinGapUs, fakeLastPulseUs;
 inline uint32_t millis() { return fakeTime; }
 inline uint32_t micros() { return fakeTime * 1000u + fakeUs; }
 inline void delay(uint32_t duration) { fakeTime += duration; }
@@ -21,6 +22,8 @@ inline void digitalWrite(uint8_t pin, int state) {
   if (fakeModes[pin] != OUTPUT) return;
   if (pin == 3) fakeDirAt = micros();
   if (pin == 2 && state == HIGH && fakePins[pin] == LOW) {
+    if (fakePulses && micros() - fakeLastPulseUs < fakeMinGapUs) fakeMinGapUs = micros() - fakeLastPulseUs;
+    fakeLastPulseUs = micros();
     ++fakePulses; fakeHighAt = micros(); fakeSetupUs = micros() - fakeDirAt;
   }
   if (pin == 2 && state == LOW && fakePins[pin] == HIGH) fakePulseWidth = micros() - fakeHighAt;

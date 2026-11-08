@@ -1,5 +1,10 @@
 # X-axis bounded jog commissioning
 
+Current main-app manual control uses controller **0.9.0**: repeatable bounded
+jogs, up to 254 pulses per click, without a cumulative per-arm allowance. See
+[main-app feature map](APP_FEATURE_MIGRATION.md) and [protocol](CONTROLLER_PROTOCOL.md).
+The earlier bench commissioning sequence below retains its historical budgets.
+
 ## Recovered calibration update (2026-11-08)
 
 The MEGA V2.5 firmware was recovered: **127.12 pulses/inch at full stepping**.

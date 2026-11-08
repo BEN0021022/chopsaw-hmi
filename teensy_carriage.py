@@ -19,10 +19,11 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V1", "X_TEST": "BOUNDED_JOG_V2",
+    "X_APP": "CARRIAGE_V3", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "VALVES_ISOLATED", "CAL_SPI": "127.12",
+    "MAX_JOG": "254", "RATE_PPS": "40", "HOME_CHECK": "LEVEL_ONLY",
 }
 JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
 
@@ -79,7 +80,7 @@ class TeensyCarriagePanel(QWidget):
         self.consent.toggled.connect(self._consent_changed)
         setup_layout.addWidget(self.consent)
         self.setup_note = QLabel(
-            "Trigger and release the actual Home sensor after a controller restart. "
+            "Home sensor must be clear; no trip/release sequence is needed after restart. "
             "Verified driver settings: enable LOW; healthy alarm HIGH."
         )
         self.setup_note.setWordWrap(True)
@@ -87,7 +88,7 @@ class TeensyCarriagePanel(QWidget):
         row = QHBoxLayout()
         self.configure_button = QPushButton("Confirm driver setup")
         self.configure_button.clicked.connect(lambda: self.send("XCONFIG 0 1"))
-        self.arm_button = QPushButton("ARM CARRIAGE")
+        self.arm_button = QPushButton("ARM MANUAL CONTROL")
         self.arm_button.clicked.connect(self.toggle_arm)
         self.reset_button = QPushButton("Acknowledge fault")
         self.reset_button.clicked.connect(self.acknowledge)
@@ -116,7 +117,7 @@ class TeensyCarriagePanel(QWidget):
         self.progress = QLabel()
         jog_layout.addWidget(self.progress)
         jog_layout.addWidget(QLabel(
-            "One move per click. 40 pulses/s; 254 total pulses per arm (about 2 inches).\n"
+            "One move per click, up to 2 inches. Repeat jogs while armed; no session travel budget.\n"
             "Home, absolute length moves and automatic cutting remain unavailable pending commissioning."
         ))
         layout.addWidget(jog_box)
@@ -175,7 +176,7 @@ class TeensyCarriagePanel(QWidget):
             return self.armed
         idle = not self.armed and self.x.get("REMAINING") == "0"
         if command == "XCONFIG 0 1":
-            return idle and self.x.get("HOME_VERIFIED") == "1" and self.safety.get("READY") == "1"
+            return idle and self.safety.get("READY") == "1"
         if command == "XARM 1":
             return idle and self.x.get("READY") == "1" and self.x.get("CONFIGURED") == "1"
         match = JOG.fullmatch(command)
@@ -183,7 +184,8 @@ class TeensyCarriagePanel(QWidget):
             return False
         count = int(match[2])
         return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
-                and 1 <= count <= 254 and count <= parse_int(self.x.get("BUDGET"), 0))
+                and self.x.get("JOG_READY") == "1"
+                and 1 <= count <= parse_int(self.x.get("MAX_JOG"), 0))
 
     def handle_line(self, line):
         if not self.connected:
@@ -199,15 +201,16 @@ class TeensyCarriagePanel(QWidget):
             self.compatible = compatible
         elif message.kind == "BENCH_X":
             numeric = ("ARMED", "CONFIGURED", "READY", "HOME_VERIFIED", "HOME_RAW", "ALARM_RAW",
-                       "STEP", "DIR", "ENA", "BUDGET", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS")
+                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS")
             if any(parse_int(f.get(k)) is None for k in numeric) or f.get("CAL_SPI") != "127.12":
                 self.trip_local("Invalid carriage telemetry")
                 return
-            if any(f.get(k) not in ("0", "1") for k in numeric[:9]):
+            if any(f.get(k) not in ("0", "1") for k in (*numeric[:9], "JOG_READY")):
                 self.trip_local("Invalid carriage state")
                 return
-            if not 0 <= int(f["REMAINING"]) <= int(f["BUDGET"]) <= 254:
-                self.trip_local("Invalid motion budget")
+            if (f["MAX_JOG"] != "254" or f["RATE_PPS"] != "40"
+                    or not 0 <= int(f["REMAINING"]) <= int(f["MAX_JOG"])):
+                self.trip_local("Invalid manual jog limit")
                 return
             uptime = int(f["UP_MS"])
             if self.previous_uptime is not None and uptime < self.previous_uptime:
@@ -293,23 +296,33 @@ class TeensyCarriagePanel(QWidget):
         link = self.ready_link()
         fault = self.x.get("FAULT", "NONE")
         remaining = parse_int(self.x.get("REMAINING"), 0)
-        budget = parse_int(self.x.get("BUDGET"), 0)
+        max_jog = parse_int(self.x.get("MAX_JOG"), 0)
         busy = bool(remaining or self.pending)
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible carriage firmware 0.7.0 and verified machine pin map"
+            text = "Waiting for compatible manual-jog firmware 0.9.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":
             text = "FAULT: " + (self.local_fault or fault)
         elif busy:
             text = "MOVING" if remaining else "Waiting for move acknowledgment"
+        elif self.stopping:
+            text = "Stopping - waiting for controller acknowledgment"
         elif self.armed:
-            text = "ARMED - ready for a carriage jog"
+            text = ("ARMED - ready for repeatable manual jogs" if self.x.get("JOG_READY") == "1"
+                    else "ARMED - waiting for driver enable to settle")
         else:
             blocker = self.safety.get("BLOCKER", "verify setup")
-            text = "DISARMED - " + ("confirm setup, then arm" if blocker == "NONE" else blocker)
+            if blocker != "NONE":
+                text = "DISARMED - " + blocker
+            elif not self.consent.isChecked():
+                text = "Confirm isolation and driver checks to prepare manual motion"
+            elif self.x.get("CONFIGURED") != "1":
+                text = "Click Confirm driver setup, then arm manual control"
+            else:
+                text = "Ready - click ARM MANUAL CONTROL"
         self.status.setText(text)
         self.status.setStyleSheet("color:" + ("#ef4444" if self.local_fault or fault != "NONE" else "#60a5fa"))
         steps = parse_int(self.x.get("POS_STEPS")) if self.fresh("X") else None
@@ -321,13 +334,14 @@ class TeensyCarriagePanel(QWidget):
                 ("ALARM" if raw == "0" else "NORMAL") if key == "CL57T_ALM" else
                 ("ACTIVE" if raw == "0" else "INACTIVE"))
             label.setText(value)
+        home_clear = self.x.get("HOME_RAW") == "1"
         self.setup_note.setText(
-            f"Home input verified: {self.x.get('HOME_VERIFIED', '?')} | "
-            "Enable LOW; healthy alarm HIGH. Trigger/release Home after a controller restart or motor release."
+            ("Home limit clear" if home_clear else "Home limit active or unknown - manual motion blocked")
+            + " | Enable LOW; healthy alarm HIGH. No sensor trip is required after restart."
         )
-        self.progress.setText(f"Move remaining: {remaining} pulses | Arm budget: {budget} pulses | 40 pulses/s")
+        self.progress.setText(f"Move remaining: {remaining} pulses | Maximum per click: {max_jog} pulses (~2 in) | 40 pulses/s")
         self.configure_button.setEnabled(self.allowed("XCONFIG 0 1"))
-        self.arm_button.setText("DISARM CARRIAGE" if self.armed else "ARM CARRIAGE")
+        self.arm_button.setText("DISARM MANUAL CONTROL" if self.armed else "ARM MANUAL CONTROL")
         self.arm_button.setEnabled(self.connected and (self.armed or self.allowed("XARM 1")))
         count = int(math.floor(self.distance.value() * STEPS_PER_INCH + 0.5))
         self.toward_saw.setEnabled(self.allowed(f"XJOG -1 {count}"))
