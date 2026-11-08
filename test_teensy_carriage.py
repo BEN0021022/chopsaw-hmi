@@ -30,7 +30,9 @@ def packet(panel, **changes):
                   POS_STEPS=0, MOVE_ID=0, UP_MS=1000, CAL_SPI="127.12", FAULT="NONE",
                   POS_KNOWN=0, HOME_OFFSET=0, HOME_REF="160.5", HOME_STATE="IDLE", HOME_ERROR="NONE",
                   SOFT_MIN_OFFSET=-20402, SOFT_MAX_OFFSET=-14, SOFT_MAX_MILLI=160389,
-                  MAX_MOVE=20594, TARGET_OFFSET=0, MOVE_KIND="IDLE", PROFILE_ID=0, ACCEL_PPS2=0)
+                  MAX_MOVE=20594, TARGET_OFFSET=0, MOVE_KIND="IDLE", PROFILE_ID=0, ACCEL_PPS2=0,
+                  EDGE_STATE="IDLE", EDGE_ERROR="NONE", EDGE_VALID=0, EDGE_MILLI=0,
+                  TRUING_MILLI=0, SENSOR_OFFSET_MILLI=10800, TRIM_MILLI=250)
     fields.update(changes)
     if fields["ARMED"] == 1 and "JOG_READY" not in changes:
         fields["JOG_READY"] = 1
@@ -233,6 +235,44 @@ def run():
         assert not p.select_profile(3) and not p.profile_apply.isEnabled()
         packet(p, ARMED=0, PROFILE_ID=2, RATE_PPS=40, ACCEL_PPS2=160)
         assert p.local_fault, "Inconsistent profile limits must fail closed"
+
+        # Edge search uses the referenced position and clear sensor, then stops.
+        # A fresh controller-owned capture is required for the separate truing move.
+        ready(p)
+        p.consent.setChecked(True)
+        packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-14, HOME_STATE="DONE")
+        assert not p.find_edge(), "Cannot start searching when the sensor is already active"
+        p.handle_line("BENCH_INPUTS,HOME:1,BOARD_EDGE:1,FENCE_DOOR:0,SAW_UP:0,SAW_DOWN:1,CL57T_ALM:1")
+        assert p.find_edge() and wire.writes[-1] == "XEDGE 254 10800 250"
+        assert not p.move_to(135) and not p.find_edge(), "No overlapping commands before ACK"
+        packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-20, HOME_STATE="DONE",
+               MOVE_KIND="EDGE", REMAINING=248, MOVE_ID=1, EDGE_STATE="SEEK")
+        assert p.edge_searching and "FINDING BOARD EDGE" in p.status.text()
+        assert not p.toward_saw.isEnabled() and not p.edge_button.isEnabled()
+        assert not p.sensor_offset.isEnabled() and not p.edge_search.isEnabled()
+        p.tick()
+        assert wire.writes[-1] == "KEEPALIVE"
+        edge_fields = dict(CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-27, HOME_STATE="DONE",
+                           MOVE_ID=1, EDGE_STATE="FOUND", EDGE_VALID=1, EDGE_MILLI=160287,
+                           TRUING_MILLI=149737)
+        packet(p, **edge_fields)
+        assert not p.armed and p.pending is None
+        assert "149.737" in p.edge_result.text() and not p.truing_button.isEnabled()
+        assert not p.move_to_truing(), "Detection must not arm or advance automatically"
+        packet(p, ARMED=1, **edge_fields)
+        assert p.truing_button.isEnabled()
+        assert not w.send_command("XTRUING 0"), "Capture token must match the last acquisition"
+        assert p.move_to_truing() and wire.writes[-1] == "XTRUING 1"
+        packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-30, HOME_STATE="DONE",
+               REMAINING=1300, MOVE_KIND="ABSOLUTE", TARGET_OFFSET=-1368, MOVE_ID=2)
+        assert not p.truing_button.isEnabled() and "No valid" in p.edge_result.text()
+        p.stop()
+        packet(p, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-30, HOME_STATE="DONE")
+        assert not p.allowed("XEDGE 20595 10800 250") and not p.allowed("XEDGE 13 160501 250")
+        assert not p.allowed("XEDGE 13 10800 -1") and not p.allowed("XTRUING 1 EXTRA")
+        ready(p); p.consent.setChecked(True)
+        packet(p, **dict(edge_fields,TRUING_MILLI=149738))
+        assert p.local_fault == "Invalid board-edge telemetry"
 
         # Invalid packets and missing move ACKs fail closed.
         ready(p)

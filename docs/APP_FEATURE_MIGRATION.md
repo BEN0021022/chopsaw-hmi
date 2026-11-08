@@ -6,6 +6,10 @@ connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
 close it before opening the main app on the same COM port.
 
+Prepared source is now 0.13.0: profiles and bounded board-edge/truing, tested
+offline. It has not been flashed. The already-open app remains on 0.11.0;
+restarting the edited source requires the matching 0.13.0 controller.
+
 ## Feature mapping
 
 | Feature | Old MEGA path | Current Teensy path | Status / next acceptance |
@@ -22,7 +26,7 @@ close it before opening the main app on the same COM port.
 | Absolute length / load positions | S inches | XMOVE integer milliinches; known position + explicit arm | Implemented 0.11.0; native inch target and load presets; physical acceptance pending |
 | Soft limits | Legacy target clamping | Firmware target-time and per-pulse bounds | Implemented; physical envelope acceptance pending |
 | Profiles / speed / acceleration | Z, A speed,accel | Commissioning default plus disarmed-only Gentle/Normal/Fast selection | Prepared 0.12.0, tested offline; flash and physical acceptance pending; see MOTION_PROFILES.md |
-| Board detection / truing | J / N, board-edge offset | Limit Y/D21 telemetry available | Geometry, offsets and bounded controller-side sequence pending |
+| Board detection / truing | J / N, board-edge offset | XEDGE pulse bound/offset/overlap; XTRUING capture token | Prepared 0.13.0; detection disarms, separate explicit truing move; Home reference retained; geometry/physical acceptance pending |
 | Door | Ad hoc/old hardware | Door/D29 active LOW, controller interlock | User confirmed input; firmware/app cancellation tested |
 | Saw endpoints | Old SSEN | UP Limit Z/D22; DOWN Fd/Hld/D16 | User-confirmed inputs, controller interlocks |
 | Main left clamp | C/D/L/U (legacy command collision) | OUT 1 / AUX1 TTL D32 | Bench LED proven; main app unavailable until diode/coil acceptance and clamp fault policy |
@@ -50,7 +54,8 @@ and no homed coordinate is inferred from a clear input.
 
 1. Keep saw mains unplugged, valve supply disconnected and air isolated. Keep
    suspect INA/MCP disconnected. Launch `python main.py`, select Teensy Carriage,
-   choose the Teensy COM port and connect. Verify firmware 0.11.0 telemetry.
+   choose the Teensy COM port and connect. The prepared source now requires matching
+   0.13.0 telemetry; the already-open 0.11.0 session is the preserved baseline.
 2. Check Home sensor is inactive (no trip/release sequence is required). Door closed, saw UP only,
    driver green ON/red OFF, alarm raw HIGH. Confirm isolation/driver checks.
 3. Confirm driver setup. Wait for controller acknowledgment, then ARM MANUAL CONTROL.
@@ -69,7 +74,8 @@ User confirmed bounded Home success. Absolute targets, soft limits and load
 presets are implemented in 0.11.0; follow [absolute positioning](ABSOLUTE_POSITIONING.md)
 for the first short out-and-back test. The recovered 160.5-inch reference is at the slow
 sensor latch; final pull-off is included in the displayed position. Accept
-repeatability, physical reference and absolute positioning, then add acceleration/profiles. Alarm or driver release invalidates
+repeatability, physical reference and absolute positioning, then accept the
+prepared profiles and board-edge/truing path. Alarm or driver release invalidates
 referenced position and requires homing before future absolute moves.
 See [remaining effort estimate](MIGRATION_EFFORT_ESTIMATE.md): roughly 12-24
 engineering hours plus physical acceptance/hardware time for the core workflow.

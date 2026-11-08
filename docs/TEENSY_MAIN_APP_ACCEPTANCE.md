@@ -102,3 +102,27 @@ compiled and flashed/read back on COM4, disarmed and no reference/queued move.
 No motion/arm/Home command sent by the agent. New absolute/load physical tests
 are pending; existing Home success is not a physical lower-envelope acceptance.
 MIGRATION tab now shows the master checklist without editing it or moving hardware.
+
+## Offline preparation while operator away: 0.12.0 and 0.13.0
+
+Live board and open app remain at 0.11.0. No flash, arm, Home, jog, valve or
+other hardware-output command was sent during this preparation.
+
+0.12.0 adds bounded Commissioning/Gentle/Normal/Fast profiles with acknowledged,
+disarmed-only RAM selection. 0.13.0 includes those profiles plus bounded edge
+search and an explicit separate captured truing move. Home remains the sole
+coordinate reference. Detection disarms; stale captures cannot be replayed.
+No main-app pneumatic or automatic cutting path is enabled.
+
+Native checks: 83 policy, 87 frozen bench, 112 manual controller, 209 Home,
+113 positioning, 1637 profile/ramp and 165 board-edge checks pass. Real sketch
+serial output replays into the real Qt panel (55 motion records). Main-app,
+backend, safety-boundary and Sensor Bench regressions pass. Arduino Teensy 4.1
+compile passes. See MOTION_PROFILES.md and BOARD_EDGE_COMMISSIONING.md for
+pending physical acceptance; no new physical pass is implied.
+
+Manual-mode and complete cut-list simulator regressions pass. Offscreen Qt
+layout was rendered and inspected at 1280x900 using the Windows Segoe UI fonts:
+new edge/geometry controls fit without horizontal overflow, and STOP/release
+remain outside the scrolling area. This was a mock-window render, not a live
+machine-control test or an interaction with the open hardware session.

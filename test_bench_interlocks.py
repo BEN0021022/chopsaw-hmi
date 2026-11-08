@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 
 def main():
@@ -21,13 +22,21 @@ def main():
         if not zig.exists():
             raise SystemExit("Install a C++ compiler, or pip install --target tmp/native-compiler ziglang==0.14.1")
         command = [str(zig), "c++", "-target", "x86_64-windows-gnu"]
-    for name in ("test_bench_interlocks", "test_bench_commands", "test_controller_commands", "test_homing", "test_positioning", "test_motion_profiles"):
+    for name in ("test_bench_interlocks", "test_bench_commands", "test_controller_commands", "test_homing", "test_positioning", "test_motion_profiles", "test_edge_search"):
         exe = output_dir / (name + (".exe" if os.name == "nt" else ""))
         subprocess.run(command + ["-std=c++11", "-Wall", "-Wextra", "-Werror",
                        "-I", str(root / "tests" / "firmware" / "stubs"),
                        str(root / "tests" / "firmware" / (name + ".cpp")),
                        "-o", str(exe)], check=True, cwd=root)
         subprocess.run([str(exe)], check=True, cwd=root)
+    emitter = output_dir / ("emit_controller_records.exe" if os.name == "nt" else "emit_controller_records")
+    subprocess.run(command + ["-std=c++11", "-Wall", "-Wextra", "-Werror",
+                   "-I", str(root / "tests" / "firmware" / "stubs"),
+                   str(root / "tests" / "firmware" / "emit_controller_records.cpp"),
+                   "-o", str(emitter)], check=True, cwd=root)
+    records = subprocess.run([str(emitter)], check=True, cwd=root, capture_output=True, text=True)
+    subprocess.run([sys.executable, str(root / "test_teensy_protocol_records.py")],
+                   input=records.stdout, text=True, check=True, cwd=root)
 
 
 if __name__ == "__main__":

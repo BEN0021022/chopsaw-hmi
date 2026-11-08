@@ -1,8 +1,8 @@
 # Motion profiles - prepared controller 0.12.0
 
-Prepared offline on 2026-11-08. This build is not yet flashed or physically
-accepted. The last read-back controller is 0.11.0. Keep its local checkpoint
-`cab3a16` for rollback.
+Prepared offline on 2026-11-08 as 0.12.0, checkpoint `dd333ce`; also included in
+prepared 0.13.0. Neither new build is flashed or physically accepted. The last
+read-back controller is 0.11.0. Keep its checkpoint `cab3a16` for rollback.
 
 | Profile | Maximum pulses/s | Acceleration, pulses/s² | Approximate maximum in/s |
 | --- | ---: | ---: | ---: |
@@ -31,7 +31,7 @@ tail; it does not start a return move.
 1. Close the app and switch driver power off before loading the matching app and
    controller build. Keep saw mains unplugged, valve power disconnected and air
    isolated.
-2. Read back 0.12.0 / CARRIAGE_V6 and confirm the default Commissioning profile,
+2. Read back the matching prepared build (currently 0.13.0 / CARRIAGE_V7) and confirm the default Commissioning profile,
    disarmed state and zero queued motion. Reconfirm driver setup and Home.
 3. Accept a short absolute out-and-back at Commissioning speed first. Then
    disarm, apply Gentle and confirm its acknowledged rates before arming again.

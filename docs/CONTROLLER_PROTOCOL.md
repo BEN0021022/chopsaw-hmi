@@ -1,16 +1,15 @@
 # Controller protocol
 
-Updated 2026-11-08. Current main-app controller firmware **0.11.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V5. 115200 baud,
+Updated 2026-11-08. Prepared main-app controller firmware **0.13.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V7. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
-Prepared offline source 0.12.0 changes the app identity to CARRIAGE_V6, replaces
-HELLO RATE_PPS with BASE_RATE:40/MAX_RATE:127/PROFILES:RAMP_V1, and adds
-`XPROFILE 0..3` (disarmed only). BENCH_X gains PROFILE_ID, selected RATE_PPS and
-ACCEL_PPS2. See [motion profiles](MOTION_PROFILES.md) for the exact limits and
-pending physical acceptance. The protocol below describes the last flashed
-0.11.0; the prepared app intentionally rejects that older identity for motion.
+This document describes prepared source, not a deployed upgrade. The last
+flashed/read-back board and already-open app remain 0.11.0 / CARRIAGE_V5.
+The edited app intentionally rejects that older identity for motion. Profiles
+were prepared in 0.12.0 / CARRIAGE_V6 and remain included in 0.13.0, which adds
+EDGE_SEARCH:BOUNDED_V1. Neither prepared build is physically accepted.
 
 ## Identity
 
@@ -18,12 +17,15 @@ Main-app motion requires all of:
 
 ```
 PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
-X_APP:CARRIAGE_V5,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
+X_APP:CARRIAGE_V7,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
 INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
-INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594
+INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12
+MAX_JOG:254,BASE_RATE:40,MAX_RATE:127,PROFILES:RAMP_V1,HOME_CHECK:LEVEL_ONLY
+HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
+ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1
 ```
 
-Firmware version is currently 0.11.0. Reads HELLO, PINMAP and STATUS are sent on
+Prepared firmware version is 0.13.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.
@@ -38,16 +40,25 @@ is older than two seconds. Firmware is authoritative if the PC stops responding.
 | XJOG -1 n / XJOG 1 n | Queue one bounded jog, 1-254 pulses per click; A/-1/LOW toward saw, B/+1/HIGH toward Home |
 | XHOME n | Explicitly arm/start bounded homing; initial search 1-20594 pulses, main UI default 254 (~2 in); must be disarmed/configured; Home may start active |
 | XMOVE n | Absolute target in integer milliinches; requires Home-valid position, explicit arm, clear Home and idle motion; firmware soft limits apply |
+| XPROFILE n | Select profile 0-3 while disarmed/idle; RAM-only, no enable or motion; rates below |
+| XEDGE pulses offset trim | Search toward saw at 40 pulses/s; 1-20594 pulses, offset/trim 0-160500 milliinches; requires known Home, armed/settled/idle, sensor initially clear and entire search inside soft limits |
+| XTRUING capture | Separate explicit absolute move to captured proposal; requires current valid capture MOVE_ID and edge still active, plus normal armed/idle absolute guards; consumes capture |
 | KEEPALIVE | Refresh the 1.5-second controller watchdog while armed |
 | OFF / XARM 0 | Cancel all remaining pulses, turn pneumatic outputs OFF, disarm; retains motor holding level |
 | XDISABLE | Stop/disarm then ENA HIGH; clears setup; no Home-trip requirement or inferred position |
 | RESET | Acknowledge a latched fault only when safe/disarmed; does not arm |
 
-Controller pulse service is nonblocking, at most 40 pulses/s, no catch-up
-bursts. Direction setup at least 10us, STEP HIGH 5us, minimum 200ms after enable. The next pulse deadline is retained between jogs
-so rapid clicks cannot bypass the 40 pulses/s maximum. Requests during a jog are rejected, never queued/reversed.
+Controller pulse service is nonblocking with no catch-up bursts. Direction setup
+at least 10us, STEP HIGH 5us, minimum 200ms after enable. The next pulse deadline
+is retained between jogs, preventing rapid clicks from bypassing the timing cap.
+Requests during motion are rejected, never queued/reversed.
 Completed jogs remain armed, with no cumulative travel allowance. All raw counts are STEP pulses, not encoder
 counts. The main app rounds requested inches to nearest pulse at 127.12/inch.
+
+Profile 0 defaults to the proven constant 40 pulses/s. Profiles 1/2/3 have
+maximums 40/80/127 pulses/s and accelerations 40/160/254 pulses/s², respectively.
+Ramped motion is symmetric and distance limited. Homing and board acquisition
+keep their independent fixed rates. See [profile plan](MOTION_PROFILES.md).
 
 The controller retains diagnostic XLEVEL, XSTEP and pneumatic ARM/OUT commands
 for Sensor Bench, but the main app's serial-write boundary rejects them.
@@ -56,7 +67,7 @@ Stock grblHAL commands and legacy S/M/H/C/V/K commands are blocked in this mode.
 ## Telemetry
 
 ```
-BENCH_X,ARMED:0,CONFIGURED:0,READY:0,HOME_VERIFIED:0,HOME_RAW:1,ALARM_RAW:1,STEP:0,DIR:0,ENA:1,MAX_JOG:254,RATE_PPS:40,JOG_READY:0,REMAINING:0,POS_STEPS:0,POS_KNOWN:0,HOME_OFFSET:0,HOME_REF:160.5,HOME_STATE:IDLE,HOME_ERROR:NONE,CAL_SPI:127.12,MOVE_ID:0,UP_MS:1234,FAULT:NONE
+BENCH_X,ARMED:0,CONFIGURED:0,READY:0,HOME_VERIFIED:0,HOME_RAW:1,ALARM_RAW:1,STEP:0,DIR:0,ENA:1,MAX_JOG:254,PROFILE_ID:0,RATE_PPS:40,ACCEL_PPS2:0,JOG_READY:0,REMAINING:0,POS_STEPS:0,POS_KNOWN:0,HOME_OFFSET:0,HOME_REF:160.5,HOME_STATE:IDLE,HOME_ERROR:NONE,SOFT_MIN_OFFSET:-20402,SOFT_MAX_OFFSET:0,SOFT_MAX_MILLI:160500,TARGET_OFFSET:0,MAX_MOVE:20594,MOVE_KIND:IDLE,EDGE_STATE:IDLE,EDGE_ERROR:NONE,EDGE_VALID:0,EDGE_MILLI:0,TRUING_MILLI:0,SENSOR_OFFSET_MILLI:10800,TRIM_MILLI:250,CAL_SPI:127.12,MOVE_ID:0,UP_MS:1234,FAULT:NONE
 BENCH_SAFETY,DOOR_CLOSED:1,SAW_POSITION:UP,READY:1,RESET_READY:1,FAULT:NONE,BLOCKER:NONE
 BENCH_INPUTS,SEQ:42,HOME:1,BOARD_EDGE:1,FENCE_DOOR:0,CL57T_ALM:1,SAW_UP:0,SAW_DOWN:1,FENCE_CLOSED:0,OUTFEED:1
 ```
@@ -69,8 +80,10 @@ BENCH_INPUTS,SEQ:42,HOME:1,BOARD_EDGE:1,FENCE_DOOR:0,CL57T_ALM:1,SAW_UP:0,SAW_DO
 - MOVE_ID increments only on accepted motion commands, allowing the HMI to
   distinguish acknowledgment from stale pre-command telemetry. A missing move
   acknowledgment after one second causes OFF and a local fault.
-- REMAINING is the active jog's unsent pulses. MAX_JOG is the per-command
-  maximum (254); RATE_PPS is 40. JOG_READY becomes 1 when armed and the 200ms
+- REMAINING is the active move's unsent pulses/search allowance. MAX_JOG is the
+  manual increment maximum (254); RATE_PPS is the selected profile's maximum,
+  not instantaneous speed. PROFILE_ID/ACCEL_PPS2 are acknowledged settings.
+  JOG_READY becomes 1 when armed in Stepper mode and the 200ms
   enable interval has passed. These are not machine-coordinate soft limits.
 - The old 0.7.0 aggregate BUDGET field is removed. A completed manual jog does
   not disarm; no movement occurs until the next explicit click. Faults, STOP
@@ -117,10 +130,27 @@ HOME_FAILED. See [homing commissioning](HOMING_COMMISSIONING.md) for all bounds.
 ABSOLUTE:REFERENCED_V1 / CARRIAGE_V5 permits XMOVE integer milliinches.
 SOFT_MIN_OFFSET is -20402, SOFT_MAX_OFFSET is captured at Home completion;
 SOFT_MAX_MILLI is the corresponding nonnegative upper target. TARGET_OFFSET
-tracks the accepted full-step target. MOVE_KIND is IDLE, JOG or ABSOLUTE.
+tracks the accepted full-step target. MOVE_KIND is IDLE, JOG, ABSOLUTE or EDGE.
 MAX_MOVE=20594 allows full-range remaining counts; MAX_JOG=254 applies only to
 manual increments. Referenced jogs and single-step diagnostics obey soft limits.
 Firmware guards at command acceptance and before each emitted pulse. Normal
 out-of-range requests are rejected, never clamped into a different distant move;
 zero rounds to the first nonnegative full step. Per-pulse violation latches
 SOFT_LIMIT and invalidates position. No absolute move can establish position.
+
+## Board-edge extension (prepared 0.13.0)
+
+EDGE_STATE is IDLE, SEEK, FOUND, FAILED or CANCELLED. During SEEK the record
+has MOVE_KIND:EDGE, ARMED:1, JOG_READY:0 and known position. Raw active LOW
+pauses immediately; 20ms stable detection captures EDGE_MILLI, calculates
+TRUING_MILLI = EDGE_MILLI - SENSOR_OFFSET_MILLI + TRIM_MILLI, and disarms.
+EDGE_VALID:1 means the proposal fits the soft limits. Detection never re-zeros,
+advances, clamps or cuts. A separate XTRUING command names the capture's MOVE_ID.
+
+Any accepted move, STOP, release, fault, new Home, reboot or cleared edge sensor
+expires that capture. A missing edge at the exact pulse budget fails after a
+45ms settling allowance; total acquisition time is also bounded by
+pulses × 25ms + 2000ms. EDGE_FAILED latches and invalidates the position.
+EDGE_ERROR distinguishes NOT_FOUND, TIMEOUT and TARGET_OUT_OF_RANGE. An
+out-of-range proposal after successful detection remains disarmed with Home
+position retained, but EDGE_VALID:0. See [edge plan](BOARD_EDGE_COMMISSIONING.md).

@@ -9,9 +9,12 @@ The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active flashed firmware is **0.11.0**. Prepared source **0.12.0** adds bounded
-motion profiles and awaits loading/physical acceptance; see
-[motion profiles](docs/MOTION_PROFILES.md). Controller source:
+Active flashed firmware is **0.11.0**. Prepared source **0.13.0** adds bounded
+motion profiles and board-edge acquisition with a separate truing move, awaiting
+loading/physical acceptance. See [motion profiles](docs/MOTION_PROFILES.md) and
+[board-edge plan](docs/BOARD_EDGE_COMMISSIONING.md). Restarted source requires
+the matching new controller; the already-open 0.11.0 app remains unchanged.
+Controller source:
 `firmware/chopsaw_controller/chopsaw_controller.ino`. The separate Sensor Bench
 0.6.0 sketch is preserved for diagnostics. The active controller keeps those
 input/interlock functions and adds the main-app manual-carriage contract. This is

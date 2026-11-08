@@ -19,14 +19,17 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V6", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V7", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "VALVES_ISOLATED", "CAL_SPI": "127.12",
     "MAX_JOG": "254", "BASE_RATE": "40", "MAX_RATE": "127", "PROFILES": "RAMP_V1", "HOME_CHECK": "LEVEL_ONLY",
     "HOMING": "BOUNDED_V1", "HOME_MAX": "20594", "HOME_REF": "160.5",
     "ABSOLUTE": "REFERENCED_V1", "MAX_MOVE": "20594",
+    "EDGE_SEARCH": "BOUNDED_V1",
 }
+EDGE = re.compile(r"XEDGE ([1-9][0-9]{0,4}) (0|[1-9][0-9]{0,5}) (0|[1-9][0-9]{0,5})")
+TRUING = re.compile(r"XTRUING (0|[1-9][0-9]{0,9})")
 PROFILE = re.compile(r"XPROFILE ([0-3])")
 PROFILE_LIMITS = {0:(40,0),1:(40,40),2:(80,160),3:(127,254)}
 ABSOLUTE = re.compile(r"XMOVE (0|[1-9][0-9]{0,5})")
@@ -217,6 +220,40 @@ class TeensyCarriagePanel(QWidget):
             "Moves use the acknowledged controller profile. STOP cancels; moves never queue or resume automatically."
         ))
         layout.addWidget(absolute_box)
+        edge_box = QGroupBox("Board-edge search and truing proposal")
+        edge_layout = QVBoxLayout(edge_box)
+        row = QHBoxLayout()
+        self.edge_search = QDoubleSpinBox()
+        self.edge_search.setRange(0.01, 162)
+        self.edge_search.setDecimals(2)
+        self.edge_search.setValue(2)
+        self.sensor_offset = QDoubleSpinBox()
+        self.sensor_offset.setRange(0,160.5)
+        self.sensor_offset.setDecimals(3)
+        self.sensor_offset.setValue(10.8)
+        self.trim_overlap = QDoubleSpinBox()
+        self.trim_overlap.setRange(0,160.5)
+        self.trim_overlap.setDecimals(3)
+        self.trim_overlap.setValue(0.25)
+        for text, control in (("Search limit (in)",self.edge_search),
+                              ("Sensor offset (in)",self.sensor_offset),
+                              ("Trim overlap (in)",self.trim_overlap)):
+            row.addWidget(QLabel(text)); row.addWidget(control)
+        edge_layout.addLayout(row)
+        self.edge_button = QPushButton("FIND BOARD EDGE")
+        self.edge_button.clicked.connect(self.find_edge)
+        edge_layout.addWidget(self.edge_button)
+        self.edge_result = QLabel("No valid board-edge capture")
+        edge_layout.addWidget(self.edge_result)
+        self.truing_button = QPushButton("MOVE TO CAPTURED TRUING POSITION")
+        self.truing_button.clicked.connect(self.move_to_truing)
+        edge_layout.addWidget(self.truing_button)
+        edge_layout.addWidget(QLabel(
+            "Home, arm, and start with the edge sensor clear. Search moves A/toward saw at 40 pulses/s, "
+            "then stops and disarms on detection. Inspect the proposed position and rearm for a separate move. "
+            "Defaults are recovered geometry, awaiting physical acceptance. No clamp or saw action occurs."
+        ))
+        layout.addWidget(edge_box)
         row = QHBoxLayout()
         self.stop_button = QPushButton("STOP / DISARM")
         self.stop_button.setStyleSheet("background:#b91c1c; color:white; font-weight:bold; min-height:42px")
@@ -233,6 +270,8 @@ class TeensyCarriagePanel(QWidget):
         self.target.valueChanged.connect(self.refresh)
         self.load_preset.currentIndexChanged.connect(self.refresh)
         self.home_search.valueChanged.connect(self.refresh)
+        for control in (self.edge_search,self.sensor_offset,self.trim_overlap):
+            control.valueChanged.connect(self.refresh)
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.tick)
@@ -263,6 +302,16 @@ class TeensyCarriagePanel(QWidget):
     def homing(self):
         return self.x.get("HOME_STATE") in HOME_STAGES
 
+    @property
+    def edge_searching(self):
+        return self.x.get("EDGE_STATE") == "SEEK"
+
+    def edge_command(self):
+        pulses = int(math.floor(self.edge_search.value()*STEPS_PER_INCH+0.5))
+        offset = int(math.floor(self.sensor_offset.value()*1000+0.5))
+        trim = int(math.floor(self.trim_overlap.value()*1000+0.5))
+        return f"XEDGE {pulses} {offset} {trim}"
+
     def ready_link(self):
         return self.connected and self.compatible and self.fresh("X") and self.fresh("SAFETY")
 
@@ -292,6 +341,19 @@ class TeensyCarriagePanel(QWidget):
             return False
         if command == "XARM 1":
             return idle and self.x.get("READY") == "1" and self.x.get("CONFIGURED") == "1"
+        edge = EDGE.fullmatch(command)
+        if edge:
+            return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
+                    and self.x.get("JOG_READY") == "1" and self.x.get("POS_KNOWN") == "1"
+                    and self.fresh("INPUTS") and self.inputs.get("BOARD_EDGE") == "1"
+                    and 1 <= int(edge[1]) <= 20594 and 0 <= int(edge[2]) <= 160500
+                    and 0 <= int(edge[3]) <= 160500
+                    and int(self.x["HOME_OFFSET"]) - int(edge[1]) >= int(self.x["SOFT_MIN_OFFSET"]))
+        truing = TRUING.fullmatch(command)
+        if truing:
+            return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
+                    and self.x.get("JOG_READY") == "1" and self.x.get("EDGE_VALID") == "1"
+                    and truing[1] == self.x.get("MOVE_ID"))
         absolute = ABSOLUTE.fullmatch(command)
         if absolute:
             return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
@@ -323,11 +385,12 @@ class TeensyCarriagePanel(QWidget):
             self.compatible = compatible
         elif message.kind == "BENCH_X":
             numeric = ("ARMED", "CONFIGURED", "READY", "HOME_VERIFIED", "HOME_RAW", "ALARM_RAW",
-                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS", "POS_KNOWN", "HOME_OFFSET", "SOFT_MIN_OFFSET", "SOFT_MAX_OFFSET", "SOFT_MAX_MILLI", "MAX_MOVE", "TARGET_OFFSET", "PROFILE_ID", "ACCEL_PPS2")
+                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS", "POS_KNOWN", "HOME_OFFSET", "SOFT_MIN_OFFSET", "SOFT_MAX_OFFSET", "SOFT_MAX_MILLI", "MAX_MOVE", "TARGET_OFFSET", "PROFILE_ID", "ACCEL_PPS2",
+                       "EDGE_VALID", "EDGE_MILLI", "TRUING_MILLI", "SENSOR_OFFSET_MILLI", "TRIM_MILLI")
             if any(parse_int(f.get(k)) is None for k in numeric) or f.get("CAL_SPI") != "127.12":
                 self.trip_local("Invalid carriage telemetry")
                 return
-            if any(f.get(k) not in ("0", "1") for k in (*numeric[:9], "JOG_READY", "POS_KNOWN")):
+            if any(f.get(k) not in ("0", "1") for k in (*numeric[:9], "JOG_READY", "POS_KNOWN", "EDGE_VALID")):
                 self.trip_local("Invalid carriage state")
                 return
             if (f.get("HOME_REF") != "160.5" or f.get("HOME_STATE") not in HOME_STAGES | {"IDLE", "DONE", "FAILED", "CANCELLED"}
@@ -336,7 +399,7 @@ class TeensyCarriagePanel(QWidget):
                 return
             if (f["MAX_JOG"] != "254" or
                     PROFILE_LIMITS.get(int(f["PROFILE_ID"])) != (int(f["RATE_PPS"]),int(f["ACCEL_PPS2"]))
-                    or f.get("MAX_MOVE") != "20594" or f.get("MOVE_KIND") not in {"IDLE", "JOG", "ABSOLUTE"}
+                    or f.get("MAX_MOVE") != "20594" or f.get("MOVE_KIND") not in {"IDLE", "JOG", "ABSOLUTE", "EDGE"}
                     or not 0 <= int(f["REMAINING"]) <= int(f["MAX_MOVE"])
                     or (f["MOVE_KIND"] == "JOG" and int(f["REMAINING"]) > int(f["MAX_JOG"]))):
                 self.trip_local("Invalid manual jog limit")
@@ -353,6 +416,14 @@ class TeensyCarriagePanel(QWidget):
             if f["MOVE_KIND"] == "ABSOLUTE" and (f["POS_KNOWN"] != "1" or not
                     int(f["SOFT_MIN_OFFSET"]) <= int(f["TARGET_OFFSET"]) <= int(f["SOFT_MAX_OFFSET"])):
                 self.trip_local("Invalid referenced move telemetry")
+                return
+            if (f.get("EDGE_STATE") not in {"IDLE","SEEK","FOUND","FAILED","CANCELLED"}
+                    or (f["MOVE_KIND"] == "EDGE" and (f["EDGE_STATE"] != "SEEK" or f["POS_KNOWN"] != "1" or f["ARMED"] != "1"))
+                    or (f["EDGE_STATE"] == "SEEK" and f["MOVE_KIND"] != "EDGE")
+                    or (f["EDGE_VALID"] == "1" and (f["EDGE_STATE"] != "FOUND" or f["POS_KNOWN"] != "1"
+                        or not 0 <= int(f["TRUING_MILLI"]) <= int(f["SOFT_MAX_MILLI"])
+                        or int(f["TRUING_MILLI"]) != int(f["EDGE_MILLI"])-int(f["SENSOR_OFFSET_MILLI"])+int(f["TRIM_MILLI"])))):
+                self.trip_local("Invalid board-edge telemetry")
                 return
             self.x = f
             self.profile_changed.emit(int(f["PROFILE_ID"]))
@@ -415,6 +486,19 @@ class TeensyCarriagePanel(QWidget):
         command = f"XPROFILE {profile}"
         return self.allowed(command) and self.send(command)
 
+    def find_edge(self):
+        return self.request_move(self.edge_command())
+
+    def move_to_truing(self):
+        return self.request_move(f"XTRUING {self.x.get('MOVE_ID','-1')}")
+
+    def request_move(self, command):
+        if self.allowed(command) and self.send(command):
+            self.pending = (int(self.x["MOVE_ID"]),time.monotonic())
+            self.refresh()
+            return True
+        return False
+
     def selected_load_position(self):
         value = self.load_preset.currentData()
         return int(self.x.get("SOFT_MAX_MILLI", "0")) / 1000 if value is None else float(value)
@@ -465,17 +549,19 @@ class TeensyCarriagePanel(QWidget):
         fault = self.x.get("FAULT", "NONE")
         remaining = parse_int(self.x.get("REMAINING"), 0)
         max_jog = parse_int(self.x.get("MAX_JOG"), 0)
-        busy = bool(remaining or self.pending or self.homing)
+        busy = bool(remaining or self.pending or self.homing or self.edge_searching)
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible manual-jog firmware 0.12.0 and verified machine pin map"
+            text = "Waiting for compatible carriage firmware 0.13.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":
             text = "FAULT: " + (self.local_fault or fault) + (" / " + self.x.get("HOME_ERROR", "") if fault == "HOME_FAILED" else "")
         elif self.homing:
             text = "HOMING: " + self.x.get("HOME_STATE", "")
+        elif self.edge_searching:
+            text = "FINDING BOARD EDGE - toward saw at 40 pulses/s"
         elif busy:
             text = "MOVING" if remaining else "Waiting for move acknowledgment"
         elif self.stopping:
@@ -538,6 +624,20 @@ class TeensyCarriagePanel(QWidget):
         self.limit_note.setText(f"Software range: 0.000 to {maximum:.3f} in (Home pull-off). Targets round to whole motor steps." if known
                                 else "Home required before absolute or load-position moves")
         self.home_button.setEnabled(self.allowed(f"XHOME {count_home}"))
+        self.edge_button.setEnabled(self.allowed(self.edge_command()))
+        self.truing_button.setEnabled(self.allowed(f"XTRUING {self.x.get('MOVE_ID','-1')}"))
+        for control in (self.edge_search,self.sensor_offset,self.trim_overlap):
+            control.setEnabled(not busy)
+        if self.fresh("X") and self.x.get("EDGE_VALID") == "1":
+            self.edge_result.setText(
+                f"Captured edge at {int(self.x['EDGE_MILLI'])/1000:.3f} in; proposed truing position "
+                f"{int(self.x['TRUING_MILLI'])/1000:.3f} in. Rearm, then explicitly request that move. "
+                f"Capture uses {int(self.x['SENSOR_OFFSET_MILLI'])/1000:.3f} in offset and "
+                f"{int(self.x['TRIM_MILLI'])/1000:.3f} in overlap."
+            )
+        else:
+            self.edge_result.setText("No valid board-edge capture | " + self.x.get("EDGE_STATE","UNKNOWN")
+                                    + " | " + self.x.get("EDGE_ERROR",""))
         self.home_search.setEnabled(not self.armed and not self.pending)
         profile = parse_int(self.x.get("PROFILE_ID"))
         self.profile_label.setText("Controller profile: unknown" if profile not in PROFILE_LIMITS else
