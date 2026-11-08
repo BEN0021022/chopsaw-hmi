@@ -9,7 +9,7 @@ The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active firmware is **0.10.0**, source
+Active firmware is **0.11.0**, source
 `firmware/chopsaw_controller/chopsaw_controller.ino`. The separate Sensor Bench
 0.6.0 sketch is preserved for diagnostics. The active controller keeps those
 input/interlock functions and adds the main-app manual-carriage contract. This is
@@ -33,9 +33,11 @@ custom firmware; stock grblHAL is not running on the board.
   down to trip the Home sensor.
 - Bounded homing is implemented in the CARRIAGE tab: default 2-inch search,
   release/backoff/slow latch/pull-off, recovered 160.5-inch sensor reference.
-  Physical homing acceptance is pending. Absolute cut-length moves, profiles
-  and cutting cycles are not implemented for this controller yet. The old operational tabs stay blocked
+  User confirmed Home success. Referenced absolute inch targets and load
+  presets are now implemented, with firmware soft limits; their physical
+  acceptance is pending. Profiles and automatic cutting remain unavailable. The old operational tabs stay blocked
   on real hardware. Cut-list editing and the offline simulator are retained.
+- The MIGRATION tab shows the master checklist; Refresh reloads current status.
 - Main-app pneumatic/blade/current controls are unavailable. Keep saw unplugged,
   valve 12V disconnected, air isolated, INA/MCP disconnected during carriage tests.
 
@@ -43,7 +45,8 @@ The last MEGA HMI remains in sibling `ChopSawHMI` at
 `legacy-mega-last-working-2026-11-06`; recovered MEGA firmware is also preserved
 under `archive/legacy-mega-v2.5`. Live MEGA selection is retired.
 
-See [homing test instructions](docs/HOMING_COMMISSIONING.md),
+See [absolute positioning](docs/ABSOLUTE_POSITIONING.md),
+[homing test instructions](docs/HOMING_COMMISSIONING.md),
 [remaining effort estimate](docs/MIGRATION_EFFORT_ESTIMATE.md),
 [feature migration](docs/APP_FEATURE_MIGRATION.md),
 [controller protocol](docs/CONTROLLER_PROTOCOL.md), and
@@ -115,7 +118,7 @@ notes, Git status, and hardware compatibility before creating a release.
 
 ## Controller modes
 
-- **Teensy Carriage:** active custom 0.10.0 firmware; native guarded carriage jogs.
+- **Teensy Carriage:** active custom 0.11.0 firmware; native guarded carriage jogs.
 - **Legacy Arduino Mega:** archived, internal to the offline simulator only.
 - **Teensy Hardware Test:** separate diagnostics protocol; old operational tabs locked.
 - **Teensy grblHAL:** retained prototype only; operational controls locked. It

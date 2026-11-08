@@ -352,12 +352,37 @@ class MinimalHMI(QMainWindow):
         self.tabs.addTab(self.full_auto_tab, "FULL AUTO")
         self.tabs.addTab(self.speed_tab, "SETTINGS")
         self.tabs.addTab(self.preset_tab, "CUT LISTS")
+        self.migration_tab = self.create_migration_tab()
+        self.tabs.addTab(self.migration_tab, "MIGRATION")
 
         # Log (hidden — keep object so log.append() calls don't crash)
         self.log = QTextBrowser()
         self.log.document().setMaximumBlockCount(500)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
+
+    def create_migration_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(QLabel("Migration checklist - software completion and physical acceptance tracked separately"))
+        refresh = QPushButton("Refresh checklist")
+        self.migration_checklist = QTextBrowser()
+        self.migration_checklist.setOpenLinks(False)
+        self.migration_checklist.setStyleSheet("QTextBrowser { font-family:'Segoe UI'; font-size:15px; padding:12px; }")
+        refresh.clicked.connect(self.refresh_migration_checklist)
+        layout.addWidget(refresh)
+        layout.addWidget(self.migration_checklist, 1)
+        self.refresh_migration_checklist()
+        return tab
+
+    def refresh_migration_checklist(self):
+        root = getattr(sys, "_MEIPASS", get_app_dir())
+        path = os.path.join(root, "TEENSY_APP_MIGRATION_CHECKLIST.md")
+        try:
+            with open(path, encoding="utf-8") as stream:
+                self.migration_checklist.setMarkdown(stream.read())
+        except OSError as error:
+            self.migration_checklist.setPlainText(f"Checklist unavailable: {error}")
 
     def create_legacy_tab(self):
         w = QWidget(); content = QHBoxLayout(w)
@@ -2088,6 +2113,8 @@ class MinimalHMI(QMainWindow):
     # Replace the current set_length function with this:
     def set_length(self, length=None):
         target = length if length is not None else self.target_input.value()
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            return self.carriage_tab.move_to(target)
 
         # --- THIS IS THE GATEKEEPER CHECK ---
         if 0.0 <= target <= self.home_position:

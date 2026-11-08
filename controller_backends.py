@@ -1,6 +1,7 @@
 """Controller command translation for Mega, Teensy validation, and grblHAL modes."""
 
 from dataclasses import dataclass
+import math
 
 
 LEGACY_MEGA = "legacy_mega"
@@ -186,6 +187,11 @@ class TeensyCarriageBackend(ControllerBackend):
     def startup_commands(self):
         # Reads only. A connect never configures, arms or enables the driver.
         return ["HELLO", "PINMAP", "STATUS"]
+
+    def move_absolute_inches(self, target_inches):
+        if not isinstance(target_inches, (int, float)) or not math.isfinite(target_inches) or not 0 <= target_inches <= 160.5:
+            return []
+        return [f"XMOVE {int(math.floor(target_inches*1000+0.5))}"]
 
     def home(self):
         return ["XHOME 254"]

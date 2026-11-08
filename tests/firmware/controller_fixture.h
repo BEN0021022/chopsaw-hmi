@@ -23,7 +23,7 @@ void restart() {
   commandLength = 0; discardCommand = false; testMode = TestMode::None;
   xConfigured = xHomeSeenActive = xHomeVerified = false;
   xHomeActive = bench::StableAssertion{}; xHomeInactive = bench::StableAssertion{};
-  xHoming = carriage::Homing{}; xPositionKnown = false; xHomeOffset = 0;
+  xHoming = carriage::Homing{}; xPositionKnown = false; xHomeOffset = 0; xSoftMaxOffset = 0; xTargetOffset = 0; xAbsoluteMove = false;
   xRemaining = 0; xCommandedSteps = 0; xMoveId = 0; xDirection = 1;
   xNextPulseUs = xArmAt = xLastStepAt = 0;
   Serial.incoming.clear(); Serial.outgoing.clear();

@@ -1,7 +1,7 @@
 # Controller protocol
 
-Updated 2026-11-08. Current main-app controller firmware **0.10.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V4. 115200 baud,
+Updated 2026-11-08. Current main-app controller firmware **0.11.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V5. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
@@ -11,12 +11,12 @@ Main-app motion requires all of:
 
 ```
 PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
-X_APP:CARRIAGE_V4,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
+X_APP:CARRIAGE_V5,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
 INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
-INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
+INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594
 ```
 
-Firmware version is currently 0.10.0. Reads HELLO, PINMAP and STATUS are sent on
+Firmware version is currently 0.11.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.
@@ -30,6 +30,7 @@ is older than two seconds. Firmware is authoritative if the PC stops responding.
 | XARM 1 | Arm manual Stepper mode, set verified ENA; no STEP emitted; requires fresh ready state |
 | XJOG -1 n / XJOG 1 n | Queue one bounded jog, 1-254 pulses per click; A/-1/LOW toward saw, B/+1/HIGH toward Home |
 | XHOME n | Explicitly arm/start bounded homing; initial search 1-20594 pulses, main UI default 254 (~2 in); must be disarmed/configured; Home may start active |
+| XMOVE n | Absolute target in integer milliinches; requires Home-valid position, explicit arm, clear Home and idle motion; firmware soft limits apply |
 | KEEPALIVE | Refresh the 1.5-second controller watchdog while armed |
 | OFF / XARM 0 | Cancel all remaining pulses, turn pneumatic outputs OFF, disarm; retains motor holding level |
 | XDISABLE | Stop/disarm then ENA HIGH; clears setup; no Home-trip requirement or inferred position |
@@ -103,3 +104,16 @@ cycle publishes POS_KNOWN=1 then disarms. No automatic next move or rearm.
 HOME_ERROR distinguishes NOT_FOUND, LATCH_NOT_FOUND, STUCK_ACTIVE, RETRIGGERED,
 TIMEOUT and cancellation. Global faults remain in FAULT; failed homing uses
 HOME_FAILED. See [homing commissioning](HOMING_COMMISSIONING.md) for all bounds.
+
+## Referenced positioning extension (0.11.0)
+
+ABSOLUTE:REFERENCED_V1 / CARRIAGE_V5 permits XMOVE integer milliinches.
+SOFT_MIN_OFFSET is -20402, SOFT_MAX_OFFSET is captured at Home completion;
+SOFT_MAX_MILLI is the corresponding nonnegative upper target. TARGET_OFFSET
+tracks the accepted full-step target. MOVE_KIND is IDLE, JOG or ABSOLUTE.
+MAX_MOVE=20594 allows full-range remaining counts; MAX_JOG=254 applies only to
+manual increments. Referenced jogs and single-step diagnostics obey soft limits.
+Firmware guards at command acceptance and before each emitted pulse. Normal
+out-of-range requests are rejected, never clamped into a different distant move;
+zero rounds to the first nonnegative full step. Per-pulse violation latches
+SOFT_LIMIT and invalidates position. No absolute move can establish position.

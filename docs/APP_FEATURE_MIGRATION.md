@@ -1,6 +1,6 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-08. The active implementation is **custom controller 0.10.0**,
+Updated 2026-11-08. The active implementation is **custom controller 0.11.0**,
 not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
@@ -18,9 +18,9 @@ close it before opening the main app on the same COM port.
 | Driver setup / arming | Implicit enabled startup | Home input clear, explicit setup ACK and arm ACK; no sensor-trip ritual | No auto-enable/auto-arm on connect, reset or reconnect |
 | Position display | Encoder POS plus step estimate | POS_STEPS displacement plus POS_KNOWN/HOME_OFFSET after Home | Homed coordinate only after completed Home; fault/release invalidation |
 | Closed-loop error | MEGA encoder/PID fields | CL57T closes loop; ALM on Halt/D14 | Alarm trips motion; real 7-flash fault traced to loose encoder wire and resolved |
-| Home | H, positive seek, home coordinate 160.5 in | XHOME selected search limit; seek/release/backoff/slow latch/pull-off | Implemented in 0.10.0; physical acceptance pending |
-| Absolute length / load positions | S inches | Reserved, requires successful homing and position validity | NOT implemented; do not send MEGA S or prototype G-code |
-| Soft limits | Legacy target clamping | Requires homed coordinate and measured/confirmed envelope | Pending with homing |
+| Home | H, positive seek, home coordinate 160.5 in | XHOME selected search limit; seek/release/backoff/slow latch/pull-off | User confirmed Home success; repeatability/reference acceptance remains |
+| Absolute length / load positions | S inches | XMOVE integer milliinches; known position + explicit arm | Implemented 0.11.0; native inch target and load presets; physical acceptance pending |
+| Soft limits | Legacy target clamping | Firmware target-time and per-pulse bounds | Implemented; physical envelope acceptance pending |
 | Profiles / speed / acceleration | Z, A speed,accel | Fixed conservative 40 pulses/s for commissioning | Planner/acceleration and profile migration pending |
 | Board detection / truing | J / N, board-edge offset | Limit Y/D21 telemetry available | Geometry, offsets and bounded controller-side sequence pending |
 | Door | Ad hoc/old hardware | Door/D29 active LOW, controller interlock | User confirmed input; firmware/app cancellation tested |
@@ -50,7 +50,7 @@ and no homed coordinate is inferred from a clear input.
 
 1. Keep saw mains unplugged, valve supply disconnected and air isolated. Keep
    suspect INA/MCP disconnected. Launch `python main.py`, select Teensy Carriage,
-   choose the Teensy COM port and connect. Verify firmware 0.10.0 telemetry.
+   choose the Teensy COM port and connect. Verify firmware 0.11.0 telemetry.
 2. Check Home sensor is inactive (no trip/release sequence is required). Door closed, saw UP only,
    driver green ON/red OFF, alarm raw HIGH. Confirm isolation/driver checks.
 3. Confirm driver setup. Wait for controller acknowledgment, then ARM MANUAL CONTROL.
@@ -65,11 +65,11 @@ and no homed coordinate is inferred from a clear input.
 
 ## Next controller/app slice
 
-Bounded Home is implemented; follow [homing commissioning](HOMING_COMMISSIONING.md)
-for the first physical test. The recovered 160.5-inch reference is at the slow
+User confirmed bounded Home success. Absolute targets, soft limits and load
+presets are implemented in 0.11.0; follow [absolute positioning](ABSOLUTE_POSITIONING.md)
+for the first short out-and-back test. The recovered 160.5-inch reference is at the slow
 sensor latch; final pull-off is included in the displayed position. Accept
-repeatability and physical reference, then add soft limits, absolute inch moves,
-load positions and acceleration/profiles. Alarm or driver release invalidates
+repeatability, physical reference and absolute positioning, then add acceleration/profiles. Alarm or driver release invalidates
 referenced position and requires homing before future absolute moves.
 See [remaining effort estimate](MIGRATION_EFFORT_ESTIMATE.md): roughly 12-24
 engineering hours plus physical acceptance/hardware time for the core workflow.

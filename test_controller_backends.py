@@ -58,7 +58,9 @@ def test_carriage_contract_has_no_legacy_or_automatic_fallback():
     assert backend.stop_motion() == ["OFF"]
     assert backend.capabilities.homing_commands
     assert backend.home() == ["XHOME 254"]
-    assert backend.move_absolute_inches(10) == []
+    assert backend.move_absolute_inches(10) == ["XMOVE 10000"]
+    assert backend.move_absolute_inches(float("nan")) == []
+    assert backend.move_absolute_inches(-1) == []
     assert backend.clamp_extend(1) == backend.saw_actuate() == []
     assert backend.pid_control(True) == backend.current_monitoring(True) == []
 

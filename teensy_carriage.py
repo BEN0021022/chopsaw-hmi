@@ -10,7 +10,7 @@ import time
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGroupBox,
-    QCheckBox, QPushButton, QDoubleSpinBox, QScrollArea,
+    QCheckBox, QPushButton, QDoubleSpinBox, QScrollArea, QComboBox,
 )
 from sensor_bench.protocol import parse_line, parse_int
 
@@ -19,13 +19,15 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V4", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V5", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "VALVES_ISOLATED", "CAL_SPI": "127.12",
     "MAX_JOG": "254", "RATE_PPS": "40", "HOME_CHECK": "LEVEL_ONLY",
     "HOMING": "BOUNDED_V1", "HOME_MAX": "20594", "HOME_REF": "160.5",
+    "ABSOLUTE": "REFERENCED_V1", "MAX_MOVE": "20594",
 }
+ABSOLUTE = re.compile(r"XMOVE (0|[1-9][0-9]{0,5})")
 HOME = re.compile(r"XHOME ([1-9][0-9]{0,4})")
 HOME_STAGES = {"SEEK", "RELEASE", "BACKOFF", "LATCH", "PULL_RELEASE", "PULL_OFF"}
 JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
@@ -46,6 +48,7 @@ class TeensyCarriagePanel(QWidget):
         self.stopping = False
         self.local_fault = ""
         self.previous_uptime = None
+        self._target_initialized = False
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -135,7 +138,7 @@ class TeensyCarriagePanel(QWidget):
         jog_layout.addWidget(self.progress)
         jog_layout.addWidget(QLabel(
             "One move per click, up to 2 inches. Repeat jogs while armed; no session travel budget.\n"
-            "Absolute length moves and automatic cutting remain unavailable pending commissioning."
+            "Homed jogs obey the same soft limits as absolute moves. Automatic cutting remains unavailable."
         ))
         home_box = QGroupBox("Home carriage - automatic bounded sequence")
         home_layout = QVBoxLayout(home_box)
@@ -159,6 +162,44 @@ class TeensyCarriagePanel(QWidget):
         home_layout.addWidget(home_note)
         layout.addWidget(home_box)
         layout.addWidget(jog_box)
+        absolute_box = QGroupBox("Referenced position and loading")
+        absolute_layout = QVBoxLayout(absolute_box)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Target blade distance (inches):"))
+        self.target = QDoubleSpinBox()
+        self.target.setRange(0, 160.5)
+        self.target.setDecimals(3)
+        self.target.setSingleStep(1)
+        row.addWidget(self.target)
+        self.go_button = QPushButton("GO TO POSITION")
+        self.go_button.clicked.connect(lambda: self.move_to(self.target.value()))
+        row.addWidget(self.go_button)
+        absolute_layout.addLayout(row)
+        row = QHBoxLayout()
+        self.load_preset = QComboBox()
+        self.load_preset.setStyleSheet(
+            "QComboBox { background:#0b1222; color:#e2e8f0; border:1px solid #334155; padding:8px; }"
+            "QComboBox:disabled { color:#64748b; }"
+            "QComboBox QAbstractItemView { background:#0b1222; color:#e2e8f0; selection-background-color:#1e40af; }"
+        )
+        for label, target in (("Home / load position", None), ("10 ft stock - load at 135 in", 135),
+                              ("8 ft stock - load at 111 in", 111), ("6 ft stock - load at 87 in", 87),
+                              ("4 ft stock - load at 63 in", 63)):
+            self.load_preset.addItem(label, target)
+        row.addWidget(self.load_preset)
+        self.load_button = QPushButton("MOVE TO LOAD POSITION")
+        self.load_button.clicked.connect(lambda: self.move_to(self.selected_load_position()))
+        row.addWidget(self.load_button)
+        absolute_layout.addLayout(row)
+        self.limit_note = QLabel()
+        absolute_layout.addWidget(self.limit_note)
+        self.absolute_progress = QLabel()
+        absolute_layout.addWidget(self.absolute_progress)
+        absolute_layout.addWidget(QLabel(
+            "Home successfully, arm carriage motion, then select a target. Confirm the entire path is clear. "
+            "Moves use the current conservative 40 pulses/s rate. STOP cancels; moves never queue or resume automatically."
+        ))
+        layout.addWidget(absolute_box)
         row = QHBoxLayout()
         self.stop_button = QPushButton("STOP / DISARM")
         self.stop_button.setStyleSheet("background:#b91c1c; color:white; font-weight:bold; min-height:42px")
@@ -172,6 +213,8 @@ class TeensyCarriagePanel(QWidget):
         layout.addStretch()
         for label in self.findChildren(QLabel):
             label.setWordWrap(True)
+        self.target.valueChanged.connect(self.refresh)
+        self.load_preset.currentIndexChanged.connect(self.refresh)
         self.home_search.valueChanged.connect(self.refresh)
         self.timer = QTimer(self)
         self.timer.setInterval(500)
@@ -187,6 +230,7 @@ class TeensyCarriagePanel(QWidget):
         self.stopping = False
         self.local_fault = ""
         self.previous_uptime = None
+        self._target_initialized = False
         self.consent.setChecked(False)
         self.homed_changed.emit(0)
         self.refresh()
@@ -229,10 +273,19 @@ class TeensyCarriagePanel(QWidget):
             return False
         if command == "XARM 1":
             return idle and self.x.get("READY") == "1" and self.x.get("CONFIGURED") == "1"
+        absolute = ABSOLUTE.fullmatch(command)
+        if absolute:
+            return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
+                    and self.x.get("JOG_READY") == "1" and self.x.get("POS_KNOWN") == "1"
+                    and 0 <= int(absolute[1]) <= parse_int(self.x.get("SOFT_MAX_MILLI"), -1))
         match = JOG.fullmatch(command)
         if not match:
             return False
         count = int(match[2])
+        if self.x.get("POS_KNOWN") == "1":
+            next_offset = int(self.x["HOME_OFFSET"]) + int(match[1]) * count
+            if not int(self.x["SOFT_MIN_OFFSET"]) <= next_offset <= int(self.x["SOFT_MAX_OFFSET"]):
+                return False
         return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
                 and self.x.get("JOG_READY") == "1"
                 and 1 <= count <= parse_int(self.x.get("MAX_JOG"), 0))
@@ -251,7 +304,7 @@ class TeensyCarriagePanel(QWidget):
             self.compatible = compatible
         elif message.kind == "BENCH_X":
             numeric = ("ARMED", "CONFIGURED", "READY", "HOME_VERIFIED", "HOME_RAW", "ALARM_RAW",
-                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS", "POS_KNOWN", "HOME_OFFSET")
+                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS", "POS_KNOWN", "HOME_OFFSET", "SOFT_MIN_OFFSET", "SOFT_MAX_OFFSET", "SOFT_MAX_MILLI", "MAX_MOVE", "TARGET_OFFSET")
             if any(parse_int(f.get(k)) is None for k in numeric) or f.get("CAL_SPI") != "127.12":
                 self.trip_local("Invalid carriage telemetry")
                 return
@@ -263,13 +316,24 @@ class TeensyCarriagePanel(QWidget):
                 self.trip_local("Invalid homing telemetry")
                 return
             if (f["MAX_JOG"] != "254" or f["RATE_PPS"] != "40"
-                    or not 0 <= int(f["REMAINING"]) <= int(f["MAX_JOG"])):
+                    or f.get("MAX_MOVE") != "20594" or f.get("MOVE_KIND") not in {"IDLE", "JOG", "ABSOLUTE"}
+                    or not 0 <= int(f["REMAINING"]) <= int(f["MAX_MOVE"])
+                    or (f["MOVE_KIND"] == "JOG" and int(f["REMAINING"]) > int(f["MAX_JOG"]))):
                 self.trip_local("Invalid manual jog limit")
                 return
             uptime = int(f["UP_MS"])
             if self.previous_uptime is not None and uptime < self.previous_uptime:
                 self.trip_local("Controller restarted; verify Home and driver setup again")
             self.previous_uptime = uptime
+            if f["POS_KNOWN"] == "1" and not (
+                    int(f["SOFT_MIN_OFFSET"]) <= int(f["HOME_OFFSET"]) <= int(f["SOFT_MAX_OFFSET"]) <= 0
+                    and 0 <= int(f["SOFT_MAX_MILLI"]) <= 160500):
+                self.trip_local("Referenced position outside soft limits")
+                return
+            if f["MOVE_KIND"] == "ABSOLUTE" and (f["POS_KNOWN"] != "1" or not
+                    int(f["SOFT_MIN_OFFSET"]) <= int(f["TARGET_OFFSET"]) <= int(f["SOFT_MAX_OFFSET"])):
+                self.trip_local("Invalid referenced move telemetry")
+                return
             self.x = f
             self.homed_changed.emit(int(f["POS_KNOWN"]))
             if f["POS_KNOWN"] == "1":
@@ -326,6 +390,21 @@ class TeensyCarriagePanel(QWidget):
     def toggle_arm(self):
         self.send("XARM 0" if self.armed else "XARM 1")
 
+    def selected_load_position(self):
+        value = self.load_preset.currentData()
+        return int(self.x.get("SOFT_MAX_MILLI", "0")) / 1000 if value is None else float(value)
+
+    def move_to(self, inches):
+        if not isinstance(inches, (int, float)) or not math.isfinite(inches) or inches < 0:
+            return False
+        milli = int(math.floor(inches * 1000 + 0.5))
+        command = f"XMOVE {milli}"
+        if self.allowed(command) and self.send(command):
+            self.pending = (int(self.x["MOVE_ID"]), time.monotonic())
+            self.refresh()
+            return True
+        return False
+
     def home(self):
         count = int(math.floor(self.home_search.value() * STEPS_PER_INCH + 0.5))
         command = f"XHOME {count}"
@@ -365,7 +444,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible manual-jog firmware 0.10.0 and verified machine pin map"
+            text = "Waiting for compatible manual-jog firmware 0.11.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":
@@ -405,13 +484,34 @@ class TeensyCarriagePanel(QWidget):
             ("Home limit clear" if home_clear else "Home limit active or unknown - manual jog blocked; Home can release it")
             + " | Enable LOW; healthy alarm HIGH. No sensor trip is required after restart."
         )
-        self.progress.setText(f"Move remaining: {remaining} pulses | Maximum per click: {max_jog} pulses (~2 in) | 40 pulses/s")
+        self.progress.setText(f"Current move: {remaining} pulses left | Jog limit: {max_jog} pulses (~2 in) | 40 pulses/s")
+        if self.x.get("MOVE_KIND") == "ABSOLUTE" and self.fresh("X"):
+            destination = 160.5 + int(self.x["TARGET_OFFSET"]) / STEPS_PER_INCH
+            self.absolute_progress.setText(f"Moving to {destination:.3f} in; {remaining/STEPS_PER_INCH:.3f} in remaining. STOP cancels.")
+        else:
+            self.absolute_progress.setText("No absolute move in progress")
         if self.fresh("X") and self.x.get("POS_KNOWN") == "1":
             machine = 160.5 + int(self.x["HOME_OFFSET"]) / STEPS_PER_INCH
             self.machine_position.setText(f"Machine position (HOMED): {machine:.4f} in")
         else:
             self.machine_position.setText("Machine position: UNKNOWN - Home required for referenced moves")
         count_home = int(math.floor(self.home_search.value() * STEPS_PER_INCH + 0.5))
+        known = self.fresh("X") and self.x.get("POS_KNOWN") == "1"
+        maximum = int(self.x.get("SOFT_MAX_MILLI", "0")) / 1000 if known else 0
+        self.target.blockSignals(True)
+        self.target.setMaximum(maximum)
+        if known and not self._target_initialized:
+            self.target.setValue(min(maximum, 160.5 + int(self.x["HOME_OFFSET"]) / STEPS_PER_INCH))
+            self._target_initialized = True
+        if not known:
+            self._target_initialized = False
+        self.target.blockSignals(False)
+        self.target.setEnabled(known and not busy)
+        self.load_preset.setEnabled(known and not busy)
+        self.go_button.setEnabled(self.allowed(f"XMOVE {int(math.floor(self.target.value()*1000+0.5))}"))
+        self.load_button.setEnabled(self.allowed(f"XMOVE {int(math.floor(self.selected_load_position()*1000+0.5))}"))
+        self.limit_note.setText(f"Software range: 0.000 to {maximum:.3f} in (Home pull-off). Targets round to whole motor steps." if known
+                                else "Home required before absolute or load-position moves")
         self.home_button.setEnabled(self.allowed(f"XHOME {count_home}"))
         self.home_search.setEnabled(not self.armed and not self.pending)
         self.configure_button.setEnabled(self.allowed("XCONFIG 0 1"))

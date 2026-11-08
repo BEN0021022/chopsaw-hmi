@@ -12,10 +12,11 @@
 #include <Wire.h>
 #include "bench_interlocks.h"
 #include "homing.h"
+#include "positioning.h"
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.10.0";
+constexpr char FIRMWARE_VERSION[] = "0.11.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -70,6 +71,9 @@ uint16_t xRemaining = 0;
 carriage::Homing xHoming;
 bool xPositionKnown = false;
 int32_t xHomeOffset = 0;
+int32_t xSoftMaxOffset = 0;
+int32_t xTargetOffset = 0;
+bool xAbsoluteMove = false;
 int32_t xCommandedSteps = 0;  // pulse-count displacement since boot, not encoder position
 int8_t xDirection = 1;
 uint32_t xMoveId = 0;
@@ -86,7 +90,7 @@ void publishX();
 
 void stopTests() {
   if (xHoming.active()) { xPositionKnown = false; xHoming.cancel(); }
-  xRemaining = 0;
+  xRemaining = 0; xAbsoluteMove = false;
   interlocks.off(millis());
   testMode = TestMode::None;
   digitalWrite(X_STEP_PIN, LOW);
@@ -106,7 +110,7 @@ void applyOutputs() {
 
 void commandFault() {
   xPositionKnown = false; xHoming.cancel();
-  xRemaining = 0;
+  xRemaining = 0; xAbsoluteMove = false;
   interlocks.trip(bench::Fault::Command, millis());
   applyOutputs();
   testMode = TestMode::None;
@@ -131,7 +135,7 @@ void updateSafety() {
       interlocks.trip(bench::Fault::HomeLimit, millis());
   }
   if (interlocks.fault != bench::Fault::None) xPositionKnown = false;
-  if (!outputsArmed) { xHoming.cancel(); testMode = TestMode::None; xRemaining = 0; }
+  if (!outputsArmed) { xHoming.cancel(); testMode = TestMode::None; xRemaining = 0; xAbsoluteMove = false; }
   applyOutputs();
   if (wasArmed != outputsArmed || previousFault != interlocks.fault ||
       previousTravel != interlocks.travel) {
@@ -208,7 +212,7 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V4,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V5,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594");
 }
 
 void publishPinMap() {
@@ -269,6 +273,11 @@ void publishX() {
   Serial.print(",HOME_OFFSET:"); Serial.print(xHomeOffset);
   Serial.print(",HOME_REF:160.5,HOME_STATE:"); Serial.print(xHoming.name());
   Serial.print(",HOME_ERROR:"); Serial.print(xHoming.error);
+  Serial.print(",SOFT_MIN_OFFSET:"); Serial.print(carriage::Positioning::MinOffset);
+  Serial.print(",SOFT_MAX_OFFSET:"); Serial.print(xSoftMaxOffset);
+  Serial.print(",SOFT_MAX_MILLI:"); Serial.print(carriage::Positioning::milliForOffset(xSoftMaxOffset));
+  Serial.print(",TARGET_OFFSET:"); Serial.print(xTargetOffset);
+  Serial.print(",MAX_MOVE:20594,MOVE_KIND:"); Serial.print(xAbsoluteMove ? "ABSOLUTE" : xRemaining ? "JOG" : "IDLE");
   Serial.print(",CAL_SPI:127.12,MOVE_ID:"); Serial.print(xMoveId);
   Serial.print(",UP_MS:"); Serial.print(millis());
   Serial.print(",FAULT:"); Serial.println(interlocks.faultName());
@@ -505,6 +514,32 @@ void handleCommand(char *command) {
       xNextPulseUs = micros() + 200000;
     }
     publishOutputs(); publishSafety(); publishX();
+  } else if (startsWith(command, "XMOVE ")) {
+    long milli = -1; char extra = '\0'; int32_t target = 0;
+    if (sscanf(command + 6, "%ld %c", &milli, &extra) != 1 || milli < 0 || milli > carriage::Positioning::HomeMilli) {
+      commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_ABSOLUTE_TARGET");
+    } else if (!xPositionKnown) {
+      Serial.println("BENCH_ERROR,CODE:HOME_REQUIRED");
+    } else if (!outputsArmed || testMode != TestMode::Stepper || !xConfigured) {
+      Serial.println("BENCH_ERROR,CODE:X_NOT_ARMED");
+    } else if (xRemaining) {
+      Serial.println("BENCH_ERROR,CODE:X_BUSY");
+    } else if (static_cast<uint32_t>(millis() - xArmAt) < 200) {
+      Serial.println("BENCH_ERROR,CODE:X_RATE_LIMIT");
+    } else if (!carriage::Positioning::target(milli, xSoftMaxOffset, target)) {
+      Serial.println("BENCH_ERROR,CODE:X_SOFT_LIMIT");
+    } else {
+      const int32_t delta = target - xHomeOffset;
+      xTargetOffset = target; ++xMoveId;
+      xDirection = delta >= 0 ? 1 : -1;
+      xRemaining = static_cast<uint16_t>(delta >= 0 ? delta : -delta);
+      xAbsoluteMove = xRemaining != 0;
+      digitalWrite(X_DIR_PIN, xDirection == 1 ? HIGH : LOW);
+      const uint32_t directionReady = micros() + 10;
+      if (static_cast<uint32_t>(millis() - xLastStepAt) >= 26 ||
+          static_cast<int32_t>(xNextPulseUs - directionReady) < 0) xNextPulseUs = directionReady;
+    }
+    publishX();
   } else if (startsWith(command, "XJOG ")) {
     int direction = 0, pulses = 0; char extra = '\0';
     if (sscanf(command + 5, "%d %d %c", &direction, &pulses, &extra) != 2 ||
@@ -517,7 +552,11 @@ void handleCommand(char *command) {
       Serial.println("BENCH_ERROR,CODE:X_BUSY");
     } else if (static_cast<uint32_t>(millis() - xArmAt) < 200) {
       Serial.println("BENCH_ERROR,CODE:X_RATE_LIMIT");
+    } else if (xPositionKnown && !carriage::Positioning::within(xHomeOffset + direction * pulses, xSoftMaxOffset)) {
+      Serial.println("BENCH_ERROR,CODE:X_SOFT_LIMIT");
     } else {
+      xAbsoluteMove = false;
+      xTargetOffset = xHomeOffset + direction * pulses;
       digitalWrite(X_DIR_PIN, direction == 1 ? HIGH : LOW);
       xDirection = direction;
       ++xMoveId;
@@ -542,6 +581,8 @@ void handleCommand(char *command) {
     } else if (static_cast<uint32_t>(millis() - xArmAt) < 200 ||
                static_cast<uint32_t>(millis() - xLastStepAt) < 200) {
       Serial.println("BENCH_ERROR,CODE:X_RATE_LIMIT");
+    } else if (xPositionKnown && !carriage::Positioning::within(xHomeOffset + direction, xSoftMaxOffset)) {
+      Serial.println("BENCH_ERROR,CODE:X_SOFT_LIMIT");
     } else {
       digitalWrite(X_DIR_PIN, direction == 1 ? HIGH : LOW);
       delayMicroseconds(10);  // driver requires >=2us direction setup
@@ -577,6 +618,10 @@ void __attribute__((noinline)) serviceXJog() {
   updateSafety();
   if (!xRemaining || !outputsArmed || testMode != TestMode::Stepper) return;
   if (static_cast<int32_t>(micros() - xNextPulseUs) < 0) return;
+  if (xPositionKnown && !carriage::Positioning::within(xHomeOffset + xDirection, xSoftMaxOffset)) {
+    interlocks.trip(bench::Fault::SoftLimit, millis());
+    updateSafety(); publishOutputs(); publishSafety(); publishX(); return;
+  }
   digitalWrite(X_STEP_PIN, HIGH);
   delayMicroseconds(5);
   digitalWrite(X_STEP_PIN, LOW);
@@ -585,7 +630,7 @@ void __attribute__((noinline)) serviceXJog() {
   --xRemaining;
   xLastStepAt = millis();
   xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
-  if (!xRemaining) { publishOutputs(); publishSafety(); publishX(); }
+  if (!xRemaining) { xAbsoluteMove = false; publishOutputs(); publishSafety(); publishX(); }
 }
 
 void __attribute__((noinline)) serviceXHome() {
@@ -602,7 +647,7 @@ void __attribute__((noinline)) serviceXHome() {
     updateSafety(); publishOutputs(); publishSafety(); publishX(); return;
   }
   if (xHoming.done()) {
-    xPositionKnown = true;
+    xPositionKnown = true; xSoftMaxOffset = xHomeOffset;
     stopTests(); publishOutputs(); publishSafety(); publishX(); return;
   }
   if (previousStage != xHoming.stage) {

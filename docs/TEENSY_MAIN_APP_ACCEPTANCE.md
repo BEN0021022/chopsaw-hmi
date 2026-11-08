@@ -90,3 +90,15 @@ Pending physical acceptance: first bounded Home from near sensor, repeatability,
 reference correctness, stop and failure behavior. Absolute moves remain blocked.
 Operator instructions: HOMING_COMMISSIONING.md. Remaining rough effort estimate:
 MIGRATION_EFFORT_ESTIMATE.md (12-24 active hours plus physical/hardware time).
+
+## Referenced positioning update: 0.11.0
+
+User reported automatic homing succeeded on 0.10.0. Added inch targets,
+Home/load and 135/111/87/63-inch presets, firmware request/per-pulse soft limits,
+full-step rounding, long-move telemetry and guarded main-app set_length routing.
+New 113 positioning checks passed alongside 83 policy, 87 bench, 112 manual and
+209 homing checks. Qt/backend/boundary/Sensor Bench checks pass. New firmware
+compiled and flashed/read back on COM4, disarmed and no reference/queued move.
+No motion/arm/Home command sent by the agent. New absolute/load physical tests
+are pending; existing Home success is not a physical lower-envelope acceptance.
+MIGRATION tab now shows the master checklist without editing it or moving hardware.

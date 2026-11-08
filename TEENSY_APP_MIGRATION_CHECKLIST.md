@@ -1,13 +1,32 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Active firmware: custom **0.10.0** in `firmware/chopsaw_controller`.
+Active firmware: custom **0.11.0** in `firmware/chopsaw_controller`.
 Main app mode: **Teensy Carriage**. The breakout is a grblHAL-compatible board;
 the currently flashed firmware is custom, not stock grblHAL.
 
 `[x]` means implemented or observed as explicitly described. Software tests do
 not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
+
+## Current run - work through these next
+
+- [x] Manual carriage motion: user-confirmed pass.
+- [x] First automatic Home cycle: user-confirmed success on 0.10.0.
+- [x] Absolute inch targets, per-pulse firmware soft limits and load presets:
+      implemented/tested/flashed in 0.11.0; physical acceptance next.
+- [x] In-app MIGRATION tab displays this master checklist; Refresh reloads it.
+- [ ] Rehome after flash, try an absolute target about 0.1 inch toward the saw,
+      then return to Home/load position. Confirm travel/direction and STOP.
+- [ ] Add/accept acceleration and NORMAL/GENTLE/FAST speed profiles.
+- [ ] Migrate board-edge search, offsets/truing and stock workflow.
+- [ ] Fit coil suppression, then accept each pneumatic output with saw unplugged.
+- [ ] Integrate clamp/saw sequence and automatic cut-list completion/recovery.
+- [ ] Complete physical fault matrix, documentation, release and remote backup.
+
+Absolute moves can span the referenced range; they are not limited to the
+2-inch manual jog cap. The whole selected path must be clear. Current speed
+remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
 
 ## Stage 1 - Preserve the baseline and establish the Teensy workspace
 
@@ -94,11 +113,19 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 - [x] Implement bounded homing in 0.10.0: B seek, release/backoff, slow latch,
       pull-off, sensor-stuck/travel/time bounds and cancellation; 209 homing
       policy/real-sketch checks and main-app tests pass. Flash/readback verified.
-- [ ] Operator physical Home acceptance and repeatability (default 2-inch search).
+- [x] User reported the automatic Home cycle succeeded on 0.10.0.
+- [ ] Record Home repeatability and physical blade-reference acceptance.
 - [x] Establish homed coordinates after slow latch/pull-off; invalidate on
       interrupted home, faults, reboot and motor release. Unknown before Home.
-- [ ] Verify recovered 160.5-inch physical reference; add soft limits and
-      absolute cut-length/load-position commands after homing acceptance.
+- [x] Add referenced absolute inch targets and load presets (Home/load,
+      135/111/87/63 in). Require successful Home and explicit motion arm.
+- [x] Enforce firmware soft limits at request time and per pulse for referenced
+      moves and jogs; upper limit is actual Home pull-off position. Reject
+      invalid targets, stop/cancel safely, never queue a replacement move.
+- [x] Flash/read back 0.11.0 (CARRIAGE_V5 / REFERENCED_V1) on COM4; unknown
+      reference and zero queued motion after restart. No motion commanded by agent.
+- [ ] Physically accept short absolute out-and-back, load moves, lower travel
+      limit and recovered 160.5-inch physical blade reference before production use.
 - [ ] Add controlled acceleration and migrate NORMAL/GENTLE/FAST profiles with limits.
       Legacy profile values must not silently override the commissioning speed.
 

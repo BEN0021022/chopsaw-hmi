@@ -1,6 +1,7 @@
 # Homing commissioning - controller 0.10.0
 
-Implemented 2026-11-08; physical acceptance pending. Manual motion was reported
+Implemented 2026-11-08. User subsequently reported the Home cycle succeeded;
+repeatability and physical reference acceptance remain pending. Manual motion was reported
 passed by the user on 0.9.0. The current custom firmware uses X_APP:CARRIAGE_V4,
 HOMING:BOUNDED_V1, HOME_MAX:20594, HOME_REF:160.5 and scale 127.12 pulses/inch.
 
@@ -68,5 +69,5 @@ Arduino compile passed; flashed/read back 0.10.0 on COM4, disarmed, Home IDLE,
 unknown position and zero queued steps. No HOME/arm/jog command sent by the agent.
 
 Physical homing, reference repeatability, endpoint placement and collision limits
-still require the operator's test. Absolute length moves remain unavailable until
-that acceptance and controller-side soft limits are implemented.
+still require the operator's test. Absolute length moves and controller-side soft limits were subsequently
+implemented in 0.11.0; see ABSOLUTE_POSITIONING.md for their acceptance test.

@@ -28,7 +28,9 @@ def packet(panel, **changes):
     fields = dict(ARMED=0, CONFIGURED=0, READY=0, HOME_VERIFIED=0, HOME_RAW=1,
                   ALARM_RAW=1, STEP=0, DIR=0, ENA=1, MAX_JOG=254, RATE_PPS=40, JOG_READY=0, REMAINING=0,
                   POS_STEPS=0, MOVE_ID=0, UP_MS=1000, CAL_SPI="127.12", FAULT="NONE",
-                  POS_KNOWN=0, HOME_OFFSET=0, HOME_REF="160.5", HOME_STATE="IDLE", HOME_ERROR="NONE")
+                  POS_KNOWN=0, HOME_OFFSET=0, HOME_REF="160.5", HOME_STATE="IDLE", HOME_ERROR="NONE",
+                  SOFT_MIN_OFFSET=-20402, SOFT_MAX_OFFSET=-14, SOFT_MAX_MILLI=160389,
+                  MAX_MOVE=20594, TARGET_OFFSET=0, MOVE_KIND="IDLE")
     fields.update(changes)
     if fields["ARMED"] == 1 and "JOG_READY" not in changes:
         fields["JOG_READY"] = 1
@@ -175,6 +177,46 @@ def run():
         assert wire.writes[-1] == "OFF" and not p.allowed("XHOME 254")
         packet(p, HOME_STATE="CANCELLED")
         assert "UNKNOWN" in p.machine_position.text() and not p.armed
+
+        # Absolute moves and load presets require a valid Home reference.
+        ready(p)
+        p.consent.setChecked(True)
+        packet(p, CONFIGURED=1, READY=1)
+        assert not p.go_button.isEnabled() and not p.load_button.isEnabled()
+        assert not p.move_to(135)
+        packet(p, CONFIGURED=1, READY=1, POS_KNOWN=1, HOME_OFFSET=-14, HOME_STATE="DONE")
+        assert p.target.value() == 160.389, "New reference should default to current position, not zero"
+        assert not p.go_button.isEnabled(), "Still needs explicit motion ARM"
+        packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-14, HOME_STATE="DONE")
+        assert not p.toward_home.isEnabled(), "Homed jogs cannot exceed the pull-off limit"
+        before_position = w.current_position
+        assert p.move_to(159.39)
+        assert wire.writes[-1] == "XMOVE 159390"
+        assert w.current_position == before_position, "Do not predict an absolute completion"
+        packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-20, HOME_STATE="DONE",
+               MOVE_KIND="ABSOLUTE", REMAINING=121, MOVE_ID=1, TARGET_OFFSET=-141)
+        assert p.local_fault == "" and not p.go_button.isEnabled() and not p.home_button.isEnabled()
+        packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-141, HOME_STATE="DONE", MOVE_ID=1)
+        assert abs(w.current_position - (160.5-141/127.12)) < 1e-8
+        for index, target in ((1,135000),(2,111000),(3,87000),(4,63000),(0,160389)):
+            p.load_preset.setCurrentIndex(index)
+            p.load_button.click()
+            assert wire.writes[-1] == f"XMOVE {target}"
+            packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-141,
+                   HOME_STATE="DONE", MOVE_ID=index+10)
+        assert not p.move_to(160.5) and not p.move_to(float("nan")) and not p.move_to(-1)
+        assert not w.send_command("XMOVE 160500") and not w.send_command("XMOVE 1 EXTRA")
+        assert w.set_length(135)
+        assert wire.writes[-1] == "XMOVE 135000"
+        packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-200, HOME_STATE="DONE",
+               MOVE_KIND="ABSOLUTE", REMAINING=10000, MOVE_ID=30, TARGET_OFFSET=-12394)
+        assert not p.local_fault, "Long absolute moves are allowed beyond the two-inch jog cap"
+        p.stop()
+        packet(p, CONFIGURED=1, READY=1, POS_KNOWN=1, HOME_OFFSET=-200, HOME_STATE="DONE")
+        assert not p.armed and not p.go_button.isEnabled()
+        packet(p, FAULT="DRIVER_ALARM", POS_KNOWN=0)
+        assert not p.move_to(135) and not p.go_button.isEnabled()
+        assert "Stage 4" in w.migration_checklist.toPlainText()
 
         # Invalid packets and missing move ACKs fail closed.
         ready(p)

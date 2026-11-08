@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('chopsaw_hmi.ico', '.')],
+    datas=[('chopsaw_hmi.ico', '.'), ('TEENSY_APP_MIGRATION_CHECKLIST.md', '.')],
     hiddenimports=['certifi'],
     hookspath=[],
     hooksconfig={},
