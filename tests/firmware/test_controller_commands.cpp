@@ -1,56 +1,8 @@
-// Real manual-controller sketch; only GPIO, serial and time are mocked.
-#include "stubs/Arduino.h"
-#include "stubs/Wire.h"
-#include <stdlib.h>
-uint32_t fakeTime = 0;
-int fakePins[64], fakeModes[64], fakeLatches[64];
-unsigned fakePulses = 0, fakeUs = 0, fakeDirAt = 0, fakeHighAt = 0, fakePulseWidth = 0, fakeSetupUs = 0;
-uint32_t fakeMinGapUs = UINT32_MAX, fakeLastPulseUs = 0;
-FakeSerial Serial;
-FakeWire Wire2;
-#include "../../firmware/chopsaw_controller/chopsaw_controller.ino"
-static unsigned checks = 0;
-#define CHECK(value) do { ++checks; if (!(value)) { \
-  fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #value); exit(1); } } while (0)
-
-void command(const std::string &line) {
-  Serial.incoming += line + '\n';
-  while (Serial.available()) { ++fakeTime; loop(); }
-}
-void restart() {
-  interlocks = bench::Interlocks{};
-  commandLength = 0; discardCommand = false; testMode = TestMode::None;
-  xConfigured = xHomeSeenActive = xHomeVerified = false;
-  xHomeActive = bench::StableAssertion{}; xHomeInactive = bench::StableAssertion{};
-  xRemaining = 0; xCommandedSteps = 0; xMoveId = 0; xDirection = 1;
-  xNextPulseUs = xArmAt = xLastStepAt = 0;
-  Serial.incoming.clear(); Serial.outgoing.clear();
-  fakeTime = lastInputAt = lastHealthAt = 0;
-  for (int &pin : fakePins) pin = HIGH;
-  for (int &mode : fakeModes) mode = 0;
-  for (int &latch : fakeLatches) latch = 0;
-  fakePulses = fakeUs = fakeDirAt = fakeHighAt = fakePulseWidth = fakeSetupUs = 0;
-  fakeMinGapUs = UINT32_MAX; fakeLastPulseUs = 0;
-  fakePins[29] = LOW; fakePins[22] = LOW;
-  setup(); loop(); fakeTime += 20; loop();
-}
-void prepareManual(uint32_t armBase = 0) {
-  restart();
-  command("XCONFIG 0 1");
-  if (armBase) fakeTime = armBase;
-  command("XARM 1"); fakeTime += 200;
-}
-void finishJog() {
-  for (unsigned tick = 0; xRemaining && tick < 400; ++tick) {
-    fakeTime += 25;
-    if (tick % 10 == 0) command("KEEPALIVE"); else loop();
-  }
-  CHECK(xRemaining == 0);
-}
+#include "controller_fixture.h"
 int main() {
   restart();
-  CHECK(Serial.outgoing.find("FW:0.9.0") != std::string::npos);
-  CHECK(Serial.outgoing.find("X_APP:CARRIAGE_V3") != std::string::npos);
+  CHECK(Serial.outgoing.find("FW:0.10.0") != std::string::npos);
+  CHECK(Serial.outgoing.find("X_APP:CARRIAGE_V4") != std::string::npos);
   CHECK(Serial.outgoing.find("X_TEST:MANUAL_JOG_V1") != std::string::npos);
   CHECK(Serial.outgoing.find("MAX_JOG:254,RATE_PPS:40") != std::string::npos);
   CHECK(Serial.outgoing.find("BUDGET:") == std::string::npos);
@@ -67,7 +19,9 @@ int main() {
   CHECK(outputsArmed && fakePulses == 13 && !xHomeVerified);
   restart();
   fakePins[20] = LOW; command("XCONFIG 0 1");
-  CHECK(!xConfigured && !outputsArmed);  // active limit still blocks setup
+  CHECK(xConfigured && !outputsArmed);
+  command("XARM 1"); CHECK(!outputsArmed);  // active limit blocks manual arm
+  xConfigured = false;
   fakePins[20] = HIGH; loop();
   fakePins[20] = LOW; loop(); fakeTime += 20; loop();
   fakePins[20] = HIGH; loop(); fakeTime += 20; loop(); CHECK(xHomeVerified);

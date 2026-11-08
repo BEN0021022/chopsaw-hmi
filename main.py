@@ -344,6 +344,8 @@ class MinimalHMI(QMainWindow):
         self.preset_tab = self.create_preset_tab()
 
         self.carriage_tab = TeensyCarriagePanel(self.send_command, lambda line: self.log.append(line), self)
+        self.carriage_tab.homed_changed.connect(self.update_homed_status)
+        self.carriage_tab.machine_position_changed.connect(self.update_position_label_from_device)
         self.tabs.addTab(self.carriage_tab, "CARRIAGE")
         self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
@@ -2042,6 +2044,9 @@ class MinimalHMI(QMainWindow):
         return sent_all
 
     def home_motor(self):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            self.carriage_tab.home()
+            return
         self.send_backend_commands(self.active_controller().home(), "home the carriage")
     def near_calibrate(self):
         if self.homed_label.text() != "HOMED":

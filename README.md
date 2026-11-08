@@ -9,7 +9,7 @@ The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active firmware is **0.9.0**, source
+Active firmware is **0.10.0**, source
 `firmware/chopsaw_controller/chopsaw_controller.ino`. The separate Sensor Bench
 0.6.0 sketch is preserved for diagnostics. The active controller keeps those
 input/interlock functions and adds the main-app manual-carriage contract. This is
@@ -21,16 +21,20 @@ custom firmware; stock grblHAL is not running on the board.
 - Main-app jogs: 0.01-2 inches per click, rounded to whole pulses; 254 pulses
   maximum per click, 40 pulses/s. Repeated jogs stay armed; no session travel
   allowance. Start small. One jog at a time; no queued motion.
-- Live Home/board-edge/door/saw-up/saw-down/driver-alarm feedback and commanded
-  displacement. Commanded travel is not an encoder reading or absolute blade position.
+- Live Home/board-edge/door/saw-up/saw-down/driver-alarm feedback, commanded
+  displacement and homed position after successful Home. Commanded travel is
+  not an encoder reading; unhomed machine position stays unknown.
 - No Home-sensor trip/release ritual is needed after restart; the actual Home
-  limit must still be clear. Absolute position remains unknown.
+  limit must be clear for manual jogs. Homing can release an active sensor;
+  referenced position is unknown until a Home cycle completes.
 - Fault acknowledgment never arms. Stop/disarm, disconnect, stale telemetry,
   controller reboot and interlocks revoke permission. Motor release explicitly
   disables the driver and requires setup confirmation again, without walking
   down to trip the Home sensor.
-- Automatic homing, absolute cut-length moves, profiles and cutting cycles are
-  not implemented for this controller yet. The old operational tabs stay blocked
+- Bounded homing is implemented in the CARRIAGE tab: default 2-inch search,
+  release/backoff/slow latch/pull-off, recovered 160.5-inch sensor reference.
+  Physical homing acceptance is pending. Absolute cut-length moves, profiles
+  and cutting cycles are not implemented for this controller yet. The old operational tabs stay blocked
   on real hardware. Cut-list editing and the offline simulator are retained.
 - Main-app pneumatic/blade/current controls are unavailable. Keep saw unplugged,
   valve 12V disconnected, air isolated, INA/MCP disconnected during carriage tests.
@@ -39,7 +43,9 @@ The last MEGA HMI remains in sibling `ChopSawHMI` at
 `legacy-mega-last-working-2026-11-06`; recovered MEGA firmware is also preserved
 under `archive/legacy-mega-v2.5`. Live MEGA selection is retired.
 
-See [feature migration](docs/APP_FEATURE_MIGRATION.md),
+See [homing test instructions](docs/HOMING_COMMISSIONING.md),
+[remaining effort estimate](docs/MIGRATION_EFFORT_ESTIMATE.md),
+[feature migration](docs/APP_FEATURE_MIGRATION.md),
 [controller protocol](docs/CONTROLLER_PROTOCOL.md), and
 [six-stage roadmap](TEENSY_APP_MIGRATION_CHECKLIST.md).
 This software is not an independent emergency-stop, guarding, or hazardous-energy
@@ -109,7 +115,7 @@ notes, Git status, and hardware compatibility before creating a release.
 
 ## Controller modes
 
-- **Teensy Carriage:** active custom 0.9.0 firmware; native guarded carriage jogs.
+- **Teensy Carriage:** active custom 0.10.0 firmware; native guarded carriage jogs.
 - **Legacy Arduino Mega:** archived, internal to the offline simulator only.
 - **Teensy Hardware Test:** separate diagnostics protocol; old operational tabs locked.
 - **Teensy grblHAL:** retained prototype only; operational controls locked. It

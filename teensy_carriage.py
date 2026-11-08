@@ -7,10 +7,10 @@ import math
 import re
 import time
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGroupBox,
-    QCheckBox, QPushButton, QDoubleSpinBox,
+    QCheckBox, QPushButton, QDoubleSpinBox, QScrollArea,
 )
 from sensor_bench.protocol import parse_line, parse_int
 
@@ -19,16 +19,21 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V3", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V4", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "VALVES_ISOLATED", "CAL_SPI": "127.12",
     "MAX_JOG": "254", "RATE_PPS": "40", "HOME_CHECK": "LEVEL_ONLY",
+    "HOMING": "BOUNDED_V1", "HOME_MAX": "20594", "HOME_REF": "160.5",
 }
+HOME = re.compile(r"XHOME ([1-9][0-9]{0,4})")
+HOME_STAGES = {"SEEK", "RELEASE", "BACKOFF", "LATCH", "PULL_RELEASE", "PULL_OFF"}
 JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
 
 
 class TeensyCarriagePanel(QWidget):
+    homed_changed = pyqtSignal(int)
+    machine_position_changed = pyqtSignal(float)
     stale_seconds = 2.0
 
     def __init__(self, send, log, parent=None):
@@ -41,7 +46,16 @@ class TeensyCarriagePanel(QWidget):
         self.stopping = False
         self.local_fault = ""
         self.previous_uptime = None
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background:#0b1222; border:0; }")
+        body = QWidget()
+        body.setObjectName("carriageBody")
+        body.setStyleSheet("QWidget#carriageBody { background:#0b1222; }")
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        layout = QVBoxLayout(body)
         title = QLabel("TEENSY CARRIAGE")
         title.setStyleSheet("font-size:24px; font-weight:bold; color:#60a5fa")
         layout.addWidget(title)
@@ -51,8 +65,11 @@ class TeensyCarriagePanel(QWidget):
         self.position = QLabel("Commanded displacement: unknown")
         self.position.setStyleSheet("font-size:24px; color:#e2e8f0")
         layout.addWidget(self.position)
+        self.machine_position = QLabel("Machine position: UNKNOWN - not homed")
+        self.machine_position.setStyleSheet("font-size:22px; color:#fbbf24")
+        layout.addWidget(self.machine_position)
         layout.addWidget(QLabel(
-            "Pulse-count displacement since controller startup; absolute blade position is not established.\n"
+            "Machine position is established only by a completed Home cycle; faults and motor release invalidate it.\n"
             "127.12 pulses/inch recovered from MEGA V2.5. Positive is away from the saw, toward Home."
         ))
         sensors = QGroupBox("Machine feedback")
@@ -118,8 +135,29 @@ class TeensyCarriagePanel(QWidget):
         jog_layout.addWidget(self.progress)
         jog_layout.addWidget(QLabel(
             "One move per click, up to 2 inches. Repeat jogs while armed; no session travel budget.\n"
-            "Home, absolute length moves and automatic cutting remain unavailable pending commissioning."
+            "Absolute length moves and automatic cutting remain unavailable pending commissioning."
         ))
+        home_box = QGroupBox("Home carriage - automatic bounded sequence")
+        home_layout = QVBoxLayout(home_box)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Maximum initial search (inches):"))
+        self.home_search = QDoubleSpinBox()
+        self.home_search.setRange(0.25, 162)
+        self.home_search.setDecimals(2)
+        self.home_search.setValue(2)
+        row.addWidget(self.home_search)
+        self.home_button = QPushButton("HOME CARRIAGE")
+        self.home_button.clicked.connect(self.home)
+        row.addWidget(self.home_button)
+        home_layout.addLayout(row)
+        home_note = QLabel(
+            "Disarm manual control first. HOME starts motion toward B/Home, then backs away, "
+            "re-approaches slowly and pulls clear. Allow up to 1.35 inches of backoff clearance. "
+            "Start near Home with the default 2-inch search. Home reference: 160.5 inches."
+        )
+        home_note.setWordWrap(True)
+        home_layout.addWidget(home_note)
+        layout.addWidget(home_box)
         layout.addWidget(jog_box)
         row = QHBoxLayout()
         self.stop_button = QPushButton("STOP / DISARM")
@@ -129,11 +167,12 @@ class TeensyCarriagePanel(QWidget):
         self.release_button.clicked.connect(lambda: self.stop("XDISABLE"))
         row.addWidget(self.stop_button)
         row.addWidget(self.release_button)
-        layout.addLayout(row)
+        outer.addLayout(row)
         layout.addWidget(QLabel("Current sensing deferred. Pneumatic and blade controls are unavailable in this mode."))
         layout.addStretch()
         for label in self.findChildren(QLabel):
             label.setWordWrap(True)
+        self.home_search.valueChanged.connect(self.refresh)
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.tick)
@@ -149,6 +188,7 @@ class TeensyCarriagePanel(QWidget):
         self.local_fault = ""
         self.previous_uptime = None
         self.consent.setChecked(False)
+        self.homed_changed.emit(0)
         self.refresh()
 
     def fresh(self, name):
@@ -157,6 +197,10 @@ class TeensyCarriagePanel(QWidget):
     @property
     def armed(self):
         return self.x.get("ARMED") == "1"
+
+    @property
+    def homing(self):
+        return self.x.get("HOME_STATE") in HOME_STAGES
 
     def ready_link(self):
         return self.connected and self.compatible and self.fresh("X") and self.fresh("SAFETY")
@@ -170,13 +214,19 @@ class TeensyCarriagePanel(QWidget):
                 or self.safety.get("FAULT") != "NONE"
                 or self.safety.get("DOOR_CLOSED") != "1"
                 or self.safety.get("SAW_POSITION") != "UP"
-                or self.x.get("HOME_RAW") != "1" or self.x.get("ALARM_RAW") != "1"):
+                or self.x.get("ALARM_RAW") != "1"):
             return False
         if command == "KEEPALIVE":
-            return self.armed
+            return self.armed and (self.homing or self.x.get("HOME_RAW") == "1")
         idle = not self.armed and self.x.get("REMAINING") == "0"
         if command == "XCONFIG 0 1":
             return idle and self.safety.get("READY") == "1"
+        home = HOME.fullmatch(command)
+        if home:
+            return (idle and not self.pending and self.x.get("CONFIGURED") == "1"
+                    and self.safety.get("READY") == "1" and 1 <= int(home[1]) <= 20594)
+        if self.x.get("HOME_RAW") != "1":
+            return False
         if command == "XARM 1":
             return idle and self.x.get("READY") == "1" and self.x.get("CONFIGURED") == "1"
         match = JOG.fullmatch(command)
@@ -201,12 +251,16 @@ class TeensyCarriagePanel(QWidget):
             self.compatible = compatible
         elif message.kind == "BENCH_X":
             numeric = ("ARMED", "CONFIGURED", "READY", "HOME_VERIFIED", "HOME_RAW", "ALARM_RAW",
-                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS")
+                       "STEP", "DIR", "ENA", "MAX_JOG", "REMAINING", "POS_STEPS", "MOVE_ID", "UP_MS", "JOG_READY", "RATE_PPS", "POS_KNOWN", "HOME_OFFSET")
             if any(parse_int(f.get(k)) is None for k in numeric) or f.get("CAL_SPI") != "127.12":
                 self.trip_local("Invalid carriage telemetry")
                 return
-            if any(f.get(k) not in ("0", "1") for k in (*numeric[:9], "JOG_READY")):
+            if any(f.get(k) not in ("0", "1") for k in (*numeric[:9], "JOG_READY", "POS_KNOWN")):
                 self.trip_local("Invalid carriage state")
+                return
+            if (f.get("HOME_REF") != "160.5" or f.get("HOME_STATE") not in HOME_STAGES | {"IDLE", "DONE", "FAILED", "CANCELLED"}
+                    or (f["POS_KNOWN"] == "1" and f.get("HOME_STATE") in HOME_STAGES)):
+                self.trip_local("Invalid homing telemetry")
                 return
             if (f["MAX_JOG"] != "254" or f["RATE_PPS"] != "40"
                     or not 0 <= int(f["REMAINING"]) <= int(f["MAX_JOG"])):
@@ -217,6 +271,9 @@ class TeensyCarriagePanel(QWidget):
                 self.trip_local("Controller restarted; verify Home and driver setup again")
             self.previous_uptime = uptime
             self.x = f
+            self.homed_changed.emit(int(f["POS_KNOWN"]))
+            if f["POS_KNOWN"] == "1":
+                self.machine_position_changed.emit(160.5 + int(f["HOME_OFFSET"]) / STEPS_PER_INCH)
             if f["ARMED"] == "0":
                 self.stopping = False
             self.received["X"] = time.monotonic()
@@ -269,6 +326,13 @@ class TeensyCarriagePanel(QWidget):
     def toggle_arm(self):
         self.send("XARM 0" if self.armed else "XARM 1")
 
+    def home(self):
+        count = int(math.floor(self.home_search.value() * STEPS_PER_INCH + 0.5))
+        command = f"XHOME {count}"
+        if self.allowed(command) and self.send(command):
+            self.pending = (int(self.x["MOVE_ID"]), time.monotonic())
+            self.refresh()
+
     def jog(self, direction):
         count = int(math.floor(self.distance.value() * STEPS_PER_INCH + 0.5))
         command = f"XJOG {direction} {count}"
@@ -297,15 +361,17 @@ class TeensyCarriagePanel(QWidget):
         fault = self.x.get("FAULT", "NONE")
         remaining = parse_int(self.x.get("REMAINING"), 0)
         max_jog = parse_int(self.x.get("MAX_JOG"), 0)
-        busy = bool(remaining or self.pending)
+        busy = bool(remaining or self.pending or self.homing)
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible manual-jog firmware 0.9.0 and verified machine pin map"
+            text = "Waiting for compatible manual-jog firmware 0.10.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":
-            text = "FAULT: " + (self.local_fault or fault)
+            text = "FAULT: " + (self.local_fault or fault) + (" / " + self.x.get("HOME_ERROR", "") if fault == "HOME_FAILED" else "")
+        elif self.homing:
+            text = "HOMING: " + self.x.get("HOME_STATE", "")
         elif busy:
             text = "MOVING" if remaining else "Waiting for move acknowledgment"
         elif self.stopping:
@@ -336,10 +402,18 @@ class TeensyCarriagePanel(QWidget):
             label.setText(value)
         home_clear = self.x.get("HOME_RAW") == "1"
         self.setup_note.setText(
-            ("Home limit clear" if home_clear else "Home limit active or unknown - manual motion blocked")
+            ("Home limit clear" if home_clear else "Home limit active or unknown - manual jog blocked; Home can release it")
             + " | Enable LOW; healthy alarm HIGH. No sensor trip is required after restart."
         )
         self.progress.setText(f"Move remaining: {remaining} pulses | Maximum per click: {max_jog} pulses (~2 in) | 40 pulses/s")
+        if self.fresh("X") and self.x.get("POS_KNOWN") == "1":
+            machine = 160.5 + int(self.x["HOME_OFFSET"]) / STEPS_PER_INCH
+            self.machine_position.setText(f"Machine position (HOMED): {machine:.4f} in")
+        else:
+            self.machine_position.setText("Machine position: UNKNOWN - Home required for referenced moves")
+        count_home = int(math.floor(self.home_search.value() * STEPS_PER_INCH + 0.5))
+        self.home_button.setEnabled(self.allowed(f"XHOME {count_home}"))
+        self.home_search.setEnabled(not self.armed and not self.pending)
         self.configure_button.setEnabled(self.allowed("XCONFIG 0 1"))
         self.arm_button.setText("DISARM MANUAL CONTROL" if self.armed else "ARM MANUAL CONTROL")
         self.arm_button.setEnabled(self.connected and (self.armed or self.allowed("XARM 1")))

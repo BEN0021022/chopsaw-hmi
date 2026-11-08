@@ -1,7 +1,7 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Active firmware: custom **0.9.0** in `firmware/chopsaw_controller`.
+Active firmware: custom **0.10.0** in `firmware/chopsaw_controller`.
 Main app mode: **Teensy Carriage**. The breakout is a grblHAL-compatible board;
 the currently flashed firmware is custom, not stock grblHAL.
 
@@ -89,11 +89,16 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
       disarmed, zero budget/remaining, STEP/DIR LOW, ENA HIGH. No motion sent by agent.
 - [x] Flash/read back 0.9.0 on COM4: CARRIAGE_V3 / MANUAL_JOG_V1, MAX_JOG=254,
       RATE_PPS=40; disarmed/unconfigured, no queued pulses, ENA HIGH.
-- [ ] Operator acceptance of repeatable main-app manual jog/stop workflow on hardware.
-- [ ] Implement bounded homing state machine: B seek, release/backoff, slow re-latch,
-      sensor-stuck/travel/time limits and cancellation. Hardware validation required.
-- [ ] Establish/invalidate homed machine coordinates; verify recovered 160.5-inch
-      reference. Add soft limits and absolute cut-length/load-position commands.
+- [x] User reports manual motion testing passed and all looks good on 0.9.0.
+      This does not independently confirm the complete physical fault matrix.
+- [x] Implement bounded homing in 0.10.0: B seek, release/backoff, slow latch,
+      pull-off, sensor-stuck/travel/time bounds and cancellation; 209 homing
+      policy/real-sketch checks and main-app tests pass. Flash/readback verified.
+- [ ] Operator physical Home acceptance and repeatability (default 2-inch search).
+- [x] Establish homed coordinates after slow latch/pull-off; invalidate on
+      interrupted home, faults, reboot and motor release. Unknown before Home.
+- [ ] Verify recovered 160.5-inch physical reference; add soft limits and
+      absolute cut-length/load-position commands after homing acceptance.
 - [ ] Add controlled acceleration and migrate NORMAL/GENTLE/FAST profiles with limits.
       Legacy profile values must not silently override the commissioning speed.
 
@@ -131,3 +136,5 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
       then accuracy validation, then optional protective behavior. MCP expansion later.
 - [ ] Reserve/document future sensor, clamp, actuator and pneumatic expansion without
       changing validated assignments or weakening existing interlocks.
+
+Remaining effort: [12-24 active engineering hours for the core workflow](docs/MIGRATION_EFFORT_ESTIMATE.md), plus physical acceptance and hardware time.

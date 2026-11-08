@@ -11,10 +11,11 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "bench_interlocks.h"
+#include "homing.h"
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.9.0";
+constexpr char FIRMWARE_VERSION[] = "0.10.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -57,7 +58,7 @@ bool discardCommand = false;
 bench::Interlocks interlocks;
 bool &outputsArmed = interlocks.armed;
 bool (&outputStates)[OUTPUT_COUNT] = interlocks.outputs;
-enum class TestMode { None, Pneumatic, Stepper };
+enum class TestMode { None, Pneumatic, Stepper, Homing };
 TestMode testMode = TestMode::None;
 bool xConfigured = false;
 bool xHomeSeenActive = false;
@@ -66,6 +67,9 @@ bench::StableAssertion xHomeActive, xHomeInactive;
 uint8_t xEnableLevel = LOW;
 uint8_t xAlarmNormal = HIGH;
 uint16_t xRemaining = 0;
+carriage::Homing xHoming;
+bool xPositionKnown = false;
+int32_t xHomeOffset = 0;
 int32_t xCommandedSteps = 0;  // pulse-count displacement since boot, not encoder position
 int8_t xDirection = 1;
 uint32_t xMoveId = 0;
@@ -81,6 +85,7 @@ void publishSafety();
 void publishX();
 
 void stopTests() {
+  if (xHoming.active()) { xPositionKnown = false; xHoming.cancel(); }
   xRemaining = 0;
   interlocks.off(millis());
   testMode = TestMode::None;
@@ -100,6 +105,7 @@ void applyOutputs() {
 }
 
 void commandFault() {
+  xPositionKnown = false; xHoming.cancel();
   xRemaining = 0;
   interlocks.trip(bench::Fault::Command, millis());
   applyOutputs();
@@ -118,13 +124,14 @@ void updateSafety() {
   xHomeInactive.update(digitalRead(HOME_PIN) == HIGH, millis());
   if (!outputsArmed && xHomeActive.stable) xHomeSeenActive = true;
   if (xHomeSeenActive && xHomeInactive.stable) xHomeVerified = true;
-  if (testMode == TestMode::Stepper && outputsArmed) {
+  if ((testMode == TestMode::Stepper || testMode == TestMode::Homing) && outputsArmed) {
     if (digitalRead(CL57T_ALARM_PIN) != xAlarmNormal)
       interlocks.trip(bench::Fault::DriverAlarm, millis());
-    else if (digitalRead(HOME_PIN) == LOW)
+    else if (testMode == TestMode::Stepper && digitalRead(HOME_PIN) == LOW)
       interlocks.trip(bench::Fault::HomeLimit, millis());
   }
-  if (!outputsArmed) { testMode = TestMode::None; xRemaining = 0; }
+  if (interlocks.fault != bench::Fault::None) xPositionKnown = false;
+  if (!outputsArmed) { xHoming.cancel(); testMode = TestMode::None; xRemaining = 0; }
   applyOutputs();
   if (wasArmed != outputsArmed || previousFault != interlocks.fault ||
       previousTravel != interlocks.travel) {
@@ -201,7 +208,7 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V3,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V4,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5");
 }
 
 void publishPinMap() {
@@ -243,7 +250,7 @@ void publishSafety() {
 
 void publishX() {
   Serial.print("BENCH_X,ARMED:");
-  Serial.print(outputsArmed && testMode == TestMode::Stepper ? 1 : 0);
+  Serial.print(outputsArmed && (testMode == TestMode::Stepper || testMode == TestMode::Homing) ? 1 : 0);
   Serial.print(",CONFIGURED:"); Serial.print(xConfigured ? 1 : 0);
   Serial.print(",READY:"); Serial.print(xReady() ? 1 : 0);
   Serial.print(",HOME_VERIFIED:"); Serial.print(xHomeVerified ? 1 : 0);
@@ -258,7 +265,11 @@ void publishX() {
                static_cast<uint32_t>(millis() - xArmAt) >= 200 ? 1 : 0);
   Serial.print(",REMAINING:"); Serial.print(xRemaining);
   Serial.print(",POS_STEPS:"); Serial.print(xCommandedSteps);
-  Serial.print(",POS_KNOWN:0,CAL_SPI:127.12,MOVE_ID:"); Serial.print(xMoveId);
+  Serial.print(",POS_KNOWN:"); Serial.print(xPositionKnown ? 1 : 0);
+  Serial.print(",HOME_OFFSET:"); Serial.print(xHomeOffset);
+  Serial.print(",HOME_REF:160.5,HOME_STATE:"); Serial.print(xHoming.name());
+  Serial.print(",HOME_ERROR:"); Serial.print(xHoming.error);
+  Serial.print(",CAL_SPI:127.12,MOVE_ID:"); Serial.print(xMoveId);
   Serial.print(",UP_MS:"); Serial.print(millis());
   Serial.print(",FAULT:"); Serial.println(interlocks.faultName());
 }
@@ -427,7 +438,7 @@ void handleCommand(char *command) {
       publishOutputs();
       return;
     }
-    const char *error = state == 1 && testMode == TestMode::Stepper ? "STEPPER_MODE_ACTIVE" :
+    const char *error = state == 1 && (testMode == TestMode::Stepper || testMode == TestMode::Homing) ? "STEPPER_MODE_ACTIVE" :
       interlocks.requestOutput(static_cast<uint8_t>(output), state == 1, millis());
     applyOutputs();
     if (error) {
@@ -446,15 +457,14 @@ void handleCommand(char *command) {
     } else if (outputsArmed || testMode != TestMode::None) {
       Serial.println("BENCH_ERROR,CODE:DISARM_FIRST");
     } else if (configure) {
-      if (digitalRead(HOME_PIN) != HIGH ||
-          digitalRead(CL57T_ALARM_PIN) != second || !interlocks.readyToArm()) {
+      if (digitalRead(CL57T_ALARM_PIN) != second || !interlocks.readyToArm()) {
         Serial.println("BENCH_ERROR,CODE:X_CONFIG_NOT_READY");
       } else { xEnableLevel = first; xAlarmNormal = second; xConfigured = true; }
     } else {
       digitalWrite(X_STEP_PIN, LOW);
       digitalWrite(X_DIR_PIN, first);
       digitalWrite(X_ENABLE_PIN, second);
-      xConfigured = false;
+      xConfigured = false; xPositionKnown = false;
     }
     publishX();
   } else if (strcmp(command, "XARM 1") == 0) {
@@ -474,10 +484,26 @@ void handleCommand(char *command) {
   } else if (strcmp(command, "XDISABLE") == 0) {
     stopTests(); applyOutputs();
     digitalWrite(X_ENABLE_PIN, HIGH);  // confirmed active LOW driver
-    xConfigured = false;
+    xConfigured = false; xPositionKnown = false;
     xHomeVerified = xHomeSeenActive = false;
     xHomeActive = bench::StableAssertion{};
     xHomeInactive = bench::StableAssertion{};
+    publishOutputs(); publishSafety(); publishX();
+  } else if (startsWith(command, "XHOME ")) {
+    int pulses = 0; char extra = '\0';
+    if (sscanf(command + 6, "%d %c", &pulses, &extra) != 1 || pulses < 1 || pulses > carriage::Homing::MaxSearch) {
+      commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_HOME_LIMIT");
+    } else if (outputsArmed || testMode != TestMode::None || !xConfigured ||
+               digitalRead(CL57T_ALARM_PIN) != xAlarmNormal || !interlocks.readyToArm()) {
+      Serial.println("BENCH_ERROR,CODE:HOME_NOT_READY");
+    } else if (interlocks.arm(millis()) && xHoming.start(pulses, digitalRead(HOME_PIN) == LOW, millis())) {
+      xPositionKnown = false; xHomeOffset = 0; xRemaining = 0;
+      testMode = TestMode::Homing; ++xMoveId;
+      xArmAt = xLastStepAt = millis();
+      digitalWrite(X_ENABLE_PIN, xEnableLevel);
+      digitalWrite(X_DIR_PIN, xHoming.direction() == 1 ? HIGH : LOW);
+      xNextPulseUs = micros() + 200000;
+    }
     publishOutputs(); publishSafety(); publishX();
   } else if (startsWith(command, "XJOG ")) {
     int direction = 0, pulses = 0; char extra = '\0';
@@ -525,6 +551,7 @@ void handleCommand(char *command) {
         delayMicroseconds(5);  // driver requires >=1us pulse width
         digitalWrite(X_STEP_PIN, LOW);
         xCommandedSteps += direction;
+        if (xPositionKnown) xHomeOffset += direction;
         ++xMoveId;
         xLastStepAt = millis();
         xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
@@ -554,10 +581,44 @@ void __attribute__((noinline)) serviceXJog() {
   delayMicroseconds(5);
   digitalWrite(X_STEP_PIN, LOW);
   xCommandedSteps += xDirection;
+  if (xPositionKnown) xHomeOffset += xDirection;
   --xRemaining;
   xLastStepAt = millis();
   xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
   if (!xRemaining) { publishOutputs(); publishSafety(); publishX(); }
+}
+
+void __attribute__((noinline)) serviceXHome() {
+  if (testMode != TestMode::Homing || !outputsArmed) return;
+  updateSafety();
+  if (testMode != TestMode::Homing || !outputsArmed) return;
+  const auto previousStage = xHoming.stage;
+  const bool wasLatched = xHoming.referenceLatched;
+  xHoming.observe(digitalRead(HOME_PIN) == LOW, millis());
+  if (!wasLatched && xHoming.referenceLatched) xHomeOffset = 0;
+  if (xHoming.failed()) {
+    xPositionKnown = false;
+    interlocks.trip(bench::Fault::HomingFailed, millis());
+    updateSafety(); publishOutputs(); publishSafety(); publishX(); return;
+  }
+  if (xHoming.done()) {
+    xPositionKnown = true;
+    stopTests(); publishOutputs(); publishSafety(); publishX(); return;
+  }
+  if (previousStage != xHoming.stage) {
+    digitalWrite(X_DIR_PIN, xHoming.direction() == 1 ? HIGH : LOW);
+    const uint32_t directionReady = micros() + 10;
+    if (static_cast<int32_t>(xNextPulseUs - directionReady) < 0) xNextPulseUs = directionReady;
+    publishX();
+  }
+  if (static_cast<uint32_t>(millis() - xArmAt) < 200 ||
+      !xHoming.wantsPulse(digitalRead(HOME_PIN) == LOW) ||
+      static_cast<int32_t>(micros() - xNextPulseUs) < 0) return;
+  digitalWrite(X_STEP_PIN, HIGH); delayMicroseconds(5); digitalWrite(X_STEP_PIN, LOW);
+  xCommandedSteps += xHoming.direction();
+  if (xHoming.referenceLatched) xHomeOffset += xHoming.direction();
+  xHoming.pulsed(millis()); xLastStepAt = millis();
+  xNextPulseUs = micros() + xHoming.intervalUs();
 }
 
 void readSerialCommands() {
@@ -626,6 +687,7 @@ void loop() {
   updateSafety();
   readSerialCommands();
   serviceXJog();
+  serviceXHome();
   const uint32_t now = millis();
   updateSafety();
   if (now - lastInputAt >= INPUT_INTERVAL_MS) {

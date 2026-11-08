@@ -13,7 +13,7 @@ struct Inputs {
 };
 
 enum class Fault { None, DoorOpen, PositionConflict, PositionLost, Watchdog, MaxOn,
-                   DownTimeout, ReturnTimeout, DriverAlarm, HomeLimit, Command };
+                   DownTimeout, ReturnTimeout, DriverAlarm, HomeLimit, HomingFailed, Command };
 enum class Travel { Idle, Down, Return };
 
 struct StableAssertion {
@@ -150,6 +150,7 @@ class Interlocks {
       case Fault::ReturnTimeout: return "RETURN_TIMEOUT";
       case Fault::DriverAlarm: return "DRIVER_ALARM";
       case Fault::HomeLimit: return "HOME_LIMIT";
+      case Fault::HomingFailed: return "HOME_FAILED";
       case Fault::Command: return "COMMAND";
       default: return "NONE";
     }

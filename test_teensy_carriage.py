@@ -27,7 +27,8 @@ class FakeSerial:
 def packet(panel, **changes):
     fields = dict(ARMED=0, CONFIGURED=0, READY=0, HOME_VERIFIED=0, HOME_RAW=1,
                   ALARM_RAW=1, STEP=0, DIR=0, ENA=1, MAX_JOG=254, RATE_PPS=40, JOG_READY=0, REMAINING=0,
-                  POS_STEPS=0, MOVE_ID=0, UP_MS=1000, CAL_SPI="127.12", FAULT="NONE")
+                  POS_STEPS=0, MOVE_ID=0, UP_MS=1000, CAL_SPI="127.12", FAULT="NONE",
+                  POS_KNOWN=0, HOME_OFFSET=0, HOME_REF="160.5", HOME_STATE="IDLE", HOME_ERROR="NONE")
     fields.update(changes)
     if fields["ARMED"] == 1 and "JOG_READY" not in changes:
         fields["JOG_READY"] = 1
@@ -71,7 +72,7 @@ def run():
         assert p.configure_button.isEnabled()
         assert p.x["HOME_VERIFIED"] == "0", "A fresh restart must not require a Home trip"
         packet(p, HOME_RAW=0)
-        assert not p.configure_button.isEnabled(), "An active Home limit still blocks setup"
+        assert p.configure_button.isEnabled(), "Home setup must also work when already on its sensor"
         packet(p, HOME_RAW=1)
         assert p.configure_button.isEnabled()
         p.configure_button.click()
@@ -139,6 +140,41 @@ def run():
         packet(p, ARMED=1, CONFIGURED=1, HOME_VERIFIED=1, ENA=0, UP_MS=3000)
         packet(p, UP_MS=100)
         assert "restarted" in p.local_fault and not p.consent.isChecked()
+
+        # Homing: explicit bounded command, sensor expected active in-cycle,
+        # no jog overlap, completion is disarmed and only then referenced.
+        ready(p)
+        p.consent.setChecked(True)
+        packet(p, CONFIGURED=1, READY=1, HOME_RAW=0)
+        assert p.home_button.isEnabled() and not p.arm_button.isEnabled()
+        p.home_button.click()
+        assert wire.writes[-1] == "XHOME 254" and p.pending is not None
+        packet(p, ARMED=1, CONFIGURED=1, HOME_RAW=0, HOME_STATE="RELEASE", MOVE_ID=1, JOG_READY=0)
+        assert p.homing and not p.toward_home.isEnabled() and not p.home_button.isEnabled()
+        assert not p.home_search.isEnabled() and p.pending is None
+        p.tick()
+        assert wire.writes[-1] == "KEEPALIVE", "Expected Home assertion must not trip the PC watchdog"
+        assert "HOMING: RELEASE" in p.status.text()
+        packet(p, CONFIGURED=1, READY=1, HOME_STATE="DONE", MOVE_ID=1,
+               POS_KNOWN=1, HOME_OFFSET=-14)
+        assert "HOMED" in p.machine_position.text()
+        assert w.homed_label.text() == "HOMED"
+        assert abs(w.current_position - (160.5-14/127.12)) < 1e-8
+        assert not p.armed and wire.writes[-1] == "KEEPALIVE", "Completion must not auto-arm or jog"
+        packet(p, CONFIGURED=1, FAULT="DRIVER_ALARM", POS_KNOWN=0, HOME_STATE="DONE")
+        assert "UNKNOWN" in p.machine_position.text() and w.homed_label.text() == "NOT HOMED"
+        ready(p)
+        p.consent.setChecked(True)
+        packet(p, CONFIGURED=1, READY=1)
+        p.home_search.setValue(162)
+        p.home_button.click()
+        assert wire.writes[-1] == "XHOME 20593"
+        assert not w.send_command("XHOME 20595")
+        packet(p, ARMED=1, CONFIGURED=1, HOME_STATE="SEEK", MOVE_ID=1, JOG_READY=0)
+        p.stop()
+        assert wire.writes[-1] == "OFF" and not p.allowed("XHOME 254")
+        packet(p, HOME_STATE="CANCELLED")
+        assert "UNKNOWN" in p.machine_position.text() and not p.armed
 
         # Invalid packets and missing move ACKs fail closed.
         ready(p)

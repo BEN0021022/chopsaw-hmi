@@ -1,6 +1,6 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-08. The active implementation is **custom controller 0.9.0**,
+Updated 2026-11-08. The active implementation is **custom controller 0.10.0**,
 not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
@@ -16,9 +16,9 @@ close it before opening the main app on the same COM port.
 | Enable / holding | E / X | ARM sets verified LOW; XDISABLE stops and sets HIGH | Verified hardware via Axis Y En/D40; original X En unused |
 | Stop / cancel | M0 | OFF, XARM 0; heartbeat fallback | Implemented, native and app tests; physical stop/fault acceptance pending |
 | Driver setup / arming | Implicit enabled startup | Home input clear, explicit setup ACK and arm ACK; no sensor-trip ritual | No auto-enable/auto-arm on connect, reset or reconnect |
-| Position display | Encoder POS plus step estimate | POS_STEPS / 127.12; signed pulse-count displacement since boot | Clearly marked unreferenced; never used as blade distance |
+| Position display | Encoder POS plus step estimate | POS_STEPS displacement plus POS_KNOWN/HOME_OFFSET after Home | Homed coordinate only after completed Home; fault/release invalidation |
 | Closed-loop error | MEGA encoder/PID fields | CL57T closes loop; ALM on Halt/D14 | Alarm trips motion; real 7-flash fault traced to loose encoder wire and resolved |
-| Home | H, positive seek, home coordinate 160.5 in | Reserved controller state machine | NOT implemented; next carriage feature |
+| Home | H, positive seek, home coordinate 160.5 in | XHOME selected search limit; seek/release/backoff/slow latch/pull-off | Implemented in 0.10.0; physical acceptance pending |
 | Absolute length / load positions | S inches | Reserved, requires successful homing and position validity | NOT implemented; do not send MEGA S or prototype G-code |
 | Soft limits | Legacy target clamping | Requires homed coordinate and measured/confirmed envelope | Pending with homing |
 | Profiles / speed / acceleration | Z, A speed,accel | Fixed conservative 40 pulses/s for commissioning | Planner/acceleration and profile migration pending |
@@ -50,7 +50,7 @@ and no homed coordinate is inferred from a clear input.
 
 1. Keep saw mains unplugged, valve supply disconnected and air isolated. Keep
    suspect INA/MCP disconnected. Launch `python main.py`, select Teensy Carriage,
-   choose the Teensy COM port and connect. Verify firmware 0.9.0 telemetry.
+   choose the Teensy COM port and connect. Verify firmware 0.10.0 telemetry.
 2. Check Home sensor is inactive (no trip/release sequence is required). Door closed, saw UP only,
    driver green ON/red OFF, alarm raw HIGH. Confirm isolation/driver checks.
 3. Confirm driver setup. Wait for controller acknowledgment, then ARM MANUAL CONTROL.
@@ -65,12 +65,14 @@ and no homed coordinate is inferred from a clear input.
 
 ## Next controller/app slice
 
-Implement a bounded Home seek/release/slow-latch sequence in the known B
-home direction, with travel/time limits, sensor-stuck checks and cancellation.
-Recover legacy 160.5-inch home reference but verify physical reference before
-using it as blade distance. Only then add homed position validity, soft limits,
-absolute inch moves, load positions and acceleration/profiles. Alarm or driver
-release must invalidate position and require rehoming before absolute moves.
+Bounded Home is implemented; follow [homing commissioning](HOMING_COMMISSIONING.md)
+for the first physical test. The recovered 160.5-inch reference is at the slow
+sensor latch; final pull-off is included in the displayed position. Accept
+repeatability and physical reference, then add soft limits, absolute inch moves,
+load positions and acceleration/profiles. Alarm or driver release invalidates
+referenced position and requires homing before future absolute moves.
+See [remaining effort estimate](MIGRATION_EFFORT_ESTIMATE.md): roughly 12-24
+engineering hours plus physical acceptance/hardware time for the core workflow.
 
 After suppression is installed, validate individual air outputs with blade
 unplugged, define clamp retention/release on faults, then migrate the cut-list

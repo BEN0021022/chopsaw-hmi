@@ -1,7 +1,7 @@
 # Controller protocol
 
-Updated 2026-11-08. Current main-app controller firmware **0.9.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V3. 115200 baud,
+Updated 2026-11-08. Current main-app controller firmware **0.10.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V4. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
@@ -11,12 +11,12 @@ Main-app motion requires all of:
 
 ```
 PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
-X_APP:CARRIAGE_V3,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
+X_APP:CARRIAGE_V4,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
 INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
-INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY
+INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12,MAX_JOG:254,RATE_PPS:40,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
 ```
 
-Firmware version is currently 0.9.0. Reads HELLO, PINMAP and STATUS are sent on
+Firmware version is currently 0.10.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.
@@ -26,9 +26,10 @@ is older than two seconds. Firmware is authoritative if the PC stops responding.
 | Command | Meaning |
 |---|---|
 | HELLO / PINMAP / STATUS / PING | Read identity, assignments or telemetry |
-| XCONFIG 0 1 | Store verified enabled-LOW and healthy-alarm-HIGH profile in RAM; requires Home inactive, healthy alarm, door closed and saw UP; no trip/release prerequisite |
+| XCONFIG 0 1 | Store verified enabled-LOW and healthy-alarm-HIGH profile in RAM; requires healthy alarm, door closed and saw UP; no trip/release prerequisite; Home may be active for homing |
 | XARM 1 | Arm manual Stepper mode, set verified ENA; no STEP emitted; requires fresh ready state |
 | XJOG -1 n / XJOG 1 n | Queue one bounded jog, 1-254 pulses per click; A/-1/LOW toward saw, B/+1/HIGH toward Home |
+| XHOME n | Explicitly arm/start bounded homing; initial search 1-20594 pulses, main UI default 254 (~2 in); must be disarmed/configured; Home may start active |
 | KEEPALIVE | Refresh the 1.5-second controller watchdog while armed |
 | OFF / XARM 0 | Cancel all remaining pulses, turn pneumatic outputs OFF, disarm; retains motor holding level |
 | XDISABLE | Stop/disarm then ENA HIGH; clears setup; no Home-trip requirement or inferred position |
@@ -47,14 +48,16 @@ Stock grblHAL commands and legacy S/M/H/C/V/K commands are blocked in this mode.
 ## Telemetry
 
 ```
-BENCH_X,ARMED:0,CONFIGURED:0,READY:0,HOME_VERIFIED:0,HOME_RAW:1,ALARM_RAW:1,STEP:0,DIR:0,ENA:1,MAX_JOG:254,RATE_PPS:40,JOG_READY:0,REMAINING:0,POS_STEPS:0,POS_KNOWN:0,CAL_SPI:127.12,MOVE_ID:0,UP_MS:1234,FAULT:NONE
+BENCH_X,ARMED:0,CONFIGURED:0,READY:0,HOME_VERIFIED:0,HOME_RAW:1,ALARM_RAW:1,STEP:0,DIR:0,ENA:1,MAX_JOG:254,RATE_PPS:40,JOG_READY:0,REMAINING:0,POS_STEPS:0,POS_KNOWN:0,HOME_OFFSET:0,HOME_REF:160.5,HOME_STATE:IDLE,HOME_ERROR:NONE,CAL_SPI:127.12,MOVE_ID:0,UP_MS:1234,FAULT:NONE
 BENCH_SAFETY,DOOR_CLOSED:1,SAW_POSITION:UP,READY:1,RESET_READY:1,FAULT:NONE,BLOCKER:NONE
 BENCH_INPUTS,SEQ:42,HOME:1,BOARD_EDGE:1,FENCE_DOOR:0,CL57T_ALM:1,SAW_UP:0,SAW_DOWN:1,FENCE_CLOSED:0,OUTFEED:1
 ```
 
 - X, safety and direct inputs publish every 200ms and on relevant commands/faults.
 - POS_STEPS is signed commanded displacement since boot: positive toward Home.
-  POS_KNOWN is always 0 in this version; no homed absolute position is claimed.
+  POS_KNOWN becomes 1 only after completed bounded Home and pull-off. Machine
+  position is HOME_REF (160.5 inches) + HOME_OFFSET / 127.12; offset zero is
+  the slow-latched sensor reference. It becomes unknown on faults/release/reboot.
 - MOVE_ID increments only on accepted motion commands, allowing the HMI to
   distinguish acknowledgment from stale pre-command telemetry. A missing move
   acknowledgment after one second causes OFF and a local fault.
@@ -66,8 +69,9 @@ BENCH_INPUTS,SEQ:42,HOME:1,BOARD_EDGE:1,FENCE_DOOR:0,CL57T_ALM:1,SAW_UP:0,SAW_DO
   and the firmware heartbeat watchdog still disarm and cancel all remaining pulses.
 - A controller uptime decrease revokes main-app consent. Boot clears all setup.
 - HOME_CHECK:LEVEL_ONLY means manual setup/arm does not depend on HOME_VERIFIED.
-  The historical transition flag may still be reported for diagnostics. A clear
-  Home input is required; an asserted input still blocks and trips manual motion.
+  The historical transition flag may still be reported for diagnostics. Home
+  must be clear for manual ARM/jogs. In homing mode assertions/releases are
+  expected and handled by the bounded sequence; global safety checks remain active.
   Neither state establishes a homed machine position.
 - Inputs are raw levels, active LOW for the assigned switches; driver alarm
   raw HIGH is the physically verified healthy state. This wiring cannot detect
@@ -88,3 +92,14 @@ Pneumatic testing additionally enforces one output at a time, 5s maximum ON,
 and down/return timeouts. RESET never clears an unsafe condition or arms.
 Suppression, fusing, guarding and independent hazardous-energy controls remain
 hardware requirements. No pneumatic or blade ON is exposed by the main app yet.
+
+## Bounded homing extension
+
+HOME_STATE is IDLE, SEEK, RELEASE, BACKOFF, LATCH, PULL_RELEASE, PULL_OFF,
+DONE, FAILED or CANCELLED. Homing publishes ARMED=1 but JOG_READY=0; the app
+keeps heartbeat alive during expected Home assertions and blocks manual jogs.
+Initial seek and release run at 40 pulses/s; slow latch at 10. A successful
+cycle publishes POS_KNOWN=1 then disarms. No automatic next move or rearm.
+HOME_ERROR distinguishes NOT_FOUND, LATCH_NOT_FOUND, STUCK_ACTIVE, RETRIGGERED,
+TIMEOUT and cancellation. Global faults remain in FAULT; failed homing uses
+HOME_FAILED. See [homing commissioning](HOMING_COMMISSIONING.md) for all bounds.

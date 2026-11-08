@@ -181,11 +181,14 @@ class LegacyMegaBackend(ControllerBackend):
 class TeensyCarriageBackend(ControllerBackend):
     key = TEENSY_CARRIAGE
     label = "Teensy Carriage"
-    capabilities = ControllerCapabilities(carriage_jog_ready=True, motion_commands=True)
+    capabilities = ControllerCapabilities(carriage_jog_ready=True, motion_commands=True, homing_commands=True)
 
     def startup_commands(self):
         # Reads only. A connect never configures, arms or enables the driver.
         return ["HELLO", "PINMAP", "STATUS"]
+
+    def home(self):
+        return ["XHOME 254"]
 
     def stop_motion(self):
         return ["OFF"]

@@ -67,3 +67,26 @@ boot without any Home transition and also verify active-limit rejection.
 The manual-controller suite now passes 111 checks, including a long-armed-idle
 microsecond timing regression. Operator confirmation in the reopened app remains
 pending. No arm/jog/enable was sent by the agent during this update.
+
+## Homing update: controller 0.10.0
+
+User confirmed manual motion testing passed before this update. Implemented
+bounded XHOME with default two-inch initial search, start-on-sensor release,
+backoff, slow latch, release and pull-off. Success establishes the recovered
+160.5-inch sensor reference and disarms; displayed position accounts for the
+pull-off. Interruptions/faults/reboot/motor release invalidate position.
+
+Validation: 83 policy, 87 frozen-bench, 112 manual-controller and 209 homing
+policy/sketch checks passed. Main-app/Qt, backend and capability-boundary tests
+passed; legacy simulator/manual/full-cycle regressions passed. Layout rendered
+and inspected at 1280x900, dark scrollable content and fixed STOP controls.
+Arduino compile passed; flashed/read back on COM4, correct homing identity,
+Home IDLE, unconfigured/disarmed, unknown position and no queued motion.
+Main app reopened and accepted fresh telemetry with search default 2.00 inches.
+No HOME/arm/jog/enable command was sent by the agent. User confirmed driver
+power OFF and saw/valve/air isolation before flashing.
+
+Pending physical acceptance: first bounded Home from near sensor, repeatability,
+reference correctness, stop and failure behavior. Absolute moves remain blocked.
+Operator instructions: HOMING_COMMISSIONING.md. Remaining rough effort estimate:
+MIGRATION_EFFORT_ESTIMATE.md (12-24 active hours plus physical/hardware time).
