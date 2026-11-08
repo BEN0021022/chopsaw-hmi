@@ -9,6 +9,7 @@ from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -33,6 +34,9 @@ RED = "#ef4444"
 AMBER = "#f59e0b"
 BLUE = "#2563eb"
 SLATE = "#475569"
+OUTPUT_MAP_ID = "AUX2_AUX1_FLOOD"
+INPUT_MAP_ID = "DOOR29_UP22_DOWN16"
+INTERLOCK_ID = "DOOR_POSITION_V1"
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,7 @@ class SensorDefinition:
     label: str
     connection: str
     pin: str
+    polarity_settings_key: str | None = None
 
 
 DIRECT_SENSORS = (
@@ -48,16 +53,16 @@ DIRECT_SENSORS = (
     SensorDefinition("BOARD_EDGE", "Board Edge", "Limit Y", "D21"),
     SensorDefinition("FENCE_DOOR", "Fence / Guard Door", "Door", "D29"),
     SensorDefinition("CL57T_ALM", "CL57T Alarm", "Halt", "D14"),
-    SensorDefinition("SAW_UP", "Saw Fully Up", "ST0", "D36"),
-    SensorDefinition("SAW_DOWN", "Saw Fully Down", "ST1", "D30"),
+    SensorDefinition("SAW_UP", "Saw Fully Up", "Limit Z", "D22", "polarity/SAW_UP/D22"),
+    SensorDefinition("SAW_DOWN", "Saw Fully Down", "Fd/Hld", "D16", "polarity/SAW_DOWN/D16"),
     SensorDefinition("FENCE_CLOSED", "Fence Closed", "ST2", "D34"),
     SensorDefinition("OUTFEED", "Outfeed Position", "ST3", "D35"),
 )
 
 PNEUMATIC_OUTPUTS = (
-    (0, "Saw Cylinder (verify OFF = UP)", "AUX0 TTL", "D31", "CLAMP1"),
+    (0, "Saw Cylinder (verify OFF = UP)", "AUX2 TTL", "D33", "CLAMP1"),
     (1, "Main Clamp - Left of Blade (verify OFF = RELEASED)", "AUX1 TTL", "D32", "CLAMP2"),
-    (2, "Spare Pneumatic Channel", "AUX2 TTL", "D33", "CLAMP3"),
+    (2, "Blade Trigger Air Valve (OFF = RELEASED)", "Flood TTL", "D19", "CLAMP3"),
 )
 
 
@@ -108,7 +113,9 @@ class SensorRow:
         # Active-low is the safe bench default for NPN/open-collector devices.
         # Every channel remains user-adjustable until its real device is proven.
         default = True
-        saved = settings.value(f"polarity/{definition.key}", default)
+        # Remapped opto inputs must not inherit polarity saved for ST buffers.
+        self.polarity_settings_key = definition.polarity_settings_key or f"polarity/{definition.key}"
+        saved = settings.value(self.polarity_settings_key, default)
         self.polarity.setChecked(str(saved).lower() not in {"false", "0", "no"})
         self.value: int | None = None
 
@@ -141,6 +148,15 @@ class SensorBenchWindow(QMainWindow):
         self._demo_seq = 0
         self.output_capable = False
         self.outputs_armed = False
+        self.controller_ready = False
+        self.controller_reset_ready = False
+        self.controller_fault = "NONE"
+        self.last_safety_at: float | None = None
+        self.x_capable = False
+        self.x_armed = False
+        self.x_fields: dict[str, str] = {}
+        self.x_last_at: float | None = None
+        self.x_dialog: QDialog | None = None
         self._stale_output_trip = False
 
         self._build_ui()
@@ -181,6 +197,9 @@ class SensorBenchWindow(QMainWindow):
         probe = QPushButton("Probe Hardware")
         probe.clicked.connect(self.probe_hardware)
         header.addWidget(probe)
+        x_test = QPushButton("X Stepper Test")
+        x_test.clicked.connect(self._show_x_dialog)
+        header.addWidget(x_test)
         self.connection_pill = _pill("DISCONNECTED", RED)
         self.connection_pill.setMinimumWidth(145)
         header.addWidget(self.connection_pill)
@@ -216,8 +235,8 @@ class SensorBenchWindow(QMainWindow):
         outer = QVBoxLayout(group)
 
         warning = QLabel(
-            "PNEUMATIC TEST: verify fused 12 V valve branches and confirm each power-OFF "
-            "direction before testing. Start at low pressure and use momentary controls only."
+            "LOGIC-ONLY TEST: disconnect valve 12 V power, isolate air, and unplug saw mains. "
+            "Controller checks do not replace independent guarding or emergency controls."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet(
@@ -225,11 +244,12 @@ class SensorBenchWindow(QMainWindow):
             "border-radius:9px; padding:8px; font-weight:800;"
         )
         outer.addWidget(warning)
+        self.interlock_pill = _pill("WAITING FOR CONTROLLER CHECKS", SLATE)
+        outer.addWidget(self.interlock_pill)
 
         controls = QHBoxLayout()
         self.output_confirmation = QCheckBox(
-            "Pressure is regulated low; cylinders are secured; travel and pinch zones are clear; "
-            "manual air dump is within reach"
+            "Valve 12V disconnected; air isolated; saw mains unplugged"
         )
         self.output_confirmation.toggled.connect(self._confirmation_changed)
         controls.addWidget(self.output_confirmation)
@@ -237,6 +257,9 @@ class SensorBenchWindow(QMainWindow):
         self.output_arm_button = QPushButton("ARM OUTPUT TEST")
         self.output_arm_button.clicked.connect(self._toggle_output_arm)
         controls.addWidget(self.output_arm_button)
+        self.output_reset_button = QPushButton("ACKNOWLEDGE FAULT")
+        self.output_reset_button.clicked.connect(self._reset_output_fault)
+        controls.addWidget(self.output_reset_button)
         self.output_all_off_button = QPushButton("ALL OFF")
         self.output_all_off_button.setProperty("class", "danger")
         self.output_all_off_button.clicked.connect(self._all_outputs_off)
@@ -364,16 +387,31 @@ class SensorBenchWindow(QMainWindow):
         self.link.open(str(port))
 
     def _on_connected(self, port: str) -> None:
+        self.x_capable = self.x_armed = False
+        self.x_fields = {}
+        self.x_last_at = None
         self.connect_button.setText("Disconnect")
         _set_pill(self.connection_pill, "CONNECTED", GREEN)
         self.teensy_card.set_state("WAITING", AMBER, f"Connected on {port}; waiting for telemetry")
         self.output_capable = False
         self.outputs_armed = False
+        self.controller_ready = False
+        self.controller_reset_ready = False
+        self.controller_fault = "NONE"
+        self.last_safety_at = None
+        _set_pill(self.interlock_pill, "WAITING FOR CONTROLLER CHECKS", SLATE)
         self._stale_output_trip = False
         self._refresh_output_controls()
         QTimer.singleShot(250, self.probe_hardware)
 
     def _on_disconnected(self, reason: str) -> None:
+        self.x_capable = self.x_armed = False
+        self.x_fields = {}
+        self.x_last_at = None
+        self.controller_ready = False
+        self.controller_reset_ready = False
+        self.last_safety_at = None
+        _set_pill(self.interlock_pill, "CONTROLLER OFFLINE", SLATE)
         self.connect_button.setText("Connect")
         _set_pill(self.connection_pill, "DISCONNECTED", RED)
         self.teensy_card.set_state("OFFLINE", RED, reason)
@@ -406,10 +444,42 @@ class SensorBenchWindow(QMainWindow):
     def _apply_message(self, message: ParsedMessage) -> None:
         fields = message.fields
         if message.kind == "BENCH_HELLO":
-            self.output_capable = parse_int(fields.get("TEST_OUTPUTS"), 0) == 3
+            self.x_capable = (fields.get("X_TEST") in {"BOUNDED_JOG_V1", "BOUNDED_JOG_V2"}
+                              and fields.get("X_MAP") == "STEP2_DIR3_EN40")
+            self.output_capable = (
+                parse_int(fields.get("TEST_OUTPUTS"), 0) == 3
+                and fields.get("OUTPUT_MAP") == OUTPUT_MAP_ID
+                and fields.get("INPUT_MAP") == INPUT_MAP_ID
+                and fields.get("INTERLOCKS") == INTERLOCK_ID
+                and fields.get("COMMISSIONING") in {"LOGIC_ONLY", "VALVES_ISOLATED"}
+            )
             capability = "3 guarded pneumatic outputs" if self.output_capable else "input telemetry only"
+            if not self.output_capable:
+                capability += " - firmware 0.4.1 with matching pin maps/interlocks required"
             detail = f"Firmware {fields.get('FW', '?')} | Protocol {fields.get('PROTO', '?')} | {capability}"
             self.teensy_card.set_state("HEALTHY", GREEN, detail)
+            self._refresh_output_controls()
+        elif message.kind == "BENCH_X":
+            self.x_fields = fields
+            self.x_last_at = time.monotonic()
+            self.x_armed = parse_int(fields.get("ARMED"), 0) == 1
+            self._refresh_output_controls()
+        elif message.kind == "BENCH_SAFETY":
+            self.last_safety_at = time.monotonic()
+            self.controller_ready = parse_int(fields.get("READY"), 0) == 1
+            self.controller_reset_ready = parse_int(fields.get("RESET_READY"), 0) == 1
+            self.controller_fault = fields.get("FAULT", "UNKNOWN")
+            position = fields.get("SAW_POSITION", "UNKNOWN")
+            blocker = fields.get("BLOCKER", "UNKNOWN").replace("_", " ")
+            if self.controller_fault != "NONE":
+                text, color = f"FAULT: {self.controller_fault.replace('_', ' ')} - reset required", RED
+            elif self.outputs_armed:
+                text, color = f"MANUAL TEST ARMED - saw {position}", AMBER
+            elif self.controller_ready:
+                text, color = "READY TO ARM - door closed, saw UP", GREEN
+            else:
+                text, color = f"NOT READY: {blocker} - saw {position}", AMBER
+            _set_pill(self.interlock_pill, text, color)
             self._refresh_output_controls()
         elif message.kind == "BENCH_HEALTH":
             self.last_health_at = time.monotonic()
@@ -460,18 +530,23 @@ class SensorBenchWindow(QMainWindow):
             _set_pill(pill, "HIGH / OFF" if high else "LOW / ON", SLATE if high else GREEN)
 
     def _polarity_changed(self, row: SensorRow) -> None:
-        self.settings.setValue(f"polarity/{row.definition.key}", row.polarity.isChecked())
+        self.settings.setValue(row.polarity_settings_key, row.polarity.isChecked())
         row.set_value(row.value)
 
     def _refresh_output_controls(self) -> None:
         connected = self.link.is_connected
         confirmed = self.output_confirmation.isChecked() if hasattr(self, "output_confirmation") else False
-        capable = connected and self.output_capable
-        self.output_arm_button.setEnabled(capable and (confirmed or self.outputs_armed))
+        fresh_safety = self.last_safety_at is not None and time.monotonic() - self.last_safety_at <= self.stale_after_seconds
+        capable = connected and self.output_capable and fresh_safety
+        self.output_arm_button.setEnabled(capable and not self.x_armed and (self.outputs_armed or (confirmed and self.controller_ready)))
         self.output_arm_button.setText("DISARM OUTPUTS" if self.outputs_armed else "ARM OUTPUT TEST")
-        self.output_all_off_button.setEnabled(capable)
+        self.output_all_off_button.setEnabled(connected)
+        self.output_reset_button.setEnabled(
+            capable and not self.outputs_armed and self.controller_reset_ready and self.controller_fault != "NONE"
+        )
         for button in self.output_buttons.values():
-            button.setEnabled(capable and confirmed and self.outputs_armed)
+            button.setEnabled(capable and confirmed and self.outputs_armed and not self.x_armed)
+        self._refresh_x_controls()
 
     def _confirmation_changed(self, confirmed: bool) -> None:
         if not confirmed and self.outputs_armed:
@@ -481,12 +556,16 @@ class SensorBenchWindow(QMainWindow):
     def _toggle_output_arm(self) -> None:
         if self.outputs_armed:
             self.link.send("ARM 0")
-        elif self.output_confirmation.isChecked():
+        elif self.output_confirmation.isChecked() and self.output_capable and self.controller_ready:
             self.link.send("ARM 1")
+
+    def _reset_output_fault(self) -> None:
+        if self.output_capable and not self.outputs_armed and self.controller_reset_ready:
+            self.link.send("RESET")
 
     def _set_pneumatic_output(self, output: int, energized: bool) -> None:
         # State pills change only when firmware echoes BENCH_OUTPUTS.
-        if energized and not (self.outputs_armed and self.output_confirmation.isChecked()):
+        if energized and not (self.output_capable and self.outputs_armed and self.output_confirmation.isChecked()):
             return
         self.link.send(f"OUT {output} {1 if energized else 0}")
 
@@ -494,7 +573,9 @@ class SensorBenchWindow(QMainWindow):
         self.link.send("OFF")
 
     def _send_output_keepalive(self) -> None:
-        if self.outputs_armed:
+        x_fresh = self.x_last_at is not None and time.monotonic() - self.x_last_at <= self.stale_after_seconds
+        if ((self.outputs_armed or (self.x_armed and x_fresh)) and self.output_capable and self.last_safety_at is not None
+                and time.monotonic() - self.last_safety_at <= self.stale_after_seconds):
             self.link.send("KEEPALIVE")
 
     def _set_all_output_pills_unknown(self) -> None:
@@ -505,19 +586,184 @@ class SensorBenchWindow(QMainWindow):
         if self.last_packet_at is None or not self.link.is_connected:
             return
         age = time.monotonic() - self.last_packet_at
-        if age > self.stale_after_seconds:
+        stale_safety = self.last_safety_at is not None and time.monotonic() - self.last_safety_at > self.stale_after_seconds
+        stale_x = self.x_armed and (self.x_last_at is None or time.monotonic() - self.x_last_at > self.stale_after_seconds)
+        if stale_safety:
+            self.controller_ready = False
+            self.controller_reset_ready = False
+            _set_pill(self.interlock_pill, "CONTROLLER CHECKS STALE", AMBER)
+            self._refresh_output_controls()
+        if age > self.stale_after_seconds or stale_safety or stale_x:
             self.teensy_card.set_state("STALE", AMBER, f"No telemetry for {age:.1f} seconds")
-            if self.outputs_armed and not self._stale_output_trip:
+            if (self.outputs_armed or self.x_armed) and not self._stale_output_trip:
                 self._stale_output_trip = True
                 self.link.send("OFF")
                 self.outputs_armed = False
+                self.x_armed = False
                 self._refresh_output_controls()
+
+    def _show_x_dialog(self) -> None:
+        if self.x_dialog is None:
+            self.x_dialog = QDialog(self)
+            self.x_dialog.setWindowTitle("X Stepper Test - bounded jog")
+            self.x_dialog.resize(760, 420)
+            layout = QVBoxLayout(self.x_dialog)
+            note = QLabel(
+                "Enable remapped to Axis Y En (D40); STEP/DIR stay on Axis X. "
+                "Keep saw unplugged, valve 12V disconnected, and air isolated. "
+                "No homing or calibrated travel. Direction A/B is unverified. Approximate inches use "
+                "127.1 pulses/inch; 254 pulses per arm, 40 pulses/second. Keep carriage clear and disconnect accessible."
+            )
+            note.setWordWrap(True)
+            layout.addWidget(note)
+            self.x_status = _pill("WAITING", SLATE)
+            layout.addWidget(self.x_status)
+            self.x_detail = QLabel()
+            self.x_detail.setWordWrap(True)
+            layout.addWidget(self.x_detail)
+            self.x_pin_confirmation = QCheckBox("Driver power OFF for output-pin voltage checks")
+            self.x_pin_confirmation.toggled.connect(self._refresh_x_controls)
+            layout.addWidget(self.x_pin_confirmation)
+            pin_row = QHBoxLayout()
+            self.x_level_buttons = []
+            for label, command in (("DIR 0 / ENA 1", "XLEVEL 0 1"), ("DIR 1 / ENA 0", "XLEVEL 1 0")):
+                button = QPushButton(label)
+                button.clicked.connect(lambda _checked=False, c=command: self.link.send(c))
+                self.x_level_buttons.append(button)
+                pin_row.addWidget(button)
+            layout.addLayout(pin_row)
+            instruction = QLabel(
+                "Before motion: trigger and release Limit X to verify its input. With STEP held LOW, "
+                "verify which ENA level gives holding torque and measure the healthy alarm raw level "
+                "while driver green is ON and red is OFF. Set SW6 OFF (closed loop), SW7 OFF (PUL/DIR)."
+            )
+            instruction.setWordWrap(True)
+            layout.addWidget(instruction)
+            config_row = QHBoxLayout()
+            self.x_enable_combo, self.x_alarm_combo = QComboBox(), QComboBox()
+            for combo, title in ((self.x_enable_combo, "Verified enable level"), (self.x_alarm_combo, "Measured healthy alarm")):
+                combo.addItem(title, None)
+                combo.addItem("LOW (0)", 0)
+                combo.addItem("HIGH (1)", 1)
+                combo.currentIndexChanged.connect(self._refresh_x_controls)
+                config_row.addWidget(combo)
+            self.x_config_button = QPushButton("Confirm driver setup")
+            self.x_config_button.clicked.connect(self._configure_x)
+            config_row.addWidget(self.x_config_button)
+            layout.addLayout(config_row)
+            self.x_confirmation = QCheckBox("Driver settings, healthy status, clear travel, and isolation verified")
+            self.x_confirmation.toggled.connect(self._x_confirmation_changed)
+            layout.addWidget(self.x_confirmation)
+            self.x_increment_combo = QComboBox()
+            for label, pulses in (("1 pulse", 1), ("~0.1 inch (13 pulses)", 13),
+                                  ("~0.5 inch (64 pulses)", 64), ("~1 inch (127 pulses)", 127)):
+                self.x_increment_combo.addItem(label, pulses)
+            self.x_increment_combo.setCurrentIndex(1)
+            self.x_increment_combo.currentIndexChanged.connect(self._refresh_x_controls)
+            layout.addWidget(self.x_increment_combo)
+            actions = QHBoxLayout()
+            self.x_arm_button = QPushButton("ARM ~2-INCH BUDGET")
+            self.x_arm_button.clicked.connect(self._toggle_x_arm)
+            actions.addWidget(self.x_arm_button)
+            self.x_step_buttons = []
+            for label, direction in (("A: move", -1), ("B: move", 1)):
+                button = QPushButton(label)
+                button.setAutoRepeat(False)
+                button.clicked.connect(lambda _checked=False, d=direction: self._move_x(d))
+                self.x_step_buttons.append(button)
+                actions.addWidget(button)
+            stop = QPushButton("ALL OFF")
+            stop.clicked.connect(self._all_outputs_off)
+            actions.addWidget(stop)
+            reset = QPushButton("ACKNOWLEDGE FAULT")
+            reset.clicked.connect(self._reset_output_fault)
+            actions.addWidget(reset)
+            layout.addLayout(actions)
+            self.x_dialog.finished.connect(self._close_x_test)
+        self._refresh_x_controls()
+        self.x_dialog.show()
+        self.x_dialog.raise_()
+        self.x_dialog.activateWindow()
+
+    def _close_x_test(self, _result: int) -> None:
+        if self.x_armed:
+            self.link.send("OFF")
+        self.x_confirmation.setChecked(False)
+        self.x_pin_confirmation.setChecked(False)
+
+    def _refresh_x_controls(self, *_args) -> None:
+        if self.x_dialog is None:
+            return
+        fresh = self.x_last_at is not None and time.monotonic() - self.x_last_at <= self.stale_after_seconds
+        safety_fresh = self.last_safety_at is not None and time.monotonic() - self.last_safety_at <= self.stale_after_seconds
+        capable = self.link.is_connected and self.output_capable and self.x_capable and fresh and safety_fresh
+        idle = not self.x_armed and not self.outputs_armed
+        confirmed = self.x_confirmation.isChecked()
+        ready = parse_int(self.x_fields.get("READY"), 0) == 1
+        home_ok = parse_int(self.x_fields.get("HOME_VERIFIED"), 0) == 1
+        fault = self.x_fields.get("FAULT", "NONE")
+        budget = self.x_fields.get("BUDGET", "0")
+        remaining = parse_int(self.x_fields.get("REMAINING"), 0)
+        moving = remaining > 0
+        text = "Firmware 0.6.0 bounded jog / Axis Y enable map required" if not capable else (
+            f"FAULT: {fault}" if fault != "NONE" else
+            f"MOVING: {remaining} pulses left in jog | budget {budget}" if moving and self.x_armed else
+            f"ARMED: {budget} pulses remaining in budget" if self.x_armed else
+            "READY TO ARM" if ready else "NOT READY - verify Home, driver setup, door and saw UP"
+        )
+        _set_pill(self.x_status, text, RED if fault != "NONE" else AMBER if not ready else GREEN)
+        self.x_detail.setText(" | ".join(f"{key}: {self.x_fields.get(key, '?')}" for key in
+                                         ("HOME_RAW", "HOME_VERIFIED", "ALARM_RAW", "STEP", "DIR", "ENA")))
+        self.x_pin_confirmation.setEnabled(idle)
+        self.x_enable_combo.setEnabled(idle)
+        self.x_alarm_combo.setEnabled(idle)
+        for button in self.x_level_buttons:
+            button.setEnabled(capable and idle and self.x_pin_confirmation.isChecked())
+        selected = self.x_enable_combo.currentData() is not None and self.x_alarm_combo.currentData() is not None
+        self.x_config_button.setEnabled(capable and idle and confirmed and selected and home_ok and self.controller_ready)
+        self.x_arm_button.setText("DISARM STEPPER" if self.x_armed else "ARM ~2-INCH BUDGET")
+        self.x_arm_button.setEnabled(capable and not self.outputs_armed and (self.x_armed or (confirmed and ready)))
+        self.x_increment_combo.setEnabled(not moving)
+        increment = int(self.x_increment_combo.currentData() or 1)
+        for button in self.x_step_buttons:
+            button.setEnabled(capable and confirmed and self.x_armed and not moving
+                              and parse_int(budget, 0) >= increment)
+
+    def _x_confirmation_changed(self, checked: bool) -> None:
+        if checked:
+            self.x_pin_confirmation.setChecked(False)
+        elif self.x_armed:
+            self.link.send("OFF")
+        self._refresh_x_controls()
+
+    def _configure_x(self) -> None:
+        enable, alarm = self.x_enable_combo.currentData(), self.x_alarm_combo.currentData()
+        if enable in (0, 1) and alarm in (0, 1) and self.x_confirmation.isChecked():
+            self.link.send(f"XCONFIG {enable} {alarm}")
+
+    def _move_x(self, direction: int) -> None:
+        if not self.x_armed or not self.x_confirmation.isChecked():
+            return
+        if parse_int(self.x_fields.get("REMAINING"), 0):
+            return
+        pulses = int(self.x_increment_combo.currentData() or 1)
+        if pulses > parse_int(self.x_fields.get("BUDGET"), 0):
+            return
+        for button in self.x_step_buttons:
+            button.setEnabled(False)  # wait for controller telemetry; firmware rejects queued jogs
+        self.link.send(f"XSTEP {direction}" if pulses == 1 else f"XJOG {direction} {pulses}")
+
+    def _toggle_x_arm(self) -> None:
+        if self.x_armed:
+            self.link.send("XARM 0")
+        elif self.x_confirmation.isChecked() and parse_int(self.x_fields.get("READY"), 0) == 1:
+            self.link.send("XARM 1")
 
     def start_demo(self) -> None:
         _set_pill(self.connection_pill, "DEMO MODE", BLUE)
         self.connect_button.setEnabled(False)
         self.port_combo.setEnabled(False)
-        self.handle_line("BENCH_HELLO,PROTO:2,FW:demo,BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:0,TEST_OUTPUTS:3")
+        self.handle_line("BENCH_HELLO,PROTO:2,FW:demo,BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:0,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:LOGIC_ONLY")
         self._demo_timer = QTimer(self)
         self._demo_timer.setInterval(600)
         self._demo_timer.timeout.connect(self._demo_tick)
@@ -526,6 +772,7 @@ class SensorBenchWindow(QMainWindow):
     def _demo_tick(self) -> None:
         self._demo_seq += 1
         bit = self._demo_seq % 2
+        self.handle_line("BENCH_SAFETY,DOOR_CLOSED:1,SAW_POSITION:UP,READY:1,RESET_READY:1,FAULT:NONE,BLOCKER:NONE")
         self.handle_line(
             f"BENCH_HEALTH,SEQ:{self._demo_seq},UP_MS:{self._demo_seq * 600},"
             "MCP_ACK:1,MCP_IO:1,INA_ACK:1,INA_ID:1,INA_MFG:0x5449,INA_DEV:0x228"

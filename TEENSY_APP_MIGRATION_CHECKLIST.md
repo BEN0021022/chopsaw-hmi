@@ -1,326 +1,124 @@
-# Chop Saw HMI — Six-Stage Hardware and Software Roadmap
+# Teensy app and firmware migration checklist
 
-Project root: `C:\Users\bensc\Projects\ChopSawHMI`
+Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
+Active firmware: custom **0.7.0** in `firmware/chopsaw_controller`.
+Main app mode: **Teensy Carriage**. The breakout is a grblHAL-compatible board;
+the currently flashed firmware is custom, not stock grblHAL.
 
-Goal: preserve the known-good Arduino Mega workflow while building a safe,
-documented Teensy/grblHAL electronics stack for motion, sensors, pneumatic
-clamps, automatic actuator control, and INA228 current monitoring.
+`[x]` means implemented or observed as explicitly described. Software tests do
+not establish physical machine safety or production-cutting readiness.
+See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 
-Legend:
+## Stage 1 - Preserve the baseline and establish the Teensy workspace
 
-- `[x]` complete in the current working tree
-- `[ ]` still required
-- **Gate** means later work must not proceed until the gate is satisfied
+- [x] Move active development out of OneDrive into Projects/ChopSawHMI-Teensy.
+- [x] Preserve the MEGA-compatible HMI in sibling ChopSawHMI, commit 97255b8,
+      tag legacy-mega-last-working-2026-11-06. MEGA is retired from live selection.
+- [x] Recover the actual MEGA V2.5 firmware and preserve it byte-for-byte under
+      archive/legacy-mega-v2.5, with original path and SHA-256.
+- [x] Recover 127.12 pulses/inch at full stepping; corroborate in V2.6 migration
+      notes. Keep calibration provenance separate from the HMI's old 127.0 default.
+- [x] Retain the offline simulator, cut-list editing/import and legacy command
+      translation for simulation only. Existing simulated cutting cycle passes.
+- [x] Preserve the integrated app/firmware software milestone in a local Git checkpoint.
+- [ ] Back up that checkpoint to GitHub and create a reviewed release when ready.
+      A local checkpoint is not a published release or remote backup.
 
-## Design rules that apply to every stage
+## Stage 2 - Capability boundaries and controller-owned interlocks
 
-- [x] Keep Legacy Mega and the simulator available during migration.
-- [x] Default automatic clamp/saw control to OFF.
-- [x] Treat unsupported controller operations as blocked, not successful.
-- [ ] Keep emergency stop, driver disable, actuator direction exclusion,
-  pneumatic dump, and guarding independent of the Windows application.
-- [ ] Define safe power-up, disconnect, watchdog-timeout, and reboot states for
-  every physical output before connecting a load. Clamp-test D31-D33 now have
-  these controls in firmware; physical validation and all other outputs remain.
-- [ ] Never assign a Teensy pin until the exact Teensy, breakout/carrier board,
-  grblHAL board map, voltage domain, and boot behavior are documented.
-- [ ] Preserve spare protected inputs, outputs, I2C capacity, and connector
-  positions for future sensors.
+- [x] Add backend capabilities; unsupported live operations cannot silently fall
+      back to MEGA commands. Diagnostics and grblHAL prototype stay operationally locked.
+- [x] Add the Teensy Carriage backend and native main-app tab on one COM connection.
+- [x] Require exact firmware protocol, board, input/output/motion maps and calibration
+      before main-app motion. Connect is reads only; no configure/enable/arm on connect.
+- [x] Guard every main-app serial write in Carriage mode; reject legacy motion,
+      PID, clamp/saw, G-code, raw output and voltage-test commands.
+- [x] Require explicit isolation/driver confirmation, verified Home-input transition,
+      setup acknowledgment and arm acknowledgment before a jog can be requested.
+- [x] Controller-side door, saw-UP/conflicting endpoints, Home and driver alarm checks;
+      first fault latched, cancellation of pending pulses, no automatic resume.
+- [x] Firmware 1.5s heartbeat timeout, app stale-telemetry/reboot/identity-change handling,
+      stop before disconnect/close, explicit fault ACK separate from arm.
+- [x] Count/queue/budget/timing/cancellation/rollover tests against real C++ sketch
+      code with mock hardware; Qt tests cover app write boundaries and stale ACKs.
+- [ ] Physically accept controlled stop, door, alarm, limit, USB-loss and PC-loss
+      responses on the complete carriage setup. Firmware/UI tests are not that acceptance.
+- [ ] Confirm independent guarding, E-stop/hazardous-energy isolation and mechanical
+      outcomes on electrical/air loss. These are not provided by the PC software.
 
-## Stage 1 — Stabilize, document, and checkpoint the baseline
+## Stage 3 - Verified hardware and wiring recovery
 
-### Repository and reproducibility
+- [x] Identify Teensy 4.1 + T41U5XBB V2.20; replace damaged Teensy.
+- [x] External regulated 5V and USB power blocker validated by user; logic rail readings good.
+- [x] Door D29, saw UP Limit Z/D22, saw DOWN Fd/Hld/D16 work. Retire Cyc/St/D17 path.
+- [x] Board-edge Banner sensor on Limit Y/D21 and Home input on Limit X/D20 tested.
+- [x] AUX2 TTL/D33 saw travel, AUX1 TTL/D32 main clamp, Flood TTL/D19 blade trigger
+      MOSFET indicator tests pass. AUX0/D31 is retired pending fault investigation.
+- [x] X STEP/D2 and DIR/D3 validated. X En path stays 4.85V unloaded at both states;
+      leave it unused. Remap X enable to Axis Y En/D40; voltage switching verified.
+- [x] Driver 5V selector, SW1-SW4 all ON, SW6/SW7 OFF confirmed; enabled LOW,
+      healthy ALM HIGH on Halt/D14. ALM common ground verified.
+- [x] Seven-flash following fault traced to a loose encoder connection; secured wire
+      and user confirmed motion. A toward saw; B toward Home.
+- [x] INA228 and suspect MCP23017 quarantined/disconnected. Current sensing deferred.
+- [ ] Install/verify coil suppression diodes, polarity, branch fuses, wiring and labels.
+- [ ] Review full power/wiring/BOM documents against the recovered physical build;
+      some historical inventory notes still describe the old I2C/power arrangement.
+- [ ] Diagnose/replace suspect buffer/input paths separately; ST0/ST1 remain deferred.
 
-- [x] Move the active project out of OneDrive to the stable project path above.
-- [x] Remove stale project-name and old-path references.
-- [x] Confirm Git access and repository integrity.
-- [x] Preserve the existing GitHub remote.
-- [x] Add a project README with setup, test, build, mode, and safety notes.
-- [x] Add pinned Python dependencies in `requirements.txt`.
-- [x] Ignore local virtual environments and Python/test caches.
-- [ ] Review the complete working-tree diff as one migration checkpoint.
-- [ ] Commit and push the checkpoint to GitHub.
-- [ ] Build and tag a known-good Mega-compatible release before production
-  Teensy changes.
+## Stage 4 - Main-app carriage integration (current slice)
 
-### Runtime and test stability
+- [x] Preserve Sensor Bench 0.6.0 as a separate tool/firmware entry point.
+- [x] Create custom controller 0.7.0 with CARRIAGE_V1 / BOUNDED_JOG_V2 contract.
+- [x] Native CARRIAGE screen: live Home, board edge, door, saw endpoints, driver
+      alarm, configuration, arm, stop/disarm, fault ACK and explicit motor release.
+- [x] Main-app inch jogs rounded at 127.12 pulses/inch, 0.01-2 in per click,
+      254 total pulses per arm, fixed 40 pulses/s. No queued jogs or autorepeat.
+- [x] Signed commanded displacement and move acknowledgment IDs from the controller.
+      Absolute position remains unknown; no encoder/absolute claim is fabricated.
+- [x] Backend, main-app integration, safety-boundary, Sensor Bench, native firmware,
+      and existing simulator/manual-cycle regression tests pass. Teensy build passes.
+- [x] Flash and identify controller 0.7.0 on COM4, correct D40 map and calibration;
+      disarmed, zero budget/remaining, STEP/DIR LOW, ENA HIGH. No motion sent by agent.
+- [ ] Operator acceptance of the new main-app jog/stop workflow on hardware.
+- [ ] Implement bounded homing state machine: B seek, release/backoff, slow re-latch,
+      sensor-stuck/travel/time limits and cancellation. Hardware validation required.
+- [ ] Establish/invalidate homed machine coordinates; verify recovered 160.5-inch
+      reference. Add soft limits and absolute cut-length/load-position commands.
+- [ ] Add controlled acceleration and migrate NORMAL/GENTLE/FAST profiles with limits.
+      Legacy profile values must not silently override the commissioning speed.
 
-- [x] Give the serial listener an explicit stop event.
-- [x] Close and join the serial listener during disconnect and application exit.
-- [x] Stop the virtual-controller worker during close.
-- [x] Stop listener exceptions from repeating forever during Qt shutdown.
-- [x] Isolate UI tests from the operator's saved `QSettings`.
-- [x] Make the full-cycle test explicitly enable automatic clamp/saw mode.
-- [x] Add direct backend command-contract tests.
-- [x] Add UI safety-boundary tests with in-memory serial hardware.
-- [x] Run and pass the entire regression suite after the Stage 1/2 changes.
+## Stage 5 - Blade-disconnected dry runs and operating workflow
 
-**Stage 1 gate:** all tests pass, the diff is reviewed, and the checkpoint is
-committed/pushed before the real Teensy stack is energized.
+- [ ] With suppression fitted, validate each valve coil independently with air isolated.
+- [ ] With saw mains physically unplugged, validate saw cylinder OFF=UP and ON=DOWN,
+      endpoint timeouts and flow-controlled travel. Keep within valve pressure ratings.
+- [ ] Validate main clamp actuation and define verified clamp status/retention behavior;
+      decide safe fault and air-loss behavior before automatic combined cycles.
+- [ ] Validate small trigger cylinder fully releases original switch on OFF; preserve
+      factory brake function. No blade-powered acceptance is implied by dry runs.
+- [ ] Add main-app pneumatic mode and controller output/completion acknowledgments
+      after individual hardware acceptance. Do not reuse colliding MEGA C commands.
+- [ ] Migrate board-edge detection, offset/truing and safe return/load positions.
+- [ ] Migrate cut-list sequencing to explicit motion and mechanism completion events;
+      door/UP/clamp permissions and timeouts at each transition. No blind timed advance.
+- [ ] Validate carriage/stock/blade/clamp collision envelope; reconsider early return.
+- [ ] Dry run one complete cycle, then multiple boards, with blade power disconnected.
 
-## Stage 2 — Enforce controller capability and software safety boundaries
+## Stage 6 - Production acceptance, release and future expansion
 
-### Completed software boundaries
-
-- [x] Add the controller backend layer and controller selector.
-- [x] Persist controller mode in `QSettings`.
-- [x] Preserve the Legacy Mega command translations.
-- [x] Add explicit safety-relevant capabilities to each backend.
-- [x] Keep Teensy Hardware Test and grblHAL operational tabs locked until their
-  required feedback and protocol handling are validated.
-- [x] Lock controller and serial-port selection while connected.
-- [x] Report unsupported actions instead of silently treating empty commands as
-  success.
-- [x] Update clamp state only after a command was actually sent.
-- [x] Start position prediction only after a move command was actually sent.
-- [x] Remove the fake two-second saw-complete event from real connections.
-- [x] Require genuine saw-position feedback before completing an automatic cut.
-- [x] Release clamps and block the cycle when automatic saw capability is absent.
-- [x] Invalidate delayed clamp/saw callbacks when a cycle is canceled,
-  disconnected, restarted, or resumed.
-- [x] Add one HMI actuator-direction API with an off-first forward/reverse command
-  sequence.
-
-### Hardware-independent safety work still required
-
-- [ ] Add a controller heartbeat/watchdog contract and visible communication-loss
-  fault state.
-- [ ] Add timeouts for homing, motion, clamp confirmation, saw-down, and saw-up.
-- [ ] Add explicit machine states: `SAFE`, `NOT_HOMED`, `READY`, `MOVING`,
-  `CLAMPING`, `CUTTING`, `FAULT`, and `ESTOP`.
-- [ ] Require fault acknowledgment and re-home where position certainty is lost.
-- [ ] Define soft travel limits and collision envelopes in one shared machine
-  configuration.
-- [ ] Define and test positive/negative carriage direction before powered motion.
-- [ ] Prevent motion while saw-down, actuator-unsafe, guard-open, or clamp states
-  violate the final sequence.
-- [ ] Add firmware and electrical actuator forward/reverse exclusion; the HMI
-  interlock is only one layer.
-- [ ] Decide which faults may be reset from the HMI and which require a physical
-  reset.
-
-**Stage 2 gate:** an incomplete backend cannot expose operational controls or
-manufacture successful feedback, and the final hardware design has independent
-fail-safe layers.
-
-## Stage 3 — Hardware architecture, inventory, BOM, and Teensy pin map
-
-This is the next planning stage and the ordering gate.
-
-### Inventory and architecture
-
-- [ ] Inventory everything already owned, ordered, or installed, including exact
-  manufacturer part numbers and board revisions.
-- [x] Identify the controller as a PJRC Teensy 4.1 on a Brookwood Design / The
-  Grbl Project T41U5XBB V2.20 breakout board.
-- [x] Start `docs/HARDWARE_INVENTORY.md` from the photographed owned hardware;
-  unidentified modules and missing ratings remain explicitly open.
-- [x] Start `docs/POWER_ARCHITECTURE.md` with the safe USB-only bench state and
-  planned voltage domains; select a verified data-only USB cable for external
-  5 V operation while leaving JP105 unmodified.
-- [ ] Record the stepper/servo driver, motor, encoder, power supplies, contactors,
-  relays, valves, actuator, sensors, E-stop devices, and existing Mega wiring.
-- [ ] Draw a block diagram showing mains, 24 VDC, motor power, 5 V, 3.3 V,
-  grounds, isolation boundaries, USB, I2C, and field wiring.
-- [ ] Decide whether machine I/O is 24 V industrial, 12 V, 5 V, dry-contact, or a
-  documented mixture.
-- [ ] Select protected/isolated input conditioning suitable for every sensor
-  voltage and signal type.
-- [ ] Select output drivers for pneumatic valves, relays/contactors, actuator
-  direction, enable lines, and future auxiliary loads.
-- [ ] Define flyback, fuse, transient, reverse-polarity, and connector protection.
-- [ ] Calculate power budgets and fuse sizes for logic, sensors, valves, actuator,
-  and motor controls.
-- [ ] Decide the hardwired E-stop chain and how its state is reported back to the
-  Teensy without making software responsible for stopping energy.
-
-### INA228 current-monitoring design
-
-- [ ] Identify the exact current to measure: carriage motor, actuator, saw, whole
-  DC bus, or multiple branches.
-- [ ] Record normal, acceleration, stall, and worst-case fault current ranges.
-- [x] Select Adafruit INA228 product 5832 and confirm its 85 VDC common-mode
-  limit, onboard 15 mOhm shunt, default `0x40` address, and 3.3 V logic option.
-- [x] Visually confirm the owned INA228 front/back, terminal labels, open A0/A1
-  address jumpers, board ratings, and apparent open VBUS jumper.
-- [ ] Size the shunt for current range, measurement resolution, dissipation, and
-  fault energy.
-- [ ] Decide high-side versus low-side measurement and document grounding impact.
-- [x] Confirm the USB-bench I2C voltage and addresses: MCP23017 at `0x27` and
-  INA228 at `0x40`, both powered from the 3.3 V header. Final machine cable
-  length/routing and motor-noise testing remain open.
-- [ ] Decide whether one sensor is sufficient or reserve addresses/connectors for
-  additional current channels.
-
-### Pin-map document requirements
-
-- [x] Create `docs/TEENSY_PIN_MAP.md` as the single authoritative pin map and
-  record the assignments reported by the current validation firmware.
-- [ ] Record every signal's Teensy pin, breakout terminal, connector/pin, wire
-  label/color, direction, voltage, active level, pull-up/down, boot behavior,
-  safe state, source/load, and firmware name.
-- [ ] Reserve and document step, direction, enable, home/limit, board-present,
-  saw-up, saw-down, fence/clamp confirmation, guard, E-stop status, and actuator
-  limit inputs.
-- [ ] Reserve and document clamp-valve, actuator forward/reverse, saw request,
-  motor enable, alarm/reset, and spare auxiliary outputs.
-- [x] Reserve Teensy D24/SCL and D25/SDA on the T41U5XBB I2C header for the
-  INA228, MCP23017, and future uniquely addressed 3.3 V-compatible devices.
-- [ ] Reserve UART/SPI/CAN or other expansion buses only after checking conflicts
-  with the selected grblHAL board map.
-- [ ] Maintain at least 25% protected input/output capacity as labeled spares.
-- [ ] Check all assigned pins against Teensy boot straps, onboard LEDs, timers,
-  PWM requirements, interrupts, and grblHAL ownership.
-- [x] Create `docs/HARDWARE_BOM.md` with `OWNED`, `ORDERED`, `NEEDED`, and
-  `OPTIONAL/FUTURE` sections; purchasing links and exact part numbers remain
-  open where load ratings or module identities are unknown.
-
-**Stage 3 gate:** BOM, voltage domains, safety architecture, current-sensor design,
-and the reviewed pin map are complete before final wiring or PCB work.
-
-## Stage 4 — Teensy bench firmware and standard HMI protocol
-
-### Protocol contract
-
-- [x] Write `docs/CONTROLLER_PROTOCOL.md` with Sensor Bench Protocol v2,
-  controller identity, `MOTION:0`, and exactly three guarded test outputs.
-- [x] Define framing, line endings, constrained command IDs, errors, status,
-  output arming, keepalive timeout, maximum-on timeout, and OFF behavior.
-- [x] Define sensor-bench heartbeat timing, stale-data handling, and a safe boot
-  state in which D31-D33 are latched LOW before becoming outputs.
-- [ ] Define normalized position, motion state, digital I/O, clamp, saw, guard,
-  E-stop, actuator, current, voltage, temperature, and fault fields.
-- [x] Keep the eight sensor telemetry names stable and parse both Protocol v1 and
-  the earlier validation firmware's `KLF_IO`/I2C scan format.
-- [ ] Decide whether final machine I/O uses a grblHAL plugin, auxiliary commands,
-  custom M-codes, or a companion firmware channel.
-- [x] Add representative Protocol v2, Protocol v1, and legacy serial records plus
-  command-boundary and offscreen UI tests in `test_sensor_bench.py`.
-
-### Hardware-test mode
-
-- [x] Add the Teensy Hardware Test backend.
-- [x] Map validation outputs `OUT 0/1/2` to the three clamp outputs.
-- [x] Map validation outputs `OUT 3/4` to actuator forward/reverse.
-- [x] Send `PINMAP`, `I2C`, and `STATUS` on validation-mode connection.
-- [x] Add a dedicated, standalone dark diagnostics HMI (`run_sensor_bench.py`)
-  instead of reusing machine-operation tabs.
-- [ ] Add momentary actuator controls with off-before-direction sequencing.
-- [x] Parse legacy `KLF_IO` and Protocol v1 direct/MCP inputs while displaying
-  raw level separately from adjustable interpreted state.
-- [x] Add visible `PINMAP`, `I2C`, `STATUS`, all-outputs-off, guarded clamp
-  controls, host keepalive, firmware watchdog, and maximum-on timeout.
-- [x] Map clamp-test outputs D31-D33 to JP10 AUX0-AUX2 TTL/SSR signal rows and
-  document why the AUX screw-terminal sink outputs are not used.
-- [ ] Bench-test logic with field loads disconnected.
-- [ ] Test one protected input and one low-energy output channel at a time.
-- [ ] Validate power-up, USB disconnect, firmware crash, and reboot safe states.
-
-**Stage 4 gate:** the versioned protocol and validation firmware pass bench tests
-before motion, valves, or the actuator are connected.
-
-## Stage 5 — grblHAL motion, machine I/O, pneumatics, and current monitoring
-
-### grblHAL motion integration
-
-- [x] Add a prototype grblHAL backend.
-- [x] Prototype `$H` homing and `G20 G90` absolute X moves.
-- [x] Keep grblHAL operational UI locked while protocol support is incomplete.
-- [ ] Select and archive the exact grblHAL Teensy build, board map, plugins, and
-  settings used by the machine.
-- [ ] Implement command queueing and wait for `ok`/`error` before sending the next
-  queued command.
-- [ ] Parse `ALARM` and `<...>` reports including `MPos`, `WPos`, state, limits,
-  feed, and overrides.
-- [ ] Establish machine coordinates, positive direction, home direction, travel,
-  steps per inch, acceleration, and conservative feed limits.
-- [ ] Validate hard limits, soft limits, feed hold, cycle start, reset, alarm
-  recovery, and USB loss with the motor mechanically disconnected first.
-- [ ] Add collision-envelope tests for carriage, fence, blade zone, actuator, and
-  service/load positions.
-
-### Pneumatics and automatic actuator
-
-- [ ] Finalize clamp and actuator output commands in the selected firmware path.
-- [ ] Add sensors that prove required clamp/fence positions rather than relying
-  only on elapsed time.
-- [ ] Add actuator end limits or position feedback appropriate to the mechanism.
-- [ ] Require saw-up confirmation before carriage motion or clamp release.
-- [ ] Require valid board, guard, pressure, E-stop, and actuator states before an
-  automatic cut request.
-- [ ] Validate the complete sequence with air pressure reduced and the blade/motor
-  disabled before powered cutting.
-
-### INA228 software rollout
-
-- [ ] Read INA228 data in the Teensy/firmware layer and transmit normalized units.
-- [ ] Add telemetry parsing while preserving legacy Mega ACS712 fields.
-- [ ] Display and log passive voltage/current/power/temperature data first.
-- [ ] Calibrate against trusted meters across idle, moving, acceleration, and
-  controlled-load conditions.
-- [ ] Add warning thresholds only after passive data is stable.
-- [ ] Add firmware-side protective response independent of the HMI where
-  appropriate.
-- [ ] Consider stall detection or adaptive feed only after false-positive,
-  response-time, and failure-mode testing.
-
-**Stage 5 gate:** motion and machine I/O work independently, then together, with
-real feedback and passive current telemetry proven before automatic adaptation.
-
-## Stage 6 — Full validation, documentation, release, and expansion readiness
-
-### Validation matrix
-
-- [x] Preserve and run Legacy/manual-mode simulator coverage.
-- [x] Preserve and run automatic clamp/saw simulator coverage.
-- [x] Preserve updater integrity tests.
-- [ ] Run the application against the physical Legacy Mega baseline.
-- [ ] Run every Teensy Hardware Test input/output against the reviewed pin map.
-- [ ] Run grblHAL homing and motion tests at reduced energy/speed.
-- [ ] Verify actuator forward and reverse can never energize together through
-  software, firmware, wiring, relay/driver behavior, reboot, or communication
-  loss.
-- [ ] Fault-inject unplugged USB, controller reboot, stale heartbeat, stuck sensor,
-  open guard, E-stop, motor alarm, overcurrent, missing board, low pressure, and
-  saw-position timeout.
-- [ ] Verify every fault removes or inhibits the correct energy and requires the
-  correct recovery sequence.
-- [ ] Run dry cycles, reduced-energy cycles, and supervised production cycles in
-  that order.
-
-### Release and future expansion
-
-- [ ] Document wiring, connectors, labels, fuses, settings, firmware flashing,
-  calibration, operation, maintenance, and troubleshooting.
-- [ ] Photograph the completed electronics and terminal blocks and link them to
-  the pin-map/BOM revisions.
-- [ ] Record firmware, HMI, wiring, and hardware revision compatibility in every
-  release.
-- [ ] Build, checksum, tag, and publish the validated release.
-- [ ] Back up source, firmware, configuration, pin map, BOM, and release assets to
-  GitHub.
-- [ ] Keep spare sensor channels electrically protected and disabled in software
-  until assigned and tested.
-- [ ] Maintain a future-sensor backlog without changing the validated core
-  protocol fields.
-
-**Stage 6 gate:** production release only after the documented hardware revision
-passes the complete safety and fault-injection matrix.
-
-## Immediate next information needed for Stage 3
-
-- [x] Exact Teensy model: PJRC Teensy 4.1.
-- [x] Exact breakout/carrier board: Brookwood Design / The Grbl Project
-  T41U5XBB V2.20.
-- [x] Clear component-side photos of the populated Teensy/breakout assembly and
-  the current prototype layout.
-- [ ] Back-side photos and close-ups of all remaining unidentified module IC and
-  MOSFET markings.
-- [ ] List of hardware already owned or ordered.
-- [ ] Existing motor driver, motor, encoder, and supply specifications.
-- [ ] Existing sensor types and operating voltages.
-- [ ] Planned actuator and pneumatic valve voltage/current specifications.
-- [ ] Which electrical branch(es) the INA228 should measure and their maximum
-  expected voltage/current.
-- [x] Primary current-monitor hardware selected: Adafruit INA228 product 5832.
-- [x] Adafruit INA228 product 5832 physically located and photographed.
+- [ ] Complete physical fault matrix: guard opening, conflicting/stuck/missing sensors,
+      motor alarm, communication loss, controller reboot, electrical and air loss.
+- [ ] Establish guarded blade-power enable/disable and verified brake/stop timing;
+      review independent safety controls before blade-powered commissioning.
+- [ ] Validate homing repeatability, referenced positioning, cuts, kerf/offsets,
+      full travel, speed profiles and repeated cycles using recorded acceptance criteria.
+- [ ] Finalize wire-by-wire map, BOM, fuses, suppression, power architecture,
+      recovery/maintenance instructions and app/firmware compatibility manifest.
+- [ ] Create reviewed release, executable, firmware artifact and rollback package;
+      verify the main app's updater cannot install an incompatible old controller build.
+- [ ] Back up source/configuration/docs and release artifacts to GitHub.
+- [ ] Revisit INA228 safely on an isolated test setup; passive telemetry first,
+      then accuracy validation, then optional protective behavior. MCP expansion later.
+- [ ] Reserve/document future sensor, clamp, actuator and pneumatic expansion without
+      changing validated assignments or weakening existing interlocks.

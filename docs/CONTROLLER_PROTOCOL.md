@@ -1,99 +1,82 @@
-# Controller Protocol
+# Controller protocol
 
-Status: Sensor Bench Protocol v2 is implemented. It adds three tightly guarded
-clamp-test outputs to the Protocol v1 input telemetry. Motion and production
-machine commands remain undefined and blocked.
+Updated 2026-11-08. Current main-app controller firmware **0.7.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V1. 115200 baud,
+63-character command maximum. No live MEGA commands or G-code are supported.
+The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
-## Transport
+## Identity
 
-- USB serial, 115200 baud, 8 data bits, no parity, 1 stop bit.
-- UTF-8/ASCII text records terminated by LF; CR before LF is accepted.
-- Maximum firmware command length is 63 characters.
-- Record fields are comma separated. The first field is the record type; later
-  fields use `NAME:value` format.
-- Parsers must ignore unknown fields and record types.
+Main-app motion requires all of:
 
-## Identity and capabilities
-
-```text
-BENCH_HELLO,PROTO:2,FW:0.2.0,BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:0,TEST_OUTPUTS:3
+```
+PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
+X_APP:CARRIAGE_V1,X_TEST:BOUNDED_JOG_V2,X_MAP:STEP2_DIR3_EN40
+INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
+INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12
 ```
 
-`MOTION:0` means no motion command is available. `TEST_OUTPUTS:3` means only the
-three clamp commissioning outputs are available. It does not imply that valve
-loads, air pressure, or automatic clamping are approved.
+Firmware version is currently 0.7.0. Reads HELLO, PINMAP and STATUS are sent on
+connection. Connect, identity matching, RESET and reconnect never arm/enable.
+The main app rejects motion if identity differs or motion/safety telemetry
+is older than two seconds. Firmware is authoritative if the PC stops responding.
 
-## Accepted commands
+## Main-app commands
 
-Commands are case-insensitive. Repeated read commands are safe.
-
-| Command | Response/purpose |
+| Command | Meaning |
 |---|---|
-| `HELLO` | `BENCH_HELLO` identity |
-| `PING` | `BENCH_PONG` with controller uptime |
-| `PINMAP` | `BENCH_PINMAP` input and clamp-test assignments |
-| `I2C` | `BENCH_I2C`, MCP input reconfiguration, then health |
-| `STATUS` | Current hello, health, inputs, MCP state, and output state |
-| `ARM 1` | Turn every clamp output OFF, clear the output fault, arm testing, and publish `BENCH_OUTPUTS` |
-| `ARM 0` | Turn every clamp output OFF, disarm, and publish state |
-| `KEEPALIVE` | Refresh the 1.5-second output watchdog while armed |
-| `OUT n 1` | Energize clamp output `n` (0-2) only while armed |
-| `OUT n 0` | De-energize output `n`; accepted even while disarmed |
-| `OFF` | Turn all outputs OFF and disarm |
+| HELLO / PINMAP / STATUS / PING | Read identity, assignments or telemetry |
+| XCONFIG 0 1 | Store verified enabled-LOW and healthy-alarm-HIGH profile in RAM; requires actual Home LOW/HIGH verification, Home inactive, healthy alarm, door closed and saw UP |
+| XARM 1 | Arm Stepper mode with 254 total pulses, set verified ENA; no STEP emitted; requires fresh ready state |
+| XJOG -1 n / XJOG 1 n | Queue one bounded jog, 1-254 pulses and no more than remaining budget; A/-1/LOW toward saw, B/+1/HIGH toward Home |
+| KEEPALIVE | Refresh the 1.5-second controller watchdog while armed |
+| OFF / XARM 0 | Cancel all remaining pulses, turn pneumatic outputs OFF, disarm; retains motor holding level |
+| XDISABLE | Stop/disarm then ENA HIGH; clears setup and Home-input verification; no inferred position |
+| RESET | Acknowledge a latched fault only when safe/disarmed; does not arm |
 
-The Python transport accepts only these exact forms. Firmware blocks enable,
-g-code, and grbl commands with `BENCH_ERROR,CODE:COMMAND_BLOCKED`. A malformed
-output command disarms everything and reports `BAD_OUTPUT_COMMAND`. An ON
-command while disarmed reports `NOT_ARMED`.
+Controller pulse service is nonblocking, at most 40 pulses/s, no catch-up
+bursts. Direction setup at least 10us, STEP HIGH 5us, minimum 200ms after enable
+and between jogs. Requests during a jog are rejected, never queued/reversed.
+Zero budget automatically disarms. All raw counts are STEP pulses, not encoder
+counts. The main app rounds requested inches to nearest pulse at 127.12/inch.
+
+The controller retains diagnostic XLEVEL, XSTEP and pneumatic ARM/OUT commands
+for Sensor Bench, but the main app's serial-write boundary rejects them.
+Stock grblHAL commands and legacy S/M/H/C/V/K commands are blocked in this mode.
 
 ## Telemetry
 
-Direct and MCP input records are emitted every 200 ms; health records are
-emitted every 1000 ms. Output state is published on status and every output,
-arm, disarm, or output-safety transition.
-
-```text
-BENCH_HEALTH,SEQ:42,UP_MS:8400,MCP_ACK:1,MCP_IO:1,INA_ACK:1,INA_ID:1,INA_MFG:0x5449,INA_DEV:0x228,INA_REV:1
-BENCH_INPUTS,SEQ:42,HOME:1,BOARD_EDGE:0,FENCE_DOOR:1,CL57T_ALM:1,SAW_UP:1,SAW_DOWN:1,FENCE_CLOSED:1,OUTFEED:1
-BENCH_MCP,SEQ:42,OK:1,GPIOA:0xFF,GPIOB:0xFF
-BENCH_OUTPUTS,ARMED:1,CLAMP1:0,CLAMP2:0,CLAMP3:0,FAULT:NONE
-BENCH_I2C,COUNT:2,ADDRS:0x27|0x40
+```
+BENCH_X,ARMED:0,CONFIGURED:0,READY:0,HOME_VERIFIED:0,HOME_RAW:1,ALARM_RAW:1,STEP:0,DIR:0,ENA:1,BUDGET:0,REMAINING:0,POS_STEPS:0,POS_KNOWN:0,CAL_SPI:127.12,MOVE_ID:0,UP_MS:1234,FAULT:NONE
+BENCH_SAFETY,DOOR_CLOSED:1,SAW_POSITION:UP,READY:1,RESET_READY:1,FAULT:NONE,BLOCKER:NONE
+BENCH_INPUTS,SEQ:42,HOME:1,BOARD_EDGE:1,FENCE_DOOR:0,CL57T_ALM:1,SAW_UP:0,SAW_DOWN:1,FENCE_CLOSED:0,OUTFEED:1
 ```
 
-- Direct and MCP values are raw electrical levels.
-- `MCP_ACK`/`INA_ACK` prove address acknowledgment only.
-- `MCP_IO` proves a GPIO register read completed.
-- `INA_ID` proves the manufacturer and device IDs match an INA228.
-- `FAULT` is `NONE`, `WATCHDOG`, `MAX_ON`, or `COMMAND`.
-- INA228 measurement values are deferred until the shunt range and measured
-  branch are final.
+- X, safety and direct inputs publish every 200ms and on relevant commands/faults.
+- POS_STEPS is signed commanded displacement since boot: positive toward Home.
+  POS_KNOWN is always 0 in this version; no homed absolute position is claimed.
+- MOVE_ID increments only on accepted motion commands, allowing the HMI to
+  distinguish acknowledgment from stale pre-command telemetry. A missing move
+  acknowledgment after one second causes OFF and a local fault.
+- REMAINING is the active jog's unsent pulses. BUDGET is the remaining total
+  STEP allowance, summed across both directions. Neither is a machine soft limit.
+- A controller uptime decrease revokes main-app consent. Boot clears all setup.
+- Inputs are raw levels, active LOW for the assigned switches; driver alarm
+  raw HIGH is the physically verified healthy state. This wiring cannot detect
+  every broken wire and is not a safety-rated guard or E-stop system.
+- INA/MCP health may still be published for diagnostics, but those modules are
+  disconnected/quarantined and do not gate carriage operation or supply current data.
 
-## Output safety state
+## Faults and stop policy
 
-D31-D33 are latched LOW before firmware changes them to output mode. All are OFF
-and disarmed after boot. Arming never energizes an output. While armed, the HMI
-sends `KEEPALIVE` every 500 ms. Firmware turns every output OFF and disarms if:
+Driver alarm, Home activation while armed, door opening, loss of UP, conflicting
+saw positions, invalid control commands and watchdog timeout cancel remaining
+pulses and latch the first fault. There is no automatic restart or resume.
+Pneumatic and Stepper modes are mutually exclusive. Stop retains ENA; release
+motor holding torque is an explicit separate action, not a safety disconnect.
+Do not infer a safe mechanical result on power/air loss from these software flags.
 
-- no keepalive arrives for 1.5 seconds;
-- one output stays energized for more than 5 seconds;
-- `OFF` or `ARM 0` is received; or
-- a malformed or blocked control command is received.
-
-The HMI also sends `OFF` before an intentional disconnect, on window close, and
-when telemetry becomes stale. Firmware timing is authoritative if the HMI or USB
-connection fails. These protections do not replace a hardwired E-stop, safety
-relay/contactor, pneumatic dump, guarding, branch fuse, or valve-coil flyback
-suppression.
-
-## Compatibility input
-
-The Python parser still accepts the original Protocol v1 records and the prior
-validation sketch's `KLF_IO` and `I2C: found 0xNN` display records. Old firmware
-does not announce `TEST_OUTPUTS:3`, so the HMI keeps every output control disabled.
-
-## Deferred production protocol
-
-Position, acknowledged motion queues, production clamp sequencing, saw control,
-actuator commands, normalized current telemetry, and grblHAL status remain
-deferred. They require a separate reviewed production protocol and independent
-machine-safety layers.
+Pneumatic testing additionally enforces one output at a time, 5s maximum ON,
+and down/return timeouts. RESET never clears an unsafe condition or arms.
+Suppression, fusing, guarding and independent hazardous-energy controls remain
+hardware requirements. No pneumatic or blade ON is exposed by the main app yet.

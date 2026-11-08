@@ -6,6 +6,7 @@ from dataclasses import dataclass
 LEGACY_MEGA = "legacy_mega"
 TEENSY_HARDWARE_TEST = "teensy_hardware_test"
 TEENSY_GRBLHAL = "teensy_grblhal"
+TEENSY_CARRIAGE = "teensy_carriage"
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class ControllerMode:
 class ControllerCapabilities:
     """Safety-relevant features that the HMI may expose for a backend."""
 
+    carriage_jog_ready: bool = False
     homing_commands: bool = False
     motion_commands: bool = False
     manual_motion_ready: bool = False
@@ -34,6 +36,7 @@ class ControllerCapabilities:
 
 
 CONTROLLER_MODES = (
+    ControllerMode(TEENSY_CARRIAGE, "Teensy Carriage"),
     ControllerMode(TEENSY_HARDWARE_TEST, "Teensy Hardware Test"),
     ControllerMode(TEENSY_GRBLHAL, "Teensy grblHAL"),
 )
@@ -175,6 +178,19 @@ class LegacyMegaBackend(ControllerBackend):
         return [f"J{sensor_offset_inches:.4f}"]
 
 
+class TeensyCarriageBackend(ControllerBackend):
+    key = TEENSY_CARRIAGE
+    label = "Teensy Carriage"
+    capabilities = ControllerCapabilities(carriage_jog_ready=True, motion_commands=True)
+
+    def startup_commands(self):
+        # Reads only. A connect never configures, arms or enables the driver.
+        return ["HELLO", "PINMAP", "STATUS"]
+
+    def stop_motion(self):
+        return ["OFF"]
+
+
 class TeensyHardwareTestBackend(ControllerBackend):
     key = TEENSY_HARDWARE_TEST
     label = "Teensy Hardware Test"
@@ -223,6 +239,8 @@ def create_controller_backend(mode_key):
         # Retained only for the offline simulator and the archived baseline.
         # It is not listed as a selectable live controller in the Teensy build.
         return LegacyMegaBackend()
+    if mode_key == TEENSY_CARRIAGE:
+        return TeensyCarriageBackend()
     if mode_key == TEENSY_HARDWARE_TEST:
         return TeensyHardwareTestBackend()
     if mode_key == TEENSY_GRBLHAL:

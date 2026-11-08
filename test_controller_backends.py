@@ -4,6 +4,7 @@ from controller_backends import (
     CONTROLLER_MODES,
     LEGACY_MEGA,
     TEENSY_GRBLHAL,
+    TEENSY_CARRIAGE,
     TEENSY_HARDWARE_TEST,
     create_controller_backend,
 )
@@ -48,11 +49,24 @@ def test_grblhal_is_motion_prototype_only():
     assert backend.saw_actuate() == []
 
 
+def test_carriage_contract_has_no_legacy_or_automatic_fallback():
+    backend = create_controller_backend(TEENSY_CARRIAGE)
+    assert backend.capabilities.carriage_jog_ready
+    assert not backend.capabilities.manual_motion_ready
+    assert not backend.capabilities.automatic_cycle_ready
+    assert backend.startup_commands() == ["HELLO", "PINMAP", "STATUS"]
+    assert backend.stop_motion() == ["OFF"]
+    assert backend.home() == backend.move_absolute_inches(10) == []
+    assert backend.clamp_extend(1) == backend.saw_actuate() == []
+    assert backend.pid_control(True) == backend.current_monitoring(True) == []
+
+
 def main():
     tests = [
         test_legacy_mega_is_archived_not_selectable,
         test_teensy_test_contract_is_diagnostics_only,
         test_grblhal_is_motion_prototype_only,
+        test_carriage_contract_has_no_legacy_or_automatic_fallback,
     ]
     for test in tests:
         test()

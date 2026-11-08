@@ -3,27 +3,43 @@
 PyQt6 operator interface for the chop-saw carriage, cut-list workflow, machine
 I/O, simulation, current monitoring, and packaged Windows releases.
 
-## Safety status
+## Current Teensy build (2026-11-08)
 
-The Arduino Mega hardware path was retired on 2026-11-06. Its last verified
-source is preserved in the sibling `ChopSawHMI` repository at tag
-`legacy-mega-last-working-2026-11-06`; it is not selectable as a live controller
-in this Teensy build. Teensy Hardware Test is diagnostics-only. Teensy grblHAL contains prototype
-motion commands but remains locked from operational UI controls until response
-parsing, alarms, limits, position feedback, and hardware validation are complete.
+The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
+tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
+identity/status requests; it never configures, arms or moves the driver.
 
-This application is not a replacement for hardwired emergency-stop, contactor,
-driver-enable, pressure-dump, guarding, or mutually exclusive actuator circuitry.
-Safety-critical outputs must fail safe independently of the PC and serial link.
+Active firmware is **0.7.0**, source
+`firmware/chopsaw_controller/chopsaw_controller.ino`. The separate Sensor Bench
+0.6.0 sketch is preserved for diagnostics. The active controller keeps those
+input/interlock functions and adds the main-app carriage contract. This is
+custom firmware; stock grblHAL is not running on the board.
 
-See `TEENSY_APP_MIGRATION_CHECKLIST.md` for the active six-stage roadmap.
+- Verified hardware map: X STEP D2, X DIR D3, X enable remapped to **Axis Y En/D40**.
+- Recovered scale: **127.12 pulses/inch**, full stepping. A=toward saw;
+  B=away from saw toward Home. Enabled LOW; healthy driver alarm HIGH.
+- Main-app jogs: 0.01-2 inches per click, rounded to whole pulses; 254 pulses
+  total per arm, 40 pulses/s. Start small. One jog at a time; no queued motion.
+- Live Home/board-edge/door/saw-up/saw-down/driver-alarm feedback and commanded
+  displacement. Commanded travel is not an encoder reading or absolute blade position.
+- Fault acknowledgment never arms. Stop/disarm, disconnect, stale telemetry,
+  controller reboot and interlocks revoke permission. Motor release explicitly
+  disables the driver and requires renewed input/setup validation.
+- Automatic homing, absolute cut-length moves, profiles and cutting cycles are
+  not implemented for this controller yet. The old operational tabs stay blocked
+  on real hardware. Cut-list editing and the offline simulator are retained.
+- Main-app pneumatic/blade/current controls are unavailable. Keep saw unplugged,
+  valve 12V disconnected, air isolated, INA/MCP disconnected during carriage tests.
 
-Stage 3 hardware planning is tracked in:
+The last MEGA HMI remains in sibling `ChopSawHMI` at
+`legacy-mega-last-working-2026-11-06`; recovered MEGA firmware is also preserved
+under `archive/legacy-mega-v2.5`. Live MEGA selection is retired.
 
-- `docs/HARDWARE_INVENTORY.md`
-- `docs/HARDWARE_BOM.md`
-- `docs/POWER_ARCHITECTURE.md`
-- `docs/TEENSY_PIN_MAP.md`
+See [feature migration](docs/APP_FEATURE_MIGRATION.md),
+[controller protocol](docs/CONTROLLER_PROTOCOL.md), and
+[six-stage roadmap](TEENSY_APP_MIGRATION_CHECKLIST.md).
+This software is not an independent emergency-stop, guarding, or hazardous-energy
+control system.
 
 ## Setup
 
@@ -45,9 +61,9 @@ python main.py
 Select `SIMULATOR - virtual machine` to exercise the application without
 connecting machine hardware.
 
-## Read-only sensor bench
+## Separate sensor bench
 
-Bring up Teensy inputs and I2C devices without exposing machine outputs:
+Use the separate commissioning dashboard for input and isolated output tests:
 
 ```powershell
 python run_sensor_bench.py
@@ -63,12 +79,18 @@ The UI tests use isolated temporary settings and the offscreen Qt platform.
 
 ```powershell
 python test_controller_backends.py
+python test_teensy_carriage.py
 python test_safety_boundaries.py
 python test_sensor_bench.py
+python test_bench_interlocks.py
 python test_updater.py
 python test_manual_mode.py
 python test_sim_cycle.py
 ```
+
+The firmware interlock test compiles and runs the actual C++ policy and sketch
+command handler with mocked hardware. It needs g++/clang++, or the optional
+portable Zig compiler described in `docs/SENSOR_BENCH_GUIDE.md`.
 
 ## Build a Windows executable
 
@@ -83,8 +105,8 @@ notes, Git status, and hardware compatibility before creating a release.
 
 ## Controller modes
 
-- **Legacy Arduino Mega:** archived only; retained internally for the offline simulator.
-- **Teensy Hardware Test:** output and diagnostics protocol for bench bring-up;
-  operational tabs remain disabled.
-- **Teensy grblHAL:** prototype `$H` and absolute X-motion commands only;
-  operational tabs remain disabled until the protocol is completed and tested.
+- **Teensy Carriage:** active custom 0.7.0 firmware; native guarded carriage jogs.
+- **Legacy Arduino Mega:** archived, internal to the offline simulator only.
+- **Teensy Hardware Test:** separate diagnostics protocol; old operational tabs locked.
+- **Teensy grblHAL:** retained prototype only; operational controls locked. It
+  cannot be selected to operate the currently flashed custom controller.

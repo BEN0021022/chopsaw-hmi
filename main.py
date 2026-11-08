@@ -34,10 +34,12 @@ from _version import __version__ as APP_VERSION
 from controller_backends import (
     CONTROLLER_MODES,
     LEGACY_MEGA,
+    TEENSY_CARRIAGE,
     TEENSY_HARDWARE_TEST,
     create_controller_backend,
 )
 import updater
+from teensy_carriage import TeensyCarriagePanel
 
 
 class _UpdateChecker(QThread):
@@ -119,7 +121,7 @@ class MinimalHMI(QMainWindow):
         self.signal_bridge.saw_sensor_state_updated.connect(self.update_saw_position_sensor_status)
 
         # State
-        self.stepper_steps_per_inch = 127.0
+        self.stepper_steps_per_inch = 127.12
         self.encoder_ticks_per_inch = self.stepper_steps_per_inch * 20.0
         self.cut_list = []
         self.auto_cycle_state = "IDLE"
@@ -180,7 +182,7 @@ class MinimalHMI(QMainWindow):
         self.settings = QSettings("ChopSawHMI", "ChopSawHMI")
         self.selected_serial_port = self.settings.value("serial_port", SERIAL_PORT)
         self.selected_controller_mode = self.settings.value(
-            "controller_mode", TEENSY_HARDWARE_TEST
+            "controller_mode", TEENSY_CARRIAGE
         )
         self.controller = create_controller_backend(self.selected_controller_mode)
 
@@ -341,7 +343,9 @@ class MinimalHMI(QMainWindow):
         self.speed_tab = self.create_speed_tab()
         self.preset_tab = self.create_preset_tab()
 
-        self.tabs.addTab(self.legacy_tab, "MANUAL")
+        self.carriage_tab = TeensyCarriagePanel(self.send_command, lambda line: self.log.append(line), self)
+        self.tabs.addTab(self.carriage_tab, "CARRIAGE")
+        self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
         self.tabs.addTab(self.full_auto_tab, "FULL AUTO")
         self.tabs.addTab(self.speed_tab, "SETTINGS")
@@ -1436,6 +1440,13 @@ class MinimalHMI(QMainWindow):
         connected = bool(getattr(self, "connection_controls_enabled", False)) and self.is_connected()
         controller = self.active_controller()
         capabilities = controller.capabilities
+        if hasattr(self, "carriage_tab"):
+            carriage_selected = controller.key == TEENSY_CARRIAGE
+            self.tabs.setTabVisible(self.tabs.indexOf(self.carriage_tab), carriage_selected)
+            if self.carriage_tab.connected != (connected and carriage_selected):
+                self.carriage_tab.session(connected and carriage_selected)
+            if carriage_selected:
+                self.tabs.setCurrentWidget(self.carriage_tab)
 
         if hasattr(self, "controller_combo"):
             self.controller_combo.setEnabled(not connected)
@@ -1460,7 +1471,7 @@ class MinimalHMI(QMainWindow):
                 self.auto_clamp_checkbox.blockSignals(False)
                 self.auto_clamp_enabled = False
 
-        if connected and not manual_ready and not auto_ready:
+        if connected and not manual_ready and not auto_ready and not capabilities.carriage_jog_ready:
             self._set_cycle_status(
                 f"STATUS: {controller.label} is diagnostics-only until validation is complete."
             )
@@ -1929,7 +1940,7 @@ class MinimalHMI(QMainWindow):
                     self.ser = VirtualController()
                     self.set_pill(self.status_label, "SIM MODE", "#f59e0b", fg="#0f172a")
                 else:
-                    self.ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
+                    self.ser = serial.Serial(port_name, BAUD_RATE, timeout=0.15, write_timeout=1)
                     self.set_pill(self.status_label, "Connected", "#22c55e", fg="#0f172a")
                 self.listener_stop_event = threading.Event()
                 self.connect_button.setText("Disconnect")
@@ -1961,15 +1972,30 @@ class MinimalHMI(QMainWindow):
 
     def _stop_listener(self):
         self.cycle_generation += 1
-        self.listener_stop_event.set()
-        try:
+        # Stop before closing the serial port. The firmware watchdog is the
+        # fallback if the port or process has already failed.
+        if getattr(self, "carriage_tab", None) and self.carriage_tab.connected:
             if self.ser and self.ser.is_open:
-                self.ser.close()
-        except Exception:
-            pass
+                try:
+                    self.ser.write(b"OFF\n")
+                except (serial.SerialException, OSError):
+                    pass
+            self.carriage_tab.session(False)
+        self.listener_stop_event.set()
+        port = self.ser
+        if port is not None and hasattr(port, "cancel_read"):
+            try:
+                port.cancel_read()
+            except (serial.SerialException, OSError):
+                pass
         thread = self.listener_thread
         if thread and thread.is_alive() and threading.current_thread() is not thread:
-            thread.join(timeout=2.0)
+            thread.join(timeout=1.0)
+        try:
+            if port and port.is_open:
+                port.close()
+        except (serial.SerialException, OSError):
+            pass
         self.listener_thread = None
 
     def handle_serial_disconnect(self, error):
@@ -1984,6 +2010,10 @@ class MinimalHMI(QMainWindow):
         self.log.append(f"Serial connection lost: {error}")
 
     def send_command(self, cmd):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            if not self.carriage_tab.allowed(cmd):
+                self.log.append(f"BLOCKED in Teensy Carriage mode: {cmd}")
+                return False
         if self.ser and self.ser.is_open:
             try:
                 self.ser.write((cmd + '\n').encode('utf-8'))
@@ -2181,6 +2211,8 @@ class MinimalHMI(QMainWindow):
 
     # ---------- Position updates ----------
     def update_message_log(self, msg):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            self.carriage_tab.handle_line(msg)
         self.log.append(msg)
         if hasattr(self, "speed_serial_console"):
             self.speed_serial_console.append(msg)

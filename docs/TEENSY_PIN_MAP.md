@@ -14,28 +14,49 @@ T41U5XBB V2.20 board. This is not yet an approved machine-wiring map.
 
 | Function | Teensy pin | Breakout point | Domain | Current status |
 |---|---:|---|---|---|
-| X step | D2 | Axis X `Stp` | 5 V-compatible output stage | Reported; no driver connected |
-| X direction | D3 | Axis X `Dir` | 5 V-compatible output stage | Reported; polarity unverified |
-| X enable | D10 | Axis X `En` | 5 V-compatible output stage | Reported; active level unverified |
+| X step | D2 | Axis X `Stp` | 5 V-compatible output stage | Driver connected; 0.5.1 holds LOW at boot, bounded jog diagnostic; physical travel measurement pending |
+| X direction | D3 | Axis X `Dir` | 5 V-compatible output stage | User confirmed LOW/A toward saw; HIGH/B away from saw toward Home |
+| X enable (remapped) | D40 | Axis Y `En` | 5 V-compatible output stage | Build 0.5.2; user confirmed LOW/HIGH voltages; LOW enables motor holding; stop retains selected level |
+| Retired X enable path | D10 | Axis X `En` | 5 V-compatible output stage | User measured 4.85V unloaded at both commanded levels; leave disconnected; exact fault unconfirmed |
 | X limit | D20 | Limit X `Sig` | Opto-isolated machine input | Reported; wiring mode unverified |
 | Y limit / board edge | D21 | Limit Y `Sig` | Opto-isolated machine input | Selected for Banner Q4X board-edge sensor |
 | Probe | D15 | Probe `Sig` | Opto-isolated machine input | Reserved; terminal has a reported soldering issue and is not used by sensor-bench firmware |
-| Door | D29 | Door `Sig` | Opto-isolated machine input | Reported |
+| Door | D29 | Door `Sig` | Opto-isolated machine input | Door switch NO to Sig, COM to Door Gnd; depressed expected LOW |
 | Halt / E-stop status | D14 | Halt `Sig` | Opto-isolated status input | Reported; must not be the sole E-stop layer |
-| ST0 | D36 | Digital Input ST0 | 3.3 V input group | Reported |
-| ST1 | D30 | Digital Input ST1 | 3.3 V input group | Reported |
+| Saw up | D22 | Lim Z `Sig` | Opto-isolated machine input | Switch NO to Sig, COM to Lim Z Gnd; user confirmed working after 0.4.1 remap |
+| Cyc/St | D17 | Cyc/St `Sig` | Opto-isolated machine input | Disconnected after reported input-voltage collapse; cause unverified |
+| Saw down | D16 | Fd/Hld `Sig` | Opto-isolated machine input | Switch NO to Sig, COM to Fd/Hld Gnd; depressed expected LOW; firmware 0.3.1 |
+| ST0 | D36 | Digital Input ST0 | Buffered input; 3.3 V pull-up, inverting Schmitt stage | Disconnected; header voltage switched but downstream path remains unverified |
+| ST1 | D30 | Digital Input ST1 | Buffered input; 3.3 V pull-up, inverting Schmitt stage | Disconnected; header voltage switched but downstream path remains unverified |
 | ST2 | D34 | Digital Input ST2 | 3.3 V input group | Reported |
 | ST3 | D35 | Digital Input ST3 | 3.3 V input group | Reported |
 | AUX0 | D31 | AUX0 screw terminal | ULN2003 open-collector low-side sink | Do not use for the active-high MOSFET trigger |
 | AUX1 | D32 | AUX1 screw terminal | ULN2003 open-collector low-side sink | Do not use for the active-high MOSFET trigger |
 | AUX2 | D33 | AUX2 screw terminal | ULN2003 open-collector low-side sink | Do not use for the active-high MOSFET trigger |
-| AUX0 TTL | D31 | JP10 `AUX0` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Saw-cylinder MOSFET trigger for commissioning |
+| AUX0 TTL | D31 | JP10 `AUX0` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Retired from commissioning: user measured about 0.01V while commanded; cause not established |
 | AUX1 TTL | D32 | JP10 `AUX1` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Main left-clamp MOSFET trigger for commissioning |
-| AUX2 TTL | D33 | JP10 `AUX2` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Spare pneumatic test channel |
+| AUX2 TTL | D33 | JP10 `AUX2` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Saw-travel cylinder MOSFET trigger; user confirmed indicator test passed |
 | Flood | D19 | Relay Flood | Open-collector relay driver | Reported; load unassigned |
 | Mist | D18 | Relay Mist | Open-collector relay driver | Reported; load unassigned |
+| Flood TTL | D19 | JP10 `Flood` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Blade-trigger valve MOSFET; indicator test user-confirmed, coil/mechanical validation pending |
+| Mist TTL | D18 | JP10 `Mist` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Spare; not controlled by current bench firmware |
 | I2C SCL | D24 | I2C `SC`/SCL | 3.3 V | Bench-verified with MCP23017 and INA228 |
 | I2C SDA | D25 | I2C `SD`/SDA | 3.3 V | Bench-verified with MCP23017 and INA228 |
+
+## Saw position and door switches
+
+The three dry-contact assignments and their expected MCU polarities are in
+[Saw and door switch plan](SAW_AND_DOOR_SWITCH_PLAN.md). Door, Lim Z, and Fd/Hld
+use their screw-terminal pairs. No positive supply
+wire is needed. These critical signals bypass MCP23017/I2C.
+
+Firmware 0.4.0 adds logic-only local door/position checks; see the Sensor Bench
+guide. It was built, simulated, flashed, and identified on COM4 on 2026-11-08;
+manual physical interlock acceptance is still pending.
+Build 0.4.1 moves Saw Up to Limit Z/D22 and requires the matching input-map
+identity; it is compiled/tested/flashed and identified on COM4. Physical
+acceptance on Limit Z was confirmed by the user.
+Do not equate an ON indicator or these non-rated checks with personnel guarding.
 
 ## Planned I2C device map
 
@@ -112,9 +133,17 @@ right hole is `Gnd`.
 
 | Sensor Bench command | Planned use | JP10 connection | Teensy pin | Approval |
 |---|---|---|---|---|
-| `OUT 0 0/1` | Saw cylinder valve | JP10 AUX0 `Sig` and adjacent `Gnd` | D31 | Assign for current commissioning; verify OFF=saw up before use |
+| `OUT 0 0/1` | Saw-travel cylinder valve | JP10 AUX2 `Sig` and adjacent `Gnd` | D33 | User confirmed AUX2 indicator test; verify OFF=saw up before use |
 | `OUT 1 0/1` | Main clamp valve, left of blade | JP10 AUX1 `Sig` and adjacent `Gnd` | D32 | Assign for current commissioning; verify OFF=clamp released before use |
-| `OUT 2 0/1` | Spare pneumatic channel | JP10 AUX2 `Sig` and adjacent `Gnd` | D33 | Trigger LED bench-verified; keep load disconnected until assigned |
+| `OUT 2 0/1` | Blade-trigger pneumatic valve | JP10 Flood `Sig` and adjacent `Gnd` | D19 | Pending indicator test; OFF must release the factory trigger |
+
+Firmware 0.3.2 reports `OUTPUT_MAP:AUX2_AUX1_FLOOD`. The dashboard requires this
+identifier before permitting output tests. It does not drive retired AUX0/D31.
+Use Flood's TTL header, not its relay screw terminal. Mist/D18 remains spare.
+The trigger cylinder mechanically operates the original saw switch; the board
+does not switch saw mains. Keep the saw unplugged for commissioning. Trigger
+release, spring return, loss-of-air response, and factory brake operation must
+be validated before blade-powered testing, along with local interlocks.
 
 Do not connect the module `TRIG/PWM` input to an AUX screw-terminal output: that
 path is an inverting open-collector sink and does not supply the active-high
@@ -138,14 +167,20 @@ behavior, active polarity, and fail-safe wiring have not been established.
 
 ## Guarded sensor-bench firmware
 
+Build 0.6.0 uses X STEP/DIR/ENA on D2/D3/D40 (Axis Y En) and adds bounded
+jogs of 13/64/127 pulses, 254 total per arm, at 40 pulses/s with Home/alarm checks. See
+[X commissioning](X_STEPPER_COMMISSIONING.md). It is not calibrated motion or
+homing. Pneumatic and stepper test modes are mutually exclusive.
+
 `firmware/chopsaw_sensor_bench/chopsaw_sensor_bench.ino` is the source-controlled
 commissioning firmware. It remaps `BOARD_EDGE` from Probe/D15 to the intact
 Limit Y/D21 screw terminal, configures the eight documented direct inputs and
-all MCP23017 channels as inputs, and configures only D31-D33 as guarded pneumatic
+all MCP23017 channels as inputs, and configures only D33, D32, and D19 as guarded pneumatic
 test outputs. They latch LOW before output mode, require explicit HMI arming and
 a 500 ms keepalive, shut off after 1.5 seconds without keepalive, and have a
-5-second maximum continuous-on time. No motion, actuator, saw, or enable output
-is available. The companion HMI is launched with `python run_sensor_bench.py`.
+5-second maximum continuous-on time. Carriage motion, motor enable, and automatic
+saw cycles are unavailable. The companion HMI
+is launched with `python run_sensor_bench.py`.
 
 ## Signals still to allocate and approve
 

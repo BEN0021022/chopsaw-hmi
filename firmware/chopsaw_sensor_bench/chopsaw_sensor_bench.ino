@@ -2,7 +2,7 @@
   Chop Saw Sensor Bench - Teensy 4.1 / T41U5XBB V2.20
 
   Input commissioning firmware plus three guarded, momentary pneumatic outputs.
-  It never issues motion. Pneumatic outputs boot OFF, require an explicit arm and
+  X diagnostics emit bounded, interruptible pulse jogs. Pneumatic outputs boot OFF, require an explicit arm and
   host keepalive, and shut off on communications or maximum-on timeout.
 
   I2C header: Wire2, SDA D25, SCL D24, 3.3 V logic.
@@ -10,10 +10,11 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "bench_interlocks.h"
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.3.0";
+constexpr char FIRMWARE_VERSION[] = "0.6.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -22,20 +23,22 @@ constexpr uint8_t HOME_PIN = 20;          // Limit X
 constexpr uint8_t BOARD_EDGE_PIN = 21;    // Limit Y (Probe D15 intentionally unused)
 constexpr uint8_t FENCE_DOOR_PIN = 29;    // Door
 constexpr uint8_t CL57T_ALARM_PIN = 14;   // Halt
-constexpr uint8_t SAW_UP_PIN = 36;        // ST0
-constexpr uint8_t SAW_DOWN_PIN = 30;      // ST1
+constexpr uint8_t SAW_UP_PIN = 22;        // Limit Z opto input; Cyc/St and ST0 deferred
+constexpr uint8_t SAW_DOWN_PIN = 16;      // Fd/Hld opto input; ST1 path unverified
 constexpr uint8_t FENCE_CLOSED_PIN = 34;  // ST2
 constexpr uint8_t OUTFEED_PIN = 35;       // ST3
+constexpr uint8_t X_STEP_PIN = 2;
+constexpr uint8_t X_DIR_PIN = 3;
+constexpr uint8_t X_ENABLE_PIN = 40;  // Axis Y En; suspect Axis X En/D10 unused
 
-// Commissioning map: AUX0=saw cylinder, AUX1=main clamp left of blade,
-// AUX2=spare. The physical valve plumbing must make OFF the safe direction.
-constexpr uint8_t OUTPUT_PINS[] = {31, 32, 33};  // AUX0, AUX1, AUX2 TTL/SSR signals
+// Commissioning map: AUX2=saw travel, AUX1=main left clamp, Flood=blade-trigger
+// valve. AUX0/D31 is retired pending investigation. Use JP10 TTL Sig/Gnd rows,
+// not the open-collector screw terminals. Test with valve power disconnected.
+constexpr uint8_t OUTPUT_PINS[] = {33, 32, 19};  // AUX2, AUX1, Flood TTL signals
 constexpr uint8_t OUTPUT_COUNT = sizeof(OUTPUT_PINS) / sizeof(OUTPUT_PINS[0]);
 
 constexpr uint32_t INPUT_INTERVAL_MS = 200;
 constexpr uint32_t HEALTH_INTERVAL_MS = 1000;
-constexpr uint32_t OUTPUT_WATCHDOG_MS = 1500;
-constexpr uint32_t OUTPUT_MAX_ON_MS = 5000;
 
 constexpr uint8_t MCP_IODIRA = 0x00;
 constexpr uint8_t MCP_IODIRB = 0x01;
@@ -50,26 +53,82 @@ uint32_t lastInputAt = 0;
 uint32_t lastHealthAt = 0;
 char commandBuffer[64];
 size_t commandLength = 0;
-bool outputsArmed = false;
-bool outputStates[OUTPUT_COUNT] = {false, false, false};
-uint32_t outputOnAt[OUTPUT_COUNT] = {0, 0, 0};
-uint32_t lastKeepaliveAt = 0;
-const char *outputFault = "NONE";
+bool discardCommand = false;
+bench::Interlocks interlocks;
+bool &outputsArmed = interlocks.armed;
+bool (&outputStates)[OUTPUT_COUNT] = interlocks.outputs;
+enum class TestMode { None, Pneumatic, Stepper };
+TestMode testMode = TestMode::None;
+bool xConfigured = false;
+bool xHomeSeenActive = false;
+bool xHomeVerified = false;
+bench::StableAssertion xHomeActive, xHomeInactive;
+uint8_t xEnableLevel = LOW;
+uint8_t xAlarmNormal = HIGH;
+uint16_t xBudget = 0;
+uint16_t xRemaining = 0;
+uint32_t xNextPulseUs = 0;
+constexpr uint16_t X_ARM_BUDGET = 254;  // ~2 inches total, calibration provisional
+constexpr uint32_t X_PULSE_INTERVAL_US = 25000;  // 40 pulses/s, no catch-up bursts
+uint32_t xArmAt = 0;
+uint32_t xLastStepAt = 0;
 
 void publishOutputs();
+void publishSafety();
+void publishX();
 
-void allOutputsOff() {
+void stopTests() {
+  xRemaining = 0;
+  interlocks.off(millis());
+  testMode = TestMode::None;
+  digitalWrite(X_STEP_PIN, LOW);
+  // Retain ENA level/holding torque. ENA is not a safety-rated power disconnect.
+}
+
+bool xReady() {
+  return xConfigured && xHomeVerified && digitalRead(HOME_PIN) == HIGH &&
+         digitalRead(CL57T_ALARM_PIN) == xAlarmNormal && interlocks.readyToArm();
+}
+
+void applyOutputs() {
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
-    digitalWrite(OUTPUT_PINS[index], LOW);
-    outputStates[index] = false;
-    outputOnAt[index] = 0;
+    digitalWrite(OUTPUT_PINS[index], outputStates[index] ? HIGH : LOW);
   }
 }
 
-void disarmOutputs(const char *fault) {
-  allOutputsOff();
-  outputsArmed = false;
-  outputFault = fault;
+void commandFault() {
+  xRemaining = 0;
+  interlocks.trip(bench::Fault::Command, millis());
+  applyOutputs();
+  testMode = TestMode::None;
+  digitalWrite(X_STEP_PIN, LOW);
+}
+
+void updateSafety() {
+  const bool wasArmed = outputsArmed;
+  const bench::Fault previousFault = interlocks.fault;
+  const bench::Travel previousTravel = interlocks.travel;
+  interlocks.tick({digitalRead(FENCE_DOOR_PIN) == LOW,
+                   digitalRead(SAW_UP_PIN) == LOW,
+                   digitalRead(SAW_DOWN_PIN) == LOW}, millis());
+  xHomeActive.update(digitalRead(HOME_PIN) == LOW, millis());
+  xHomeInactive.update(digitalRead(HOME_PIN) == HIGH, millis());
+  if (!outputsArmed && xHomeActive.stable) xHomeSeenActive = true;
+  if (xHomeSeenActive && xHomeInactive.stable) xHomeVerified = true;
+  if (testMode == TestMode::Stepper && outputsArmed) {
+    if (digitalRead(CL57T_ALARM_PIN) != xAlarmNormal)
+      interlocks.trip(bench::Fault::DriverAlarm, millis());
+    else if (digitalRead(HOME_PIN) == LOW)
+      interlocks.trip(bench::Fault::HomeLimit, millis());
+  }
+  if (!outputsArmed) { testMode = TestMode::None; xRemaining = 0; }
+  applyOutputs();
+  if (wasArmed != outputsArmed || previousFault != interlocks.fault ||
+      previousTravel != interlocks.travel) {
+    publishOutputs();
+    publishSafety();
+    publishX();
+  }
 }
 
 bool i2cProbe(uint8_t address) {
@@ -139,20 +198,21 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:0,TEST_OUTPUTS:3");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:BOUNDED_JOG_V1,X_MAP:STEP2_DIR3_EN40");
 }
 
 void publishPinMap() {
   Serial.println(
       "BENCH_PINMAP,HOME:D20/LIMIT_X,BOARD_EDGE:D21/LIMIT_Y,"
-      "FENCE_DOOR:D29/DOOR,CL57T_ALM:D14/HALT,SAW_UP:D36/ST0,"
-      "SAW_DOWN:D30/ST1,FENCE_CLOSED:D34/ST2,OUTFEED:D35/ST3,"
-      "SAW_CYLINDER:D31/AUX0_TTL,MAIN_CLAMP:D32/AUX1_TTL,SPARE_OUT:D33/AUX2_TTL");
+      "FENCE_DOOR:D29/DOOR,CL57T_ALM:D14/HALT,SAW_UP:D22/LIMIT_Z,"
+      "SAW_DOWN:D16/FD_HLD,FENCE_CLOSED:D34/ST2,OUTFEED:D35/ST3,"
+      "SAW_CYLINDER:D33/AUX2_TTL,MAIN_CLAMP:D32/AUX1_TTL,BLADE_TRIGGER:D19/FLOOD_TTL,"
+      "X_STEP:D2/AXIS_X_STP,X_DIR:D3/AXIS_X_DIR,X_ENA:D40/AXIS_Y_EN");
 }
 
 void publishOutputs() {
   Serial.print("BENCH_OUTPUTS,ARMED:");
-  Serial.print(outputsArmed ? 1 : 0);
+  Serial.print(outputsArmed && testMode == TestMode::Pneumatic ? 1 : 0);
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
     Serial.print(",CLAMP");
     Serial.print(index + 1);
@@ -160,7 +220,38 @@ void publishOutputs() {
     Serial.print(outputStates[index] ? 1 : 0);
   }
   Serial.print(",FAULT:");
-  Serial.println(outputFault);
+  Serial.println(interlocks.faultName());
+}
+
+void publishSafety() {
+  Serial.print("BENCH_SAFETY,DOOR_CLOSED:");
+  Serial.print(interlocks.door.stable ? 1 : 0);
+  Serial.print(",SAW_POSITION:");
+  Serial.print(interlocks.position());
+  Serial.print(",READY:");
+  Serial.print(interlocks.readyToArm() ? 1 : 0);
+  Serial.print(",RESET_READY:");
+  Serial.print(interlocks.readyToReset() ? 1 : 0);
+  Serial.print(",FAULT:");
+  Serial.print(interlocks.faultName());
+  Serial.print(",BLOCKER:");
+  Serial.println(interlocks.blocker());
+}
+
+void publishX() {
+  Serial.print("BENCH_X,ARMED:");
+  Serial.print(outputsArmed && testMode == TestMode::Stepper ? 1 : 0);
+  Serial.print(",CONFIGURED:"); Serial.print(xConfigured ? 1 : 0);
+  Serial.print(",READY:"); Serial.print(xReady() ? 1 : 0);
+  Serial.print(",HOME_VERIFIED:"); Serial.print(xHomeVerified ? 1 : 0);
+  Serial.print(",HOME_RAW:"); Serial.print(digitalRead(HOME_PIN));
+  Serial.print(",ALARM_RAW:"); Serial.print(digitalRead(CL57T_ALARM_PIN));
+  Serial.print(",STEP:"); Serial.print(digitalRead(X_STEP_PIN));
+  Serial.print(",DIR:"); Serial.print(digitalRead(X_DIR_PIN));
+  Serial.print(",ENA:"); Serial.print(digitalRead(X_ENABLE_PIN));
+  Serial.print(",BUDGET:"); Serial.print(xBudget);
+  Serial.print(",REMAINING:"); Serial.print(xRemaining);
+  Serial.print(",FAULT:"); Serial.println(interlocks.faultName());
 }
 
 void publishInputs() {
@@ -260,10 +351,12 @@ void publishI2cScan() {
 
 void publishStatus() {
   publishHello();
-  publishHealth();
+  if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishHealth();
   publishInputs();
-  publishMcp();
+  if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishMcp();
   publishOutputs();
+  publishSafety();
+  publishX();
 }
 
 bool startsWith(const char *text, const char *prefix) {
@@ -271,6 +364,8 @@ bool startsWith(const char *text, const char *prefix) {
 }
 
 void handleCommand(char *command) {
+  // An overdue heartbeat or open door must trip before a new command can refresh it.
+  updateSafety();
   for (char *cursor = command; *cursor; ++cursor) {
     *cursor = toupper(*cursor);
   }
@@ -282,76 +377,177 @@ void handleCommand(char *command) {
   } else if (strcmp(command, "PINMAP") == 0) {
     publishPinMap();
   } else if (strcmp(command, "I2C") == 0) {
+    if (outputsArmed || interlocks.travel != bench::Travel::Idle) {
+      Serial.println("BENCH_ERROR,CODE:I2C_BLOCKED_DURING_TEST");
+      return;
+    }
     publishI2cScan();
     configureMcpInputs();
     publishHealth();
   } else if (strcmp(command, "STATUS") == 0) {
     publishStatus();
   } else if (strcmp(command, "ARM 1") == 0) {
-    allOutputsOff();
-    outputsArmed = true;
-    lastKeepaliveAt = millis();
-    outputFault = "NONE";
+    if (!interlocks.arm(millis())) {
+      Serial.print("BENCH_ERROR,CODE:");
+      Serial.println(interlocks.blocker());
+    } else testMode = TestMode::Pneumatic;
+    applyOutputs();
     publishOutputs();
+    publishSafety();
+  } else if (strcmp(command, "RESET") == 0) {
+    if (!interlocks.reset()) Serial.println("BENCH_ERROR,CODE:RESET_NOT_READY");
+    applyOutputs();
+    publishOutputs();
+    publishSafety();
   } else if (strcmp(command, "ARM 0") == 0 || strcmp(command, "OFF") == 0) {
-    disarmOutputs("NONE");
+    stopTests();
+    applyOutputs();
     publishOutputs();
+    publishSafety();
+    publishX();
   } else if (strcmp(command, "KEEPALIVE") == 0) {
-    if (outputsArmed) lastKeepaliveAt = millis();
+    interlocks.keepalive(millis());
   } else if (startsWith(command, "OUT ")) {
     int output = -1;
     int state = -1;
     char extra = '\0';
     if (sscanf(command, "OUT %d %d %c", &output, &state, &extra) != 2 ||
         output < 0 || output >= OUTPUT_COUNT || (state != 0 && state != 1)) {
-      disarmOutputs("COMMAND");
+      commandFault();
       Serial.println("BENCH_ERROR,CODE:BAD_OUTPUT_COMMAND");
       publishOutputs();
       return;
     }
-    if (state == 0) {
-      digitalWrite(OUTPUT_PINS[output], LOW);
-      outputStates[output] = false;
-      outputOnAt[output] = 0;
-      publishOutputs();
-    } else if (!outputsArmed) {
-      Serial.println("BENCH_ERROR,CODE:NOT_ARMED");
-      publishOutputs();
-    } else if (!outputStates[output]) {
-      digitalWrite(OUTPUT_PINS[output], HIGH);
-      outputStates[output] = true;
-      outputOnAt[output] = millis();
-      publishOutputs();
+    const char *error = state == 1 && testMode == TestMode::Stepper ? "STEPPER_MODE_ACTIVE" :
+      interlocks.requestOutput(static_cast<uint8_t>(output), state == 1, millis());
+    applyOutputs();
+    if (error) {
+      Serial.print("BENCH_ERROR,CODE:");
+      Serial.println(error);
     }
+    publishOutputs();
+    publishSafety();
+  } else if (startsWith(command, "XLEVEL ") || startsWith(command, "XCONFIG ")) {
+    int first = -1, second = -1; char extra = '\0';
+    const bool configure = startsWith(command, "XCONFIG ");
+    const char *arguments = command + (configure ? 8 : 7);
+    if (sscanf(arguments, "%d %d %c", &first, &second, &extra) != 2 ||
+        first < 0 || first > 1 || second < 0 || second > 1) {
+      commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_X_CONFIG");
+    } else if (outputsArmed || testMode != TestMode::None) {
+      Serial.println("BENCH_ERROR,CODE:DISARM_FIRST");
+    } else if (configure) {
+      if (!xHomeVerified || digitalRead(HOME_PIN) != HIGH ||
+          digitalRead(CL57T_ALARM_PIN) != second || !interlocks.readyToArm()) {
+        Serial.println("BENCH_ERROR,CODE:X_CONFIG_NOT_READY");
+      } else { xEnableLevel = first; xAlarmNormal = second; xConfigured = true; }
+    } else {
+      digitalWrite(X_STEP_PIN, LOW);
+      digitalWrite(X_DIR_PIN, first);
+      digitalWrite(X_ENABLE_PIN, second);
+      xConfigured = false;
+    }
+    publishX();
+  } else if (strcmp(command, "XARM 1") == 0) {
+    if (!xReady() || !interlocks.arm(millis())) {
+      Serial.println("BENCH_ERROR,CODE:X_NOT_READY");
+    } else {
+      testMode = TestMode::Stepper;
+      xBudget = X_ARM_BUDGET;
+      xRemaining = 0;
+      xArmAt = xLastStepAt = millis();
+      digitalWrite(X_STEP_PIN, LOW);
+      digitalWrite(X_ENABLE_PIN, xEnableLevel);
+    }
+    publishOutputs(); publishSafety(); publishX();
+  } else if (strcmp(command, "XARM 0") == 0) {
+    stopTests(); applyOutputs(); publishOutputs(); publishSafety(); publishX();
+  } else if (startsWith(command, "XJOG ")) {
+    int direction = 0, pulses = 0; char extra = '\0';
+    if (sscanf(command + 5, "%d %d %c", &direction, &pulses, &extra) != 2 ||
+        (direction != -1 && direction != 1) ||
+        (pulses != 13 && pulses != 64 && pulses != 127)) {
+      commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_X_JOG");
+    } else if (!outputsArmed || testMode != TestMode::Stepper || !xConfigured) {
+      Serial.println("BENCH_ERROR,CODE:X_NOT_ARMED");
+    } else if (xRemaining) {
+      Serial.println("BENCH_ERROR,CODE:X_BUSY");
+    } else if (pulses > xBudget) {
+      Serial.println("BENCH_ERROR,CODE:X_BUDGET_EXCEEDED");
+    } else if (static_cast<uint32_t>(millis() - xArmAt) < 200 ||
+               static_cast<uint32_t>(millis() - xLastStepAt) < 200) {
+      Serial.println("BENCH_ERROR,CODE:X_RATE_LIMIT");
+    } else {
+      digitalWrite(X_DIR_PIN, direction == 1 ? HIGH : LOW);
+      xRemaining = static_cast<uint16_t>(pulses);
+      xNextPulseUs = micros() + 10;  // direction setup; no pulse in command handler
+    }
+    publishX();
+  } else if (startsWith(command, "XSTEP ")) {
+    int direction = 0; char extra = '\0';
+    if (sscanf(command + 6, "%d %c", &direction, &extra) != 1 ||
+        (direction != -1 && direction != 1)) {
+      commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_X_STEP");
+    } else if (!outputsArmed || testMode != TestMode::Stepper || !xConfigured || !xBudget) {
+      Serial.println("BENCH_ERROR,CODE:X_NOT_ARMED");
+    } else if (xRemaining) {
+      Serial.println("BENCH_ERROR,CODE:X_BUSY");
+    } else if (static_cast<uint32_t>(millis() - xArmAt) < 200 ||
+               static_cast<uint32_t>(millis() - xLastStepAt) < 200) {
+      Serial.println("BENCH_ERROR,CODE:X_RATE_LIMIT");
+    } else {
+      digitalWrite(X_DIR_PIN, direction == 1 ? HIGH : LOW);
+      delayMicroseconds(10);  // driver requires >=2us direction setup
+      updateSafety();
+      if (outputsArmed && testMode == TestMode::Stepper) {
+        digitalWrite(X_STEP_PIN, HIGH);
+        delayMicroseconds(5);  // driver requires >=1us pulse width
+        digitalWrite(X_STEP_PIN, LOW);
+        --xBudget;
+        xLastStepAt = millis();
+        if (!xBudget) stopTests();
+      }
+    }
+    publishOutputs(); publishSafety(); publishX();
   } else if (startsWith(command, "EN") || startsWith(command, "G") ||
              startsWith(command, "$")) {
-    disarmOutputs("COMMAND");
+    commandFault();
     Serial.println("BENCH_ERROR,CODE:COMMAND_BLOCKED");
     publishOutputs();
   } else if (*command) {
+    commandFault();
     Serial.println("BENCH_ERROR,CODE:UNKNOWN_COMMAND");
+    publishOutputs();
+    publishSafety();
   }
 }
 
-void enforceOutputSafety(uint32_t now) {
-  if (outputsArmed && now - lastKeepaliveAt > OUTPUT_WATCHDOG_MS) {
-    disarmOutputs("WATCHDOG");
-    publishOutputs();
-    return;
-  }
-  for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
-    if (outputStates[index] && now - outputOnAt[index] > OUTPUT_MAX_ON_MS) {
-      disarmOutputs("MAX_ON");
-      publishOutputs();
-      return;
-    }
-  }
+// Keep this scheduler separate from loop(); avoids a Teensy GCC optimizer ICE.
+void __attribute__((noinline)) serviceXJog() {
+  if (!xRemaining) return;
+  updateSafety();
+  if (!xRemaining || !outputsArmed || testMode != TestMode::Stepper) return;
+  if (static_cast<int32_t>(micros() - xNextPulseUs) < 0) return;
+  digitalWrite(X_STEP_PIN, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(X_STEP_PIN, LOW);
+  --xRemaining;
+  --xBudget;
+  xLastStepAt = millis();
+  xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
+  if (!xBudget) stopTests();
+  if (!xRemaining) { publishOutputs(); publishSafety(); publishX(); }
 }
 
 void readSerialCommands() {
-  while (Serial.available()) {
+  uint8_t processed = 0;
+  while (Serial.available() && processed++ < 64) {
     const char incoming = static_cast<char>(Serial.read());
     if (incoming == '\r') continue;
+    if (discardCommand) {
+      if (incoming == '\n') discardCommand = false;
+      continue;
+    }
     if (incoming == '\n') {
       commandBuffer[commandLength] = '\0';
       handleCommand(commandBuffer);
@@ -360,7 +556,11 @@ void readSerialCommands() {
       commandBuffer[commandLength++] = incoming;
     } else {
       commandLength = 0;
+      discardCommand = true;
+      commandFault();
       Serial.println("BENCH_ERROR,CODE:COMMAND_TOO_LONG");
+      publishOutputs();
+      publishSafety();
     }
   }
 }
@@ -368,6 +568,13 @@ void readSerialCommands() {
 }  // namespace
 
 void setup() {
+  digitalWriteFast(X_STEP_PIN, LOW); pinMode(X_STEP_PIN, OUTPUT);
+  digitalWrite(X_STEP_PIN, LOW);
+  digitalWriteFast(X_DIR_PIN, LOW); pinMode(X_DIR_PIN, OUTPUT);
+  digitalWrite(X_DIR_PIN, LOW);
+  // HIGH is an electrical level only; the actual ENA polarity must be verified.
+  digitalWriteFast(X_ENABLE_PIN, HIGH); pinMode(X_ENABLE_PIN, OUTPUT);
+  digitalWrite(X_ENABLE_PIN, HIGH);
   // Latch every pneumatic signal LOW before changing its pin to output. This keeps
   // all three MOSFET triggers off during startup.
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
@@ -395,16 +602,20 @@ void setup() {
 }
 
 void loop() {
+  updateSafety();
   readSerialCommands();
+  serviceXJog();
   const uint32_t now = millis();
-  enforceOutputSafety(now);
+  updateSafety();
   if (now - lastInputAt >= INPUT_INTERVAL_MS) {
     lastInputAt = now;
     publishInputs();
-    publishMcp();
+    publishSafety();
+    publishX();
+    if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishMcp();
   }
   if (now - lastHealthAt >= HEALTH_INTERVAL_MS) {
     lastHealthAt = now;
-    publishHealth();
+    if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishHealth();
   }
 }

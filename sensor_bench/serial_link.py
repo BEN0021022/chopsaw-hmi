@@ -11,8 +11,9 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 
 READ_COMMANDS = frozenset({"HELLO", "PING", "PINMAP", "I2C", "STATUS"})
-CONTROL_COMMANDS = frozenset({"ARM 0", "ARM 1", "KEEPALIVE", "OFF"})
+CONTROL_COMMANDS = frozenset({"ARM 0", "ARM 1", "KEEPALIVE", "OFF", "RESET"})
 OUTPUT_COMMAND = re.compile(r"OUT [0-2] [01]")
+X_COMMAND = re.compile(r"(?:X(?:LEVEL|CONFIG) [01] [01]|XARM [01]|XSTEP (?:-1|1)|XJOG (?:-1|1) (?:13|64|127))")
 
 
 def is_allowed_command(command: str) -> bool:
@@ -22,6 +23,7 @@ def is_allowed_command(command: str) -> bool:
         normalized in READ_COMMANDS
         or normalized in CONTROL_COMMANDS
         or OUTPUT_COMMAND.fullmatch(normalized) is not None
+        or X_COMMAND.fullmatch(normalized) is not None
     )
 
 
@@ -86,28 +88,37 @@ class SerialLink(QObject):
     def close(self, emit: bool = True) -> None:
         was_connected = self.is_connected
         self._stop.set()
-        if self._serial is not None:
+        port = self._serial
+        # Wake the pending Windows overlapped read and let the listener finish
+        # before close() destroys its read handles.
+        if port is not None and hasattr(port, "cancel_read"):
             try:
-                self._serial.close()
+                port.cancel_read()
             except (serial.SerialException, OSError):
                 pass
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=1.0)
+        if port is not None:
+            try:
+                port.close()
+            except (serial.SerialException, OSError):
+                pass
         self._serial = None
         self._thread = None
         if emit and was_connected:
             self.disconnected.emit("Disconnected")
 
     def _listen(self) -> None:
+        port = self._serial
         try:
-            while not self._stop.is_set() and self._serial and self._serial.is_open:
-                data = self._serial.readline()
+            while not self._stop.is_set() and port and port.is_open:
+                data = port.readline()
                 if not data:
                     continue
                 line = data.decode("utf-8", errors="replace").strip()
                 if line:
                     self.line_received.emit(line)
-        except (serial.SerialException, OSError) as error:
+        except (serial.SerialException, OSError, AttributeError, TypeError) as error:
             if not self._stop.is_set():
                 self.disconnected.emit(str(error) or "Serial connection lost")
 

@@ -9,7 +9,7 @@ from .window import SensorBenchWindow
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Read-only Chop Saw sensor bench")
+    parser = argparse.ArgumentParser(description="Guarded Chop Saw commissioning bench")
     parser.add_argument("--demo", action="store_true", help="run without hardware using simulated telemetry")
     args = parser.parse_args()
 

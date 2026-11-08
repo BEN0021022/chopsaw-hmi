@@ -1,0 +1,3 @@
+
+# Preserve recovered firmware bytes and original historical whitespace.
+archive/legacy-mega-v2.5/*.ino -text -whitespace
