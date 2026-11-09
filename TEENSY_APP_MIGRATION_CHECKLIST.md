@@ -14,6 +14,8 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 Record outstanding physical responses in the [fault acceptance matrix](docs/TEENSY_FAULT_ACCEPTANCE_MATRIX.md).
+Prepared next build: **0.14.0**, editable pulse rate/acceleration and recovered
+MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Not flashed yet.
 
 ## Current run - work through these next
 
@@ -28,7 +30,10 @@ Record outstanding physical responses in the [fault acceptance matrix](docs/TEEN
       in 0.12.0; software tests pass. Default remains the proven constant 40 pulses/s.
 - [x] Load matching 0.13.0 firmware/app; verify CARRIAGE_V7, D40 enable,
       Commissioning profile, disarmed/unconfigured, unknown position and zero queued motion.
-- [ ] Physically accept the new profiles.
+- [x] Operator reports 0.13.0 testing good, including its fastest profile.
+      This is motion feedback, not completion of the physical fault matrix.
+- [x] Prepare editable 0.14.0 profiles with controller readback and pulse-timing feedback.
+- [ ] Flash/read back 0.14.0 and accept the selected higher operating rates.
 - [x] Prepare bounded board-edge search and a separate captured truing move;
       preserves the Home reference, no automatic pneumatic or saw action.
 - [ ] Accept edge detection/geometry on the machine and finish the stock workflow.

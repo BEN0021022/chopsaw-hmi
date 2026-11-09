@@ -1,8 +1,8 @@
 #include "controller_fixture.h"
 int main() {
   restart();
-  CHECK(Serial.outgoing.find("FW:0.13.0") != std::string::npos);
-  CHECK(Serial.outgoing.find("X_APP:CARRIAGE_V7") != std::string::npos);
+  CHECK(Serial.outgoing.find("FW:0.14.0") != std::string::npos);
+  CHECK(Serial.outgoing.find("X_APP:CARRIAGE_V8") != std::string::npos);
   CHECK(Serial.outgoing.find("X_TEST:MANUAL_JOG_V1") != std::string::npos);
   CHECK(Serial.outgoing.find("MAX_JOG:254,BASE_RATE:40") != std::string::npos);
   CHECK(Serial.outgoing.find("BUDGET:") == std::string::npos);

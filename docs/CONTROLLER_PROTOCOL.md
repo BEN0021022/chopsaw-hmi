@@ -11,6 +11,14 @@ unconfigured, unknown position, zero queued motion and profile 0. New physical
 acceptance remains pending. Stable 0.11.0 / CARRIAGE_V5 is preserved at `cab3a16`.
 Profiles originated in 0.12.0 / CARRIAGE_V6; 0.13.0 adds EDGE_SEARCH:BOUNDED_V1.
 
+Prepared 0.14.0 changes identity to CARRIAGE_V8, MAX_RATE:20000,
+MAX_ACCEL:50000, PROFILES:EDITABLE_V1. It adds optional `XPROFILE id rate accel`
+(id 1-3, disarmed only; RAM values), retains `XPROFILE id` selection, and reports
+PROFILE_RATE0..3/PROFILE_ACCEL0..3 plus JOG_PULSES/JOG_TIME_US/JOG_PEAK_PPS/JOG_LATE_US.
+Readbacks must match the selected profile's stored values. Profile 0 is immutable
+40/0. See [speed tuning](SPEED_TUNING.md); the protocol below remains the active
+0.13.0 baseline until that new build is flashed.
+
 ## Identity
 
 Main-app motion requires all of:

@@ -32,7 +32,10 @@ def packet(panel, **changes):
                   SOFT_MIN_OFFSET=-20402, SOFT_MAX_OFFSET=-14, SOFT_MAX_MILLI=160389,
                   MAX_MOVE=20594, TARGET_OFFSET=0, MOVE_KIND="IDLE", PROFILE_ID=0, ACCEL_PPS2=0,
                   EDGE_STATE="IDLE", EDGE_ERROR="NONE", EDGE_VALID=0, EDGE_MILLI=0,
-                  TRUING_MILLI=0, SENSOR_OFFSET_MILLI=10800, TRIM_MILLI=250)
+                  TRUING_MILLI=0, SENSOR_OFFSET_MILLI=10800, TRIM_MILLI=250,
+                  JOG_PULSES=0,JOG_TIME_US=0,JOG_PEAK_PPS=0,JOG_LATE_US=0,
+                  PROFILE_RATE0=40,PROFILE_ACCEL0=0,PROFILE_RATE1=150,PROFILE_ACCEL1=200,
+                  PROFILE_RATE2=1000,PROFILE_ACCEL2=500,PROFILE_RATE3=2500,PROFILE_ACCEL3=1500)
     fields.update(changes)
     if fields["ARMED"] == 1 and "JOG_READY" not in changes:
         fields["JOG_READY"] = 1
@@ -225,16 +228,45 @@ def run():
         assert p.select_profile(2)
         assert wire.writes[-1] == "XPROFILE 2"
         assert p.x["PROFILE_ID"] == "0", "Wait for actual controller profile ACK"
-        packet(p, PROFILE_ID=2, RATE_PPS=80, ACCEL_PPS2=160)
-        assert "80 pulses/s" in p.profile_label.text()
+        packet(p, PROFILE_ID=2, RATE_PPS=1000, ACCEL_PPS2=500)
+        assert "1000 pulses/s" in p.profile_label.text()
         assert w.active_profile_name == "NORMAL"
         assert w.switch_profile("GENTLE") and wire.writes[-1] == "XPROFILE 1"
         assert w.active_profile_name == "NORMAL", "Legacy buttons also wait for controller ACK"
         assert create_controller_backend(TEENSY_CARRIAGE).profile_select(2) == ["XPROFILE 3"]
-        packet(p, ARMED=1, PROFILE_ID=2, RATE_PPS=80, ACCEL_PPS2=160)
+        packet(p, PROFILE_ID=1, RATE_PPS=150, ACCEL_PPS2=200)
+        assert w.active_profile_name == "GENTLE" and p.profile_pending is None
+        packet(p, ARMED=1, PROFILE_ID=2, RATE_PPS=1000, ACCEL_PPS2=500)
         assert not p.select_profile(3) and not p.profile_apply.isEnabled()
         packet(p, ARMED=0, PROFILE_ID=2, RATE_PPS=40, ACCEL_PPS2=160)
         assert p.local_fault, "Inconsistent profile limits must fail closed"
+
+        # Editable rate/acceleration: explicit apply, controller store/readback,
+        # no silent reuse of MEGA's persisted maximum-valued UI settings.
+        ready(p); p.consent.setChecked(True)
+        p.profile_combo.setCurrentIndex(p.profile_combo.findData(3))
+        assert p.rate_input.value() == 2500 and p.accel_input.value() == 1500
+        p.rate_input.setValue(1700); p.accel_input.setValue(2200)
+        assert p.x['RATE_PPS'] == '40'
+        p.profile_apply.click()
+        assert wire.writes[-1] == 'XPROFILE 3 1700 2200' and p.profile_pending
+        assert not p.allowed('XARM 1') and not p.profile_apply.isEnabled()
+        packet(p)
+        assert p.profile_pending, 'Old telemetry cannot acknowledge new parameters'
+        packet(p,PROFILE_ID=3,RATE_PPS=1700,ACCEL_PPS2=2200,PROFILE_RATE3=1700,PROFILE_ACCEL3=2200)
+        assert p.profile_pending is None and w.active_profile_name == 'FAST'
+        assert p.rate_input.value() == 1700 and '13.37 in/s max' in p.profile_label.text()
+        packet(p,ARMED=1,PROFILE_ID=3,RATE_PPS=1700,ACCEL_PPS2=2200,PROFILE_RATE3=1700,PROFILE_ACCEL3=2200,
+               JOG_PULSES=127,JOG_PEAK_PPS=650,JOG_TIME_US=500000,JOG_LATE_US=18)
+        assert not p.rate_input.isEnabled() and not p.accel_input.isEnabled()
+        assert '650 pulses/s' in p.pulse_timing.text()
+        assert not p.allowed('XPROFILE 3 20001 1000') and not p.allowed('XPROFILE 3 1000 50001')
+        ready(p); p.consent.setChecked(True)
+        assert not p.allowed('XPROFILE 0 1000 1000') and not p.allowed('XPROFILE 3 1000 0')
+        assert p.select_profile(3)
+        p.profile_pending = (*p.profile_pending[:3],time.monotonic()-2)
+        p.tick()
+        assert p.local_fault == 'Profile acknowledgment timed out'
 
         # Edge search uses the referenced position and clear sensor, then stops.
         # A fresh controller-owned capture is required for the separate truing move.

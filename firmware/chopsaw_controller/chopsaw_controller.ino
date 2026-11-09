@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.13.0";
+constexpr char FIRMWARE_VERSION[] = "0.14.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -77,7 +77,10 @@ int32_t xSoftMaxOffset = 0;
 int32_t xTargetOffset = 0;
 bool xAbsoluteMove = false;
 uint8_t xProfile = 0;
+carriage::MotionProfile xProfiles[4] = {carriage::MotionProfile::get(0), carriage::MotionProfile::get(1),
+                                      carriage::MotionProfile::get(2), carriage::MotionProfile::get(3)};
 carriage::MotionRamp xRamp;
+carriage::PulseTiming xTiming;
 carriage::EdgeSearch xEdge;
 bool xEdgeValid = false;
 int32_t xEdgeMilli = 0, xTruingMilli = 0;
@@ -95,6 +98,13 @@ uint32_t xLastStepAt = 0;
 void publishOutputs();
 void publishSafety();
 void publishX();
+
+// Teensy USB writes can wait when the host stops reading. During armed motion,
+// reserve enough room for a whole record rather than blocking the pulse loop.
+// See teensy4/usb_serial.h availableForWrite() timing guidance.
+bool telemetryRoom(unsigned bytes) {
+  return !outputsArmed || Serial.availableForWrite() >= static_cast<int>(bytes);
+}
 
 void stopTests() {
   if (xHoming.active()) { xPositionKnown = false; xHoming.cancel(); }
@@ -220,14 +230,16 @@ void printHex16(uint16_t value) {
 }
 
 void publishHello() {
+  if (!telemetryRoom(1024)) return;
   Serial.print("BENCH_HELLO,PROTO:");
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V7,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:127,PROFILES:RAMP_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V8,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1");
 }
 
 void publishPinMap() {
+  if (!telemetryRoom(768)) return;
   Serial.println(
       "BENCH_PINMAP,HOME:D20/LIMIT_X,BOARD_EDGE:D21/LIMIT_Y,"
       "FENCE_DOOR:D29/DOOR,CL57T_ALM:D14/HALT,SAW_UP:D22/LIMIT_Z,"
@@ -237,6 +249,7 @@ void publishPinMap() {
 }
 
 void publishOutputs() {
+  if (!telemetryRoom(256)) return;
   Serial.print("BENCH_OUTPUTS,ARMED:");
   Serial.print(outputsArmed && testMode == TestMode::Pneumatic ? 1 : 0);
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
@@ -250,6 +263,7 @@ void publishOutputs() {
 }
 
 void publishSafety() {
+  if (!telemetryRoom(256)) return;
   Serial.print("BENCH_SAFETY,DOOR_CLOSED:");
   Serial.print(interlocks.door.stable ? 1 : 0);
   Serial.print(",SAW_POSITION:");
@@ -265,6 +279,7 @@ void publishSafety() {
 }
 
 void publishX() {
+  if (!telemetryRoom(1024)) return;
   Serial.print("BENCH_X,ARMED:");
   Serial.print(outputsArmed && (testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge) ? 1 : 0);
   Serial.print(",CONFIGURED:"); Serial.print(xConfigured ? 1 : 0);
@@ -277,8 +292,16 @@ void publishX() {
   Serial.print(",ENA:"); Serial.print(digitalRead(X_ENABLE_PIN));
   Serial.print(",MAX_JOG:"); Serial.print(X_MAX_JOG_PULSES);
   Serial.print(",PROFILE_ID:"); Serial.print(xProfile);
-  Serial.print(",RATE_PPS:"); Serial.print(carriage::MotionProfile::get(xProfile).maxRate);
-  Serial.print(",ACCEL_PPS2:"); Serial.print(carriage::MotionProfile::get(xProfile).acceleration);
+  Serial.print(",RATE_PPS:"); Serial.print(xProfiles[xProfile].maxRate);
+  Serial.print(",ACCEL_PPS2:"); Serial.print(xProfiles[xProfile].acceleration);
+  for (unsigned id=0; id<4; ++id) {
+    Serial.print(",PROFILE_RATE"); Serial.print(id); Serial.print(':'); Serial.print(xProfiles[id].maxRate);
+    Serial.print(",PROFILE_ACCEL"); Serial.print(id); Serial.print(':'); Serial.print(xProfiles[id].acceleration);
+  }
+  Serial.print(",JOG_PULSES:"); Serial.print(xTiming.count);
+  Serial.print(",JOG_TIME_US:"); Serial.print(xTiming.elapsedUs());
+  Serial.print(",JOG_PEAK_PPS:"); Serial.print(xTiming.peakPps());
+  Serial.print(",JOG_LATE_US:"); Serial.print(xTiming.maxLate);
   Serial.print(",JOG_READY:");
   Serial.print(outputsArmed && testMode == TestMode::Stepper &&
                static_cast<uint32_t>(millis() - xArmAt) >= 200 ? 1 : 0);
@@ -306,6 +329,7 @@ void publishX() {
 }
 
 void publishInputs() {
+  if (!telemetryRoom(256)) return;
   ++sequenceNumber;
   Serial.print("BENCH_INPUTS,SEQ:");
   Serial.print(sequenceNumber);
@@ -521,12 +545,17 @@ void __attribute__((noinline)) handleCommand(char *command) {
     xHomeInactive = bench::StableAssertion{};
     publishOutputs(); publishSafety(); publishX();
   } else if (startsWith(command, "XPROFILE ")) {
-    int id = -1; char extra = '\0';
-    if (sscanf(command + 9, "%d %c", &id, &extra) != 1 || id < 0 || id > 3) {
+    int id = -1, rate = -1, acceleration = -1; char extra = '\0';
+    const int fields = sscanf(command + 9, "%d %d %d %c", &id, &rate, &acceleration, &extra);
+    const bool selectOnly = sscanf(command + 9, "%d %c", &id, &extra) == 1;
+    if ((!selectOnly && fields != 3) || id < 0 || id > 3 ||
+        (fields == 3 && (id == 0 || rate < 1 || rate > carriage::MotionProfile::MaxRate ||
+                        acceleration < 1 || acceleration > carriage::MotionProfile::MaxAcceleration))) {
       commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_PROFILE");
     } else if (outputsArmed || testMode != TestMode::None) {
       Serial.println("BENCH_ERROR,CODE:DISARM_FIRST");
     } else {
+      if (fields == 3) xProfiles[id] = {static_cast<uint16_t>(rate), static_cast<uint16_t>(acceleration)};
       xProfile = id;  // RAM only; selecting a profile never enables or moves
     }
     publishX();
@@ -606,7 +635,8 @@ void __attribute__((noinline)) handleCommand(char *command) {
       xDirection = delta >= 0 ? 1 : -1;
       xRemaining = static_cast<uint16_t>(delta >= 0 ? delta : -delta);
       xAbsoluteMove = xRemaining != 0;
-      xRamp.start(xRemaining, xProfile);
+      xRamp.start(xRemaining, xProfiles[xProfile]);
+      xTiming = carriage::PulseTiming{};
       digitalWrite(X_DIR_PIN, xDirection == 1 ? HIGH : LOW);
       const uint32_t directionReady = micros() + (xProfile ? xRamp.intervalUs() : 10);
       if (static_cast<uint32_t>(millis() - xLastStepAt) >= 26 ||
@@ -635,7 +665,8 @@ void __attribute__((noinline)) handleCommand(char *command) {
       xDirection = direction;
       ++xMoveId;
       xRemaining = static_cast<uint16_t>(pulses);
-      xRamp.start(xRemaining, xProfile);
+      xRamp.start(xRemaining, xProfiles[xProfile]);
+      xTiming = carriage::PulseTiming{};
       const uint32_t directionReady = micros() + (xProfile ? xRamp.intervalUs() : 10);
       // Keep the previous pulse deadline across jogs. Rapid clicks cannot
       // bypass the 40 pulses/s limit or create a catch-up burst.
@@ -698,6 +729,8 @@ void __attribute__((noinline)) serviceXJog() {
     interlocks.trip(bench::Fault::SoftLimit, millis());
     updateSafety(); publishOutputs(); publishSafety(); publishX(); return;
   }
+  const uint32_t pulseAt = micros();
+  xTiming.pulse(pulseAt, xNextPulseUs);
   digitalWrite(X_STEP_PIN, HIGH);
   delayMicroseconds(5);
   digitalWrite(X_STEP_PIN, LOW);
@@ -705,7 +738,9 @@ void __attribute__((noinline)) serviceXJog() {
   if (xPositionKnown) xHomeOffset += xDirection;
   --xRemaining; xRamp.pulsed();
   xLastStepAt = millis();
-  xNextPulseUs = micros() + xRamp.intervalUs();
+  // Rate is rising-edge to rising-edge; the 5us HIGH time is inside the period.
+  // Rebase on the actual edge, never the overdue deadline: no catch-up burst.
+  xNextPulseUs = pulseAt + xRamp.intervalUs();
   if (!xRemaining) { xAbsoluteMove = false; publishOutputs(); publishSafety(); publishX(); }
 }
 

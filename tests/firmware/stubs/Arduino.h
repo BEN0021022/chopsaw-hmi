@@ -41,6 +41,8 @@ inline void pinMode(uint8_t pin, int mode) {
 
 struct FakeSerial {
   std::string incoming, outgoing;
+  int txRoom = 8192;
+  int availableForWrite() const { return txRoom; }
   void begin(int) {}
   int available() const { return static_cast<int>(incoming.size()); }
   int read() { const char ch = incoming[0]; incoming.erase(0, 1); return ch; }
