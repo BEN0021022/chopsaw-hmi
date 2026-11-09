@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QPushButton, QTextBrowser, QLabel, QGridLayout,
     QDoubleSpinBox, QGroupBox, QCheckBox, QTabWidget, QToolButton,
     QFileDialog, QTextEdit, QRadioButton, QComboBox, QProgressBar,
-    QSpinBox, QFormLayout, QMessageBox, QProgressDialog
+    QFormLayout, QMessageBox, QProgressDialog, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal
 from PyQt6.QtGui import QTextCursor, QIcon
@@ -28,6 +28,7 @@ from config import SERIAL_PORT, BAUD_RATE, PROFILE_MAP
 from serial_handler import SignalBridge, listen_for_data
 from ui_components import KeypadWidget, CutLengthKeypad, CurrentGraphWidget
 from live_health import native_health, simulator_health, simulator_data_valid, HealthState, TelemetryActivity
+from pneumatic_timing import CylinderTimingPanel, CLAMPS, simulation_clamps
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
@@ -926,7 +927,14 @@ class MinimalHMI(QMainWindow):
         return w
 
     def create_speed_tab(self):
-        w = QWidget(); root = QVBoxLayout(w)
+        w = QWidget(); outer = QVBoxLayout(w)
+        self.settings_scroll = QScrollArea()
+        self.settings_scroll.setWidgetResizable(True)
+        self.settings_scroll.setStyleSheet('QScrollArea { background:#0f172a; border:0; }')
+        body = QWidget(); body.setObjectName('settingsBody')
+        body.setStyleSheet('QWidget#settingsBody { background:#0f172a; }')
+        root = QVBoxLayout(body)
+        self.settings_scroll.setWidget(body); outer.addWidget(self.settings_scroll)
         cutting = QGroupBox("Cutting and Sensors")
         geometry = QFormLayout(cutting)
         self.kerf_input = QDoubleSpinBox()
@@ -946,6 +954,12 @@ class MinimalHMI(QMainWindow):
             field.setMaximumWidth(320)
             field.setStyleSheet("font-size: 18px;")
         root.addWidget(cutting)
+        self.cylinder_timing = CylinderTimingPanel(self.settings)
+        root.addWidget(self.cylinder_timing)
+        self.auto_clamp_checkbox = QCheckBox('Automatic clamp/saw simulation')
+        self.auto_clamp_checkbox.setToolTip('Simulator only. Live automatic clamp/saw operation remains unavailable until controller sequencing is commissioned.')
+        self.auto_clamp_checkbox.toggled.connect(self._on_auto_clamp_toggled)
+        root.addWidget(self.auto_clamp_checkbox)
         profiles = QGroupBox("Motion Profiles - Pulse Rates & Accelerations"); pg = QGridLayout(profiles)
 
         pg.addWidget(QLabel("NORMAL - board feed"), 0, 0, 1, 2)
@@ -1112,14 +1126,14 @@ class MinimalHMI(QMainWindow):
         io_and_cycle.setSpacing(6)
 
         # Cylinders — single compact row to leave room for the line simulation
-        cylinders_group = QGroupBox("Air Cylinders")
+        cylinders_group = QGroupBox("Simulated Clamps")
         cyl_layout = QHBoxLayout(cylinders_group)
         cyl_layout.setSpacing(8)
         cyl_layout.setContentsMargins(10, 4, 10, 4)
 
         cyl_defs = [
-            ("Left Clamp", 1, "fa_cyl1_status"),
-            ("Right Clamp", 2, "fa_cyl2_status"),
+            ("Main Clamp", 1, "fa_cyl1_status"),
+            ("Outfeed Clamp", 2, "fa_cyl2_status"),
             ("Fence Clamp", 3, "fa_cyl3_status"),
         ]
         for cyl_name, cyl_id, pill_attr in cyl_defs:
@@ -1137,40 +1151,6 @@ class MinimalHMI(QMainWindow):
         cyl_layout.addStretch()
         cylinders_group.setMaximumHeight(64)
         io_and_cycle.addWidget(cylinders_group)
-
-        # Timing Settings
-        timing_group = QGroupBox("Timing Settings")
-        timing_form = QFormLayout(timing_group)
-        timing_form.setContentsMargins(10, 8, 10, 8)
-        timing_form.setSpacing(8)
-
-        # Master switch for hardware clamp/saw automation. Default OFF keeps the
-        # HMI compatible with firmware that has no cylinder support.
-        self.auto_clamp_checkbox = QCheckBox("Enable auto clamp && saw (needs firmware support)")
-        self.auto_clamp_checkbox.setChecked(self.auto_clamp_enabled)
-        self.auto_clamp_checkbox.setToolTip(
-            "OFF (recommended for current firmware): the HMI never sends cylinder or saw\n"
-            "commands; automatic mechanism control remains unavailable.\n"
-            "ON: the HMI drives the air clamps and saw automatically. Only enable this\n"
-            "once the controller firmware supports the cylinder/saw commands.")
-        self.auto_clamp_checkbox.toggled.connect(self._on_auto_clamp_toggled)
-        timing_form.addRow(self.auto_clamp_checkbox)
-
-        self.fa_clamp_engage_delay = QSpinBox()
-        self.fa_clamp_engage_delay.setRange(0, 5000)
-        self.fa_clamp_engage_delay.setValue(300)
-        self.fa_clamp_engage_delay.setSuffix(" ms")
-        self.fa_clamp_engage_delay.setToolTip("Delay after board arrives before clamp signals fire (settle time)")
-        timing_form.addRow("Clamp Engage Delay:", self.fa_clamp_engage_delay)
-
-        self.fa_saw_start_delay = QSpinBox()
-        self.fa_saw_start_delay.setRange(0, 5000)
-        self.fa_saw_start_delay.setValue(800)
-        self.fa_saw_start_delay.setSuffix(" ms")
-        self.fa_saw_start_delay.setToolTip("Delay after clamp command before saw actuates (clamp close time)")
-        timing_form.addRow("Saw Start Delay:", self.fa_saw_start_delay)
-
-        io_and_cycle.addWidget(timing_group)
 
         # Line simulation: carriage, board segments, saw, ejected pieces
         sim_group = QGroupBox("Line Simulation")
@@ -1301,10 +1281,9 @@ class MinimalHMI(QMainWindow):
 
     def update_saw_position_sensor_status(self, status):
         """
-        status=1 UP, status=0 DOWN. Fed by the SSEN serial field (virtual
-        controller, and real firmware once wired) or the hardware placeholder
-        timer. Clamps release on the rising edge only, so the streamed SSEN:1
-        lines before a stroke starts cannot release them early.
+        Virtual SSEN:1 confirms UP; SSEN:0 means not UP. Native saw endpoints
+        use BENCH feedback and never execute this simulator cut sequence.
+        A genuine virtual UP edge starts the configured return/release waits.
         """
         rising = (status == 1 and self._last_saw_sensor == 0)
         if status != self._last_saw_sensor:
@@ -1319,19 +1298,33 @@ class MinimalHMI(QMainWindow):
         if rising and self.clamps_engaged_cutting:
             self.clamps_engaged_cutting = False
             was_early = bool((self.sim_active_piece or {}).get("early")) or self.is_early_returning
-            self._release_all_clamps()
-            self._on_cut_finished()
-            if was_early:
-                # Carriage may already have arrived; don't clobber that status
-                if self.auto_cycle_state not in ("FINISHED", "WAITING_FOR_NEW_BOARD"):
-                    self._set_cycle_status("STATUS: Saw up — clamps released. Loading next board...")
-            else:
-                self._set_cycle_status("STATUS: Simulation stroke complete; awaiting simulated completion.")
+            timing = self._cycle_cylinder_timings
+            clamps = self._cycle_clamps
+
+            def complete():
+                self._simulation_pneumatic_pending = False
+                self._on_cut_finished()
+                self._set_cut_complete_enabled(not was_early)
+                if was_early:
+                    if self.auto_cycle_state == 'FINISHED':
+                        self._set_cycle_status('STATUS: Cycle Complete!')
+                        self._set_start_enabled(True)
+                    elif self.auto_cycle_state != 'WAITING_FOR_NEW_BOARD':
+                        self._set_cycle_status("STATUS: Saw up — clamps released. Loading next board...")
+                else:
+                    self._set_cycle_status("STATUS: Simulation stroke complete; awaiting simulated completion.")
+
+            def release():
+                self._run_simulation_clamps(clamps, timing, 'release', complete)
+
+            self._set_cycle_status('STATUS: Saw UP — waiting for trigger release and clamp clearance.')
+            wait = timing['saw.up_settle'] + timing['trigger.release_delay'] + timing['trigger.brake_wait']
+            self._schedule_simulation_phase(wait, release)
 
     def _actuate_saw(self):
         """
-        Fire the saw-down command. Sets clamps_engaged_cutting so the saw-up
-        edge knows to release clamps and book the cut.
+        Start the virtual saw cycle with this cut's timing snapshot.
+        Live native automatic cutting remains capability-blocked.
         """
         controller = self.active_controller()
         if not controller.capabilities.automatic_cutting_ready:
@@ -1346,6 +1339,10 @@ class MinimalHMI(QMainWindow):
             )
             return False
 
+        if isinstance(self.ser, VirtualController):
+            if not self.auto_clamp_enabled or not getattr(self, '_simulation_pneumatic_pending', False):
+                return False
+            self.ser.configure_saw_timing(self._cycle_cylinder_timings)
         if not self.send_backend_commands(controller.saw_actuate(), "actuate saw"):
             self.clamps_engaged_cutting = False
             self._release_all_clamps()
@@ -1353,15 +1350,14 @@ class MinimalHMI(QMainWindow):
             self._set_cycle_status("STATUS: Saw command failed — clamps released.")
             return False
 
-        # Both simulator and real hardware must report a genuine SSEN 0 -> 1
-        # transition. Real connections never synthesize a successful cut.
+        # Require a virtual SSEN 0 -> 1 edge; never synthesize physical feedback.
         self.clamps_engaged_cutting = True
         self._update_saw_sensor_pill("CUTTING", "#ef4444")
         self._set_cycle_status("STATUS: Cutting — waiting for saw-up feedback...")
         return True
 
     def _release_all_clamps(self):
-        """Retract all three air cylinder clamps (skipped in manual mode)."""
+        """Immediate simulator cancellation release; normal cycles use timed release."""
         if not self.auto_clamp_enabled:
             return
         self.cylinder_retract(1)
@@ -1382,11 +1378,13 @@ class MinimalHMI(QMainWindow):
                 f"STATUS: Auto clamp/saw unavailable for {controller.label}."
             )
             return
+        if self.auto_clamp_enabled and not checked:
+            self.cancel_auto_cycle()
         self.auto_clamp_enabled = checked
-        mode = "Auto clamp/saw ENABLED" if checked else "Manual cut mode (no clamp/saw commands)"
+        mode = "Automatic clamp/saw simulation enabled" if checked else "Manual cut simulation"
         self.log.append(mode)
         if checked:
-            self._set_cycle_status("STATUS: Auto clamp/saw enabled — ensure firmware supports it.")
+            self._set_cycle_status("STATUS: Automatic clamp/saw simulation enabled.")
 
     def _record_sim_piece(self, early_return, is_truing):
         """Record what the next stroke cuts, for the line-view animation."""
@@ -1470,60 +1468,54 @@ class MinimalHMI(QMainWindow):
                 self.saw_sim.eject_piece(piece["length"], piece["color"], f'{piece["length"]:g}"')
         self._refresh_sim_board()
 
+    def _schedule_simulation_phase(self, delay_ms, callback):
+        """Cancel pending normal-cycle delays on stop/disconnect/mode changes."""
+        generation, port = self.cycle_generation, self.ser
+
+        def run():
+            if (generation == self.cycle_generation and self.ser is port
+                    and isinstance(port, VirtualController) and port.is_open and self.auto_clamp_enabled):
+                callback()
+        QTimer.singleShot(int(delay_ms), run)
+
     def _engage_clamps_for_cut(self, early_return=False):
-        """
-        Clamp logic for cuts. Applies clamp-engage delay, then saw-start delay
-        before actuating. Clamp release is sensor-gated via
-        update_saw_position_sensor_status.
-
-        Rules:
-          Truing cut          → Left + Fence only
-          position >= 3\"      → All three
-          position < 3\"       → Right only
-
-        early_return=True is the last cut on a board (carriage already
-        returning home); it skips truing detection and adjusts status text.
-        """
+        """Three-clamp virtual fixture only; native eligibility/feedback remains uncommissioned."""
+        if not isinstance(self.ser, VirtualController) or not self.auto_clamp_enabled:
+            return False
         position = self.current_position
         is_truing = (not early_return) and self.auto_cycle_state == "WAITING_FOR_TRUING_CUT"
-
-        if is_truing:
-            clamps = [1, 3]
-            self._set_cycle_status("STATUS: Board in position — clamping L+F...")
-        elif position >= 3.0:
-            clamps = [1, 2, 3]
-            if early_return:
-                self._set_cycle_status("STATUS: Last cut — clamping all, returning...")
-            else:
-                self._set_cycle_status("STATUS: Board in position — clamping all...")
-        else:
-            clamps = [2]
-            if early_return:
-                self._set_cycle_status(f"STATUS: Last cut, short tail ({position:.2f}\") — R clamp, returning...")
-            else:
-                self._set_cycle_status(f"STATUS: Short tail ({position:.2f}\") — clamping R only...")
-
+        clamps = simulation_clamps(position, is_truing)
+        timing = self.cylinder_timing.snapshot()
+        self._cycle_clamps = clamps
+        self._cycle_cylinder_timings = timing  # immutable for this cut, including release
+        self._simulation_pneumatic_pending = True
+        self._set_cut_complete_enabled(False)
+        self._set_cycle_status('STATUS: Board in position — settling before simulated clamping...')
         self._record_sim_piece(early_return, is_truing)
 
-        clamp_delay = self.fa_clamp_engage_delay.value() if hasattr(self, 'fa_clamp_engage_delay') else 300
-        saw_delay   = self.fa_saw_start_delay.value()    if hasattr(self, 'fa_saw_start_delay')    else 800
-        cycle_generation = self.cycle_generation
-
         def _do_clamp():
-            if cycle_generation != self.cycle_generation:
-                return
-            if not all(self.cylinder_extend(cid) for cid in clamps):
-                self._release_all_clamps()
-                self._set_cycle_status("STATUS: Clamp command failed — automatic cut blocked.")
-                return
+            self._run_simulation_clamps(clamps, timing, 'engage', self._actuate_saw)
 
-            def _do_saw():
-                if cycle_generation == self.cycle_generation:
-                    self._actuate_saw()
+        self._schedule_simulation_phase(timing['board.settle'], _do_clamp)
+        return True
 
-            QTimer.singleShot(saw_delay, _do_saw)
-
-        QTimer.singleShot(clamp_delay, _do_clamp)
+    def _run_simulation_clamps(self, clamps, timing, phase, complete):
+        """Wait for every participating virtual clamp, including zero-delay phases."""
+        finished = set()
+        def ready(cid):
+            finished.add(cid)
+            if len(finished) == len(clamps):
+                complete()
+        for cid in clamps:
+            def command(c=cid):
+                action = self.cylinder_extend if phase == 'engage' else self.cylinder_retract
+                if not action(c):
+                    self.cancel_auto_cycle()
+                    self._set_cycle_status('STATUS: Simulated clamp command failed — cut blocked.')
+                    return
+                wait_key = 'engage_settle' if phase == 'engage' else 'release_clearance'
+                self._schedule_simulation_phase(timing[f'{CLAMPS[c]}.{wait_key}'], lambda: ready(c))
+            self._schedule_simulation_phase(timing[f'{CLAMPS[cid]}.{phase}_delay'], command)
 
     def load_cut_list_lines(self, lines):
         self._rebuild_cut_list(lines)
@@ -1590,6 +1582,7 @@ class MinimalHMI(QMainWindow):
         manual_ready = connected and capabilities.manual_motion_ready
         auto_ready = connected and capabilities.automatic_cycle_ready
         native_manual = controller.key == TEENSY_CARRIAGE
+        self.cylinder_timing.set_simulator_mode(isinstance(self.ser, VirtualController))
         self.tabs.setTabText(self.tabs.indexOf(self.legacy_tab),"MANUAL" if native_manual else "MANUAL / SIM")
         self.legacy_tab.setEnabled(manual_ready or (connected and native_manual))
         self.manual_teensy_setup.setVisible(native_manual)
@@ -1846,6 +1839,9 @@ class MinimalHMI(QMainWindow):
             return self.carriage_tab.stop()
         # 1. Send a command to stop the motor's current movement. M0 (Move 0) is a safe stop command.
         self.cycle_generation += 1
+        self._simulation_pneumatic_pending = False
+        if isinstance(self.ser, VirtualController):
+            self.ser.cancel_saw_cycle()
         self.send_backend_commands(
             self.active_controller().stop_motion(), "stop carriage motion"
         )
@@ -1870,6 +1866,8 @@ class MinimalHMI(QMainWindow):
     # --- END NEW ---
 
     def resume_after_reset(self):
+        if getattr(self, '_simulation_pneumatic_pending', False):
+            return False
         
         # Use after the driver faults, you reset it and rehome.
         # This resumes at the CURRENT cut index without losing your place.
@@ -1916,6 +1914,8 @@ class MinimalHMI(QMainWindow):
 
 
     def start_auto_cycle(self):
+        if getattr(self, '_simulation_pneumatic_pending', False):
+            return False
         controller = self.active_controller()
         if not controller.capabilities.automatic_cycle_ready:
             self.log.append(
@@ -1943,14 +1943,13 @@ class MinimalHMI(QMainWindow):
     def cut_complete_pressed(self):
         if not isinstance(self.ser,VirtualController):
             return False
+        if getattr(self, '_simulation_pneumatic_pending', False):
+            return False
         if self.clamps_engaged_cutting:
-            # Acknowledged before the saw-up edge arrived; book the cut now
-            self.clamps_engaged_cutting = False
-            self._on_cut_finished()
-        elif self.sim_active_piece is not None:
+            return False
+        if self.sim_active_piece is not None:
             # Manual mode: the operator made the cut; book it for the animation
             self._on_cut_finished()
-        self._release_all_clamps()
         self._update_saw_sensor_pill("UP", "#22c55e")
         if self.auto_cycle_state == "WAITING_FOR_TRUING_CUT":
             self.switch_profile("NORMAL", True)
@@ -1975,6 +1974,7 @@ class MinimalHMI(QMainWindow):
     def _set_start_enabled(self, enabled):
         allowed = (
             enabled
+            and not getattr(self, '_simulation_pneumatic_pending', False)
             and self.is_connected()
             and self.active_controller().capabilities.automatic_cycle_ready
         )
@@ -2140,6 +2140,7 @@ class MinimalHMI(QMainWindow):
 
     def _stop_listener(self):
         self.cycle_generation += 1
+        self._simulation_pneumatic_pending = False
         # Stop before closing the serial port. The firmware watchdog is the
         # fallback if the port or process has already failed.
         if getattr(self, "carriage_tab", None) and self.carriage_tab.connected:
@@ -2802,11 +2803,10 @@ class MinimalHMI(QMainWindow):
             "board_sensor_location": self.board_sensor_location_input,
             "current_limit": self.current_limit_input,
             "current_trip_delay": self.current_delay_input,
-            "clamp_engage_delay": self.fa_clamp_engage_delay,
-            "saw_start_delay": self.fa_saw_start_delay,
         }
 
     def _load_settings(self):
+        self.cylinder_timing.load()
         self.cut_length_keypad_checkbox.setChecked(self.settings.value("cut_length_keypad", False, type=bool))
         for key, widget in self._settings_widgets().items():
             value = self.settings.value(key)
@@ -2825,6 +2825,7 @@ class MinimalHMI(QMainWindow):
         self.auto_clamp_checkbox.setChecked(self.auto_clamp_enabled)
 
     def _save_settings(self):
+        self.cylinder_timing.save()
         for key, widget in self._settings_widgets().items():
             if self.active_controller().key == TEENSY_CARRIAGE and key in {
                 "norm_speed","norm_accel","gentle_speed","gentle_accel","fast_speed","fast_accel"

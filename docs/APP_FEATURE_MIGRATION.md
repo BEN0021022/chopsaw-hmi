@@ -39,6 +39,7 @@ that statement does not independently complete the physical fault matrix.
 | Saw travel cylinder | Old saw cycle command | OUT 0 / AUX2 TTL D33 | OFF=UP confirmed; suppression and isolated pneumatic dry run pending |
 | Blade trigger cylinder | Original trigger/brake mechanism | OUT 2 / Flood TTL D19 | Main app unavailable; validate OFF release/brake, no blade-powered test yet |
 | Cut-list editing/import | Python UI | Same retained Python feature | Available; simulator regression passes |
+| Cylinder timing | Two global waits inside Full Auto | SETTINGS / Cylinder Timing, per-device configuration and explicit phases | Simulator integrated; native sequencing/feedback limits remain planned; see CYLINDER_TIMING.md |
 | Automatic cut-list workflow | Old MEGA state strings + timed callbacks | New controller events / acknowledgments required | Locked on live Teensy; simulate only |
 | Early return | Carriage return during cutting | Reassess collision/clamp/blade policy first | Locked on live hardware |
 | Current monitoring | ACS712 fields | INA228 future work | Deferred; INA/MCP quarantined/disconnected |
@@ -71,6 +72,17 @@ Sensors**, using the same defaults, saved preference keys and consumers as
 before. AUTO's **Cut Entry** card holds the enlarged length field, optional
 keypad checkbox and Add Cut to List. The sensor/kerf move does not change native
 controller geometry or apply any firmware settings automatically.
+
+## Cylinder timing
+
+Timing configuration and the Simulator automation switch now live in SETTINGS.
+Full Auto no longer contains timing controls. The old board-settle and clamp-close
+values migrate into correctly named settings. Each participating virtual clamp
+has independent engage/release waits; saw travel and trigger waits use one
+per-cut snapshot. Live automatic cutting remains blocked. Confirmation/travel
+limits are marked planned and do not change manual bench firmware behavior.
+See [Cylinder Timing](CYLINDER_TIMING.md) for field meanings, migration, simulator
+phase order and remaining physical clamp-eligibility requirements.
 
 ## Live Status health display
 

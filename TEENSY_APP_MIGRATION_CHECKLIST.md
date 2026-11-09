@@ -84,6 +84,19 @@ readback passed without enabling or moving; matching app reopened disarmed.
 - [x] Read-only health policy/Qt tests cover faults, missing/stale data, reconnect
       startup, future required sensors and heartbeat expiry. Existing main-app,
       keypad/boundary and simulator regressions pass; native layout fits 1280x900.
+- [x] Central SETTINGS / Cylinder Timing frame with independent main clamp,
+      saw-travel and trigger timings, board settle, and planned outfeed/fence
+      entries. Settings scrolls for expansion; Full Auto timing controls and
+      ambiguous old widget/handler names are removed. Saved values migrate by
+      their original meanings. See [cylinder timing](docs/CYLINDER_TIMING.md).
+- [x] Simulator snapshots timings per cut, waits for each clamp's engage and
+      release phases, applies saw/trigger waits, and cancels pending actions on
+      Stop/disconnect. Tests cover independent timings, migration, persistence,
+      cancellation, phase bypass prevention and native automatic-cut lockout.
+- [ ] Native automatic pneumatic sequence, timing transfer, feedback watchdogs,
+      measured clamp eligibility and fault retention/release remain uncommissioned.
+      Planned confirmation/travel limits are saved only; they do not change
+      Sensor Bench/manual firmware guards. No firmware change or flash in this pass.
 
 ## Next session - remaining work
 

@@ -49,8 +49,9 @@ def make_window(auto_clamp):
         sb.setValue(20000)
     for sb in (w.norm_accel, w.gentle_accel, w.fast_accel):
         sb.setValue(50000)
-    w.fa_clamp_engage_delay.setValue(20)
-    w.fa_saw_start_delay.setValue(20)
+    w.cylinder_timing.fields['board.settle'].setValue(20)
+    for device in ('main','outfeed','fence'):
+        w.cylinder_timing.fields[f'{device}.engage_settle'].setValue(20)
     w.home_motor()
     pump_until(lambda: w.homed_label.text() == "HOMED", 15, "homing")
     w.load_cut_list_lines(["18 A", "24 B", "30 C"])
@@ -61,7 +62,7 @@ def make_window(auto_clamp):
 def drive_to_finish(w):
     """Press CUT COMPLETE whenever the cycle stops for a manual/ack cut."""
     deadline = time.monotonic() + 60
-    while w.auto_cycle_state != "FINISHED" and time.monotonic() < deadline:
+    while (w.auto_cycle_state != "FINISHED" or getattr(w, '_simulation_pneumatic_pending', False)) and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(0.004)
         waiting = w.auto_cycle_state in ("WAITING_FOR_TRUING_CUT", "WAITING_FOR_CUT")
@@ -71,6 +72,7 @@ def drive_to_finish(w):
             pump_until(lambda: not w._legacy_cut_completion_ready
                        or w.auto_cycle_state == "FINISHED", 5, "advance after cut")
     assert w.auto_cycle_state == "FINISHED", f"stuck in {w.auto_cycle_state}"
+    assert not getattr(w, '_simulation_pneumatic_pending', False)
 
 
 # ---- Manual mode: zero cylinder/saw commands ----

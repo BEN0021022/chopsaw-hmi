@@ -49,6 +49,7 @@ class VirtualController:
         # Saw
         self.saw_up = 1
         self._saw_busy = False
+        self._saw_timing = {}
 
         # Current sensing
         self.monitoring = False
@@ -172,6 +173,17 @@ class VirtualController:
                 self.state = "IDLE"
         # D/K/L/U/N: accepted silently; the ideal motion model has no PID toggle.
 
+    def configure_saw_timing(self, timing):
+        """Simulation-only plan; never sent through a physical serial port."""
+        with self._lock:
+            self._saw_timing = dict(timing)
+
+    def cancel_saw_cycle(self):
+        with self._lock:
+            self._events.clear()
+            self._saw_busy = False
+            self.saw_up = 1
+
     def _start_saw_stroke(self):
         if self._saw_busy:
             return
@@ -191,9 +203,14 @@ class VirtualController:
             self.saw_up = 1
             self._saw_busy = False
 
-        self._schedule(0.4, down)
-        self._schedule(1.6, cut)
-        self._schedule(2.6, up)
+        timing = self._saw_timing
+        start = sum(timing.get(key, 0) for key in
+                    ('trigger.press_delay', 'trigger.spinup', 'saw.down_delay')) / 1000
+        dwell = (timing.get('saw.bottom_dwell', 0) + timing.get('saw.up_delay', 0)) / 1000
+        # Physical travel is a fixed virtual model, not a prediction of real air hardware.
+        self._schedule(start + 0.4, down)
+        self._schedule(start + 1.6, cut)
+        self._schedule(start + 2.6 + dwell, up)
 
     def _step_motion(self, dt):
         if not self.motor_enabled:
