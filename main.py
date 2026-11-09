@@ -202,7 +202,7 @@ class MinimalHMI(QMainWindow):
         self._load_settings()
         self.update_current_monitor_ui()
         self.health_timer = QTimer(self)
-        self.health_timer.setInterval(100)
+        self.health_timer.setInterval(50)
         self.health_timer.timeout.connect(self.refresh_live_health)
         self.health_timer.start()
         self.refresh_live_health()
@@ -527,7 +527,7 @@ class MinimalHMI(QMainWindow):
         self.live_health_dot = QLabel()
         self.live_health_dot.setFixedSize(10, 10)
         self.live_health_dot.setAccessibleName("Telemetry activity")
-        self.live_health_dot.setToolTip("Brief activity flash on fresh telemetry, at most once a second.")
+        self.live_health_dot.setToolTip("Telemetry activity: five-second breathing cycle while data stays fresh.")
         health_row.addWidget(self.live_health_dot)
         self.live_health_label = QLabel("Disconnected")
         self.live_health_label.setWordWrap(True)
@@ -2564,10 +2564,13 @@ class MinimalHMI(QMainWindow):
         self.live_health_label.setText(state.text)
         self.live_health_label.setToolTip("\n".join(state.details) or state.text)
         self.auto_live_status.setAccessibleDescription(state.text)
-        active = self._health_activity.update(receipt, now)
-        if self.live_health_dot.property("active") != active:
-            self.live_health_dot.setProperty("active", active)
-            self.live_health_dot.setStyleSheet("background:" + ("#38bdf8" if active else "#334155") + "; border-radius:5px;")
+        intensity = round(self._health_activity.update(receipt, now) * 255)
+        if self.live_health_dot.property("intensity") != intensity:
+            self.live_health_dot.setProperty("intensity", intensity)
+            self.live_health_dot.setProperty("active", intensity > 0)
+            channels = [round(dim + (bright-dim)*intensity/255)
+                        for dim,bright in zip((51,65,85), (56,189,248))]
+            self.live_health_dot.setStyleSheet(f"background:rgb({channels[0]},{channels[1]},{channels[2]}); border-radius:5px;")
 
     def update_position_label_from_device(self, pos):
         self.current_position = pos

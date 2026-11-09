@@ -59,7 +59,7 @@ def policy_tests():
 
     fields = dict(POS='0', STATE='IDLE', SEN='0', BSEN='0', SSEN='1', OCT='0')
     sim = dict(connected=True, fields=fields, received=100, started=100, now=100)
-    assert simulator_health(**sim).text == 'Simulator healthy'
+    assert simulator_health(**sim).text == 'System healthy'
     assert simulator_health(**dict(sim, now=103)).level == 'fault'
     assert simulator_health(**dict(sim, received=None)).level == 'neutral'
     fields['OCT'] = '1'
@@ -68,13 +68,17 @@ def policy_tests():
     fields.pop('SEN')
     assert simulator_health(**sim).level == 'fault'
     activity = TelemetryActivity()
-    assert activity.update(100,100)
-    assert not activity.update(100,100.2)
-    assert not activity.update(100,101.2), 'Repeated GUI ticks must never produce a heartbeat'
-    assert activity.update(101.3,101.3)
-    assert not activity.update(101.4,101.6), 'Bound activity flashes to one per second'
-    assert not activity.update(101.4,104)
-    assert not activity.update(None,105)
+    assert activity.update(100,100) == 0
+    assert abs(activity.update(100.75,100.75) - .5) < 1e-6
+    for elapsed in (1.5, 2, 3, 3.5):
+        assert activity.update(100+elapsed,100+elapsed) == 1
+    assert abs(activity.update(104.25,104.25) - .5) < 1e-6
+    assert activity.update(105,105) == 0
+    assert activity.update(105.75,105.75) > 0
+    assert activity.update(105.75,108) == 0, 'Stale data must stop breathing'
+    assert activity.update(105.75,109) == 0, 'GUI ticks alone cannot restart a cycle'
+    assert activity.update(109,109) == 0, 'New data resumes with a gentle fade-in'
+    assert activity.update(None,110) == 0
 
 
 def ui_tests():
@@ -92,11 +96,11 @@ def ui_tests():
         p = w.carriage_tab
         ready(p)
         assert w.auto_live_status.property('healthState') == 'healthy'
-        assert w.live_health_label.text() == 'Controller healthy'
-        assert w.live_health_dot.property('active')
+        assert w.live_health_label.text() == 'System healthy'
+        assert w.live_health_dot.property('intensity') == 0
         before = list(wire.writes)
         now[0] = 100.3; w.refresh_live_health()
-        assert not w.live_health_dot.property('active')
+        assert 0 < w.live_health_dot.property('intensity') < 255
         now[0] = 103
         packet(p)  # X is new, safety/inputs are still old
         assert w.auto_live_status.property('healthState') == 'fault'
@@ -118,7 +122,7 @@ def ui_tests():
         w.refresh_live_health()
         assert w.live_health_label.text() == 'Waiting for simulator data'
         w.update_message_log('POS:12,HOMED:0,STATE:IDLE,SEN:0,BSEN:0,SSEN:1,OCT:0')
-        assert w.live_health_label.text() == 'Simulator healthy'
+        assert w.live_health_label.text() == 'System healthy'
         now[0] = 106; w.refresh_live_health()
         assert w.auto_live_status.property('healthState') == 'fault'
         assert not w.live_health_dot.property('active')

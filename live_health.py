@@ -95,7 +95,7 @@ def native_health(*, connected, compatible, records, received, started, now,
     if blocker != "NONE":
         issues.append("Interlock: " + (blocker or "UNKNOWN"))
     issues = list(dict.fromkeys(issues))
-    return fault(issues) if issues else HealthState("healthy", "Controller healthy")
+    return fault(issues) if issues else HealthState("healthy", "System healthy")
 
 
 def simulator_data_valid(fields):
@@ -120,23 +120,23 @@ def simulator_health(*, connected, fields, received, started, now):
         return fault(["Simulator sensor data missing or invalid"])
     if fields["STATE"] == "OVERCURRENT" or fields["OCT"] == "1":
         return fault(["Simulator overcurrent"])
-    return HealthState("healthy", "Simulator healthy", ("Virtual feedback only; physical guard, driver and clamp are not monitored in Simulator mode.",))
+    return HealthState("healthy", "System healthy", ("Virtual feedback only; physical guard, driver and clamp are not monitored in Simulator mode.",))
 
 
 class TelemetryActivity:
-    """One brief dot flash per second at most; no new data means no new flash."""
+    """Five-second breathing brightness, gated by fresh telemetry."""
     def __init__(self):
-        self.last_receipt = None
-        self.last_flash = -math.inf
-        self.until = -math.inf
+        self.started = None
 
     def update(self, receipt, now):
         if receipt is None or now-receipt > STALE_SECONDS:
-            self.until = -math.inf
-            return False
-        if self.last_receipt is None or receipt > self.last_receipt:
-            self.last_receipt = receipt
-            if now-self.last_flash >= 1.0:
-                self.last_flash = now
-                self.until = now + .18
-        return now < self.until
+            self.started = None
+            return 0.0
+        if self.started is None:
+            self.started = now
+        phase = (now-self.started) % 5.0
+        if phase < 1.5:
+            return .5 - .5 * math.cos(math.pi * phase / 1.5)
+        if phase < 3.5:
+            return 1.0  # two seconds fully illuminated
+        return .5 + .5 * math.cos(math.pi * (phase-3.5) / 1.5)

@@ -88,12 +88,14 @@ current carriage-only policy. Unknown clamp feedback and deferred INA/MCP/outfee
 channels are excluded. Valid binary telemetry cannot prove every wire or switch
 is intact; electrical fault diagnosis still depends on sensor/wiring design.
 
-Simulator mode says **Simulator healthy** and checks its actual virtual position,
+The healthy label says **System healthy** in both modes. Simulator checks its virtual position,
 state, Home/Board/saw and overcurrent records. It does not claim to have checked
 the physical guard or driver. Other diagnostic modes show health unavailable.
-A small blue dot flashes for 180 ms at most once per second when new validated
-controller X or complete simulator data arrives. It never pulses the border and
-does not generate activity from GUI timer ticks or log text alone.
+A small blue dot breathes on a five-second cycle: 1.5 seconds fading up, two
+seconds fully illuminated, then 1.5 seconds fading down, with eased transitions.
+Fresh validated controller X or complete simulator data gates the animation;
+stale data or disconnect stops it and new data restarts gently from dim. It never
+pulses the border. Simulator scope remains explicit in SIM MODE and the tooltip.
 
 `live_health.py` centralizes the read-only policy. Add future commissioned inputs
 to `NATIVE_SENSORS` with a `SensorRule` describing the telemetry field, source

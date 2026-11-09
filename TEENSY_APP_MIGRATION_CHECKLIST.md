@@ -76,10 +76,11 @@ readback passed without enabling or moving; matching app reopened disarmed.
       sensor records, configured digital inputs and current carriage interlocks.
       Deferred clamp/current/MCP feedback does not prevent green; valid OFF
       readings are not faults. Health remains separate from Home/arm readiness.
-- [x] Small telemetry activity dot flashes briefly at most once per second,
-      driven by new validated controller/simulator records. GUI timer ticks alone
-      cannot create activity; stale required records turn red even when X data
-      continues. Simulator health is explicitly labeled and covers virtual data.
+- [x] Small telemetry dot breathes on a five-second cycle (1.5s fade up, 2s lit,
+      1.5s fade down) gated by fresh validated controller/simulator records.
+      Stale data stops animation; required-record loss turns the border red even
+      if X data continues. Healthy text is System healthy in both modes; SIM MODE
+      and the tooltip retain the simulator scope.
 - [x] Read-only health policy/Qt tests cover faults, missing/stale data, reconnect
       startup, future required sensors and heartbeat expiry. Existing main-app,
       keypad/boundary and simulator regressions pass; native layout fits 1280x900.
