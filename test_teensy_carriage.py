@@ -64,8 +64,11 @@ def run():
         assert p.connected
         assert w.legacy_tab.isEnabled() and w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
         assert not w.start_cycle_button.isEnabled() and not hasattr(w,'cut_complete_button')
-        assert w.enable_chk.isHidden() and w.pid_chk.isHidden() and w.near_cal_btn.isHidden()
-        assert w.manual_motor_params.isHidden() and not w.manual_home_button.isEnabled()
+        assert not w.enable_chk.isHidden() and not w.enable_chk.isEnabled()
+        assert not w.manual_home_button.isEnabled()
+        for retired in ('pid_chk','near_cal_btn','target_input','manual_go','rel_input',
+                        'manual_jog','calibrate_input','manual_motor_params','max_speed','acceleration'):
+            assert not hasattr(w,retired), retired
         assert not w.active_controller().capabilities.automatic_cycle_ready
         assert not w.active_controller().capabilities.manual_motion_ready
         assert w.active_controller().capabilities.carriage_jog_ready
@@ -313,7 +316,7 @@ def run():
         ready(p)
         w.tabs.setCurrentWidget(w.legacy_tab)
         assert w.position_label.text() == 'UNKNOWN'
-        assert not w.manual_home_button.isEnabled() and not w.manual_go.isEnabled()
+        assert not w.manual_home_button.isEnabled() and not w.keypad.isEnabled()
         w.manual_isolation.setChecked(True)
         assert p.consent.isChecked() and w.manual_configure.isEnabled()
         w.manual_configure.click()
@@ -332,17 +335,30 @@ def run():
         assert w.manual_home_search.value() == 2
 
         packet(p,CONFIGURED=1,READY=1,POS_KNOWN=1,HOME_OFFSET=-14,HOME_STATE='DONE')
-        assert w.target_input.value() == 160.389, 'Manual defaults to referenced current position'
-        w.manual_arm.click(); assert wire.writes[-1] == 'XARM 1'
-        packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-14,HOME_STATE='DONE')
-        w.rel_input.setValue(-0.25); w.manual_jog.click()
-        assert wire.writes[-1] == 'XJOG -1 32'
-        assert not w.manual_jog.isEnabled(), 'Manual cannot queue over the native pending move'
-        packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE',MOVE_ID=2)
-        w.target_input.setValue(159)
-        assert w.manual_go.isEnabled()
-        w.manual_go.click()
-        assert wire.writes[-1] == 'XMOVE 159000', 'Clicked bool must not become target zero'
+        assert not w.enable_chk.isChecked() and w.enable_chk.isEnabled()
+        w.enable_chk.click(); assert wire.writes[-1] == 'XARM 1'
+        assert not w.enable_chk.isChecked(), 'Enable display must wait for controller readback'
+        packet(p,ARMED=1,CONFIGURED=1,ENA=0,POS_KNOWN=1,HOME_OFFSET=-14,HOME_STATE='DONE')
+        assert w.enable_chk.isChecked()
+        # Keep the existing keypad, including the guarded absolute-move route.
+        for digit in '159': w.keypad.button_clicked(digit)
+        w.keypad.enter_value()
+        assert wire.writes[-1] == 'XMOVE 159000'
+        assert not w.keypad.isEnabled(), 'Keypad cannot queue over a pending move'
+        packet(p,ARMED=1,CONFIGURED=1,ENA=0,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE',MOVE_ID=2)
+        w.enable_chk.click(); assert wire.writes[-1] == 'XDISABLE'
+        assert w.enable_chk.isChecked(), 'Release also waits for controller readback'
+        packet(p,CONFIGURED=0,ENA=1,POS_KNOWN=0)
+        assert not w.enable_chk.isChecked() and not w.enable_chk.isEnabled()
+        before=len(wire.writes)
+        w.toggle_motor_power(True)
+        w.keypad.value_entered.emit(158)
+        assert len(wire.writes)==before, 'Handlers cannot bypass driver setup or homing'
+        packet(p,CONFIGURED=1,ENA=0,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE')
+        assert w.enable_chk.isChecked(), 'Holding may remain enabled while disarmed'
+        p.received['X']-=3; p.refresh()
+        assert not w.enable_chk.isChecked() and not w.enable_chk.isEnabled()
+        packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE')
         w.manual_stop.click()
         packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE')
 

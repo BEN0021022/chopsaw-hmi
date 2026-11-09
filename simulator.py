@@ -36,6 +36,7 @@ class VirtualController:
         self.acc = 1000.0 / STEPS_PER_INCH
         self.state = "IDLE"
         self.homed = 0
+        self.motor_enabled = True
         self._homing = False
         self.profiles = {0: (2500.0, 900.0), 1: (600.0, 600.0), 2: (3500.0, 2500.0)}
         self.active_profile = 0
@@ -92,6 +93,21 @@ class VirtualController:
 
     def _handle_command(self, line):
         cmd, payload = line[0], line[1:]
+        if cmd == "X":
+            self.motor_enabled = False
+            self.target = self.pos
+            self.vel = 0.0
+            self.homed = 0
+            self._homing = False
+            self.state = "DISABLED"
+            return
+        if cmd == "E":
+            self.motor_enabled = True
+            if self.state == "DISABLED":
+                self.state = "IDLE"
+            return
+        if cmd in ("H", "S", "J") and not self.motor_enabled:
+            return
         if cmd == "H":
             self.state = "HOMING"
             self._homing = True
@@ -154,7 +170,7 @@ class VirtualController:
             self._over_since = None
             if self.state == "OVERCURRENT":
                 self.state = "IDLE"
-        # D/E/X/K/L/U/N: accepted silently
+        # D/K/L/U/N: accepted silently; the ideal motion model has no PID toggle.
 
     def _start_saw_stroke(self):
         if self._saw_busy:
@@ -180,6 +196,8 @@ class VirtualController:
         self._schedule(2.6, up)
 
     def _step_motion(self, dt):
+        if not self.motor_enabled:
+            return
         err = self.target - self.pos
         if abs(err) < 1e-4 and abs(self.vel) < 0.05:
             if self.state in ("MOVING", "HOMING", "DETECTING"):

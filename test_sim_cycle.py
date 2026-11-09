@@ -32,6 +32,27 @@ w.auto_clamp_checkbox.setChecked(True)
 assert w.auto_clamp_enabled
 print("connected to virtual controller")
 
+# The retained Manual checkbox actually stops simulation; enabling does not
+# replay an abandoned keypad target. No physical serial port is involved.
+assert w.enable_chk.isChecked()
+w.keypad.button_clicked('1'); w.keypad.enter_value()
+assert w.ser.target == 1
+w.enable_chk.click()
+assert not w.ser.motor_enabled and w.ser.state == 'DISABLED'
+stopped = w.ser.pos
+w.keypad.value_entered.emit(2)
+w.home_motor()
+with w.ser._lock:
+    w.ser._step_motion(1)
+    assert w.ser.pos == stopped and w.ser.target == stopped
+    assert not w.ser.homed
+w.enable_chk.click()
+assert w.ser.motor_enabled and w.ser.state == 'IDLE'
+with w.ser._lock:
+    w.ser._step_motion(1)
+    assert w.ser.pos == stopped, 'Enable must not replay the old target'
+print('Manual keypad and motor enable/release OK')
+
 seen_bsen = {"v": False}
 w.signal_bridge.board_sensor_state_updated.connect(
     lambda s: seen_bsen.__setitem__("v", seen_bsen["v"] or s == 1))

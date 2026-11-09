@@ -1,6 +1,6 @@
 # Teensy app and firmware migration checklist
 
-Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
+Updated 2026-11-09. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Active firmware: custom **0.15.0** in `firmware/chopsaw_controller`, flashed
 and read back on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
 Homing and motion profiles are operator-confirmed working. Restored AUTO controls
@@ -40,6 +40,22 @@ readback passed without enabling or moving; matching app reopened disarmed.
 - [x] Firmware/native, main-app/boundary and simulator regressions pass; layouts
       inspected at 1280x900. Local Git checkpoints and rollback artifacts saved.
 - [x] In-app MIGRATION tab displays this checklist; Refresh reloads it.
+
+## UI housekeeping - 2026-11-09 (offline)
+
+- [x] Simplify MANUAL Controls to Home and Motor Power Enabled. Remove PID,
+      Near Calibration, duplicate target/jog/calibration fields and Manual motor
+      parameters, including their unused handlers and saved-field bindings.
+      Native preparation, stop and fault controls remain available.
+- [x] Retain the existing Manual keypad and guarded target-entry route at the
+      operator's request. Shared speed profiles remain in SETTINGS.
+- [x] Motor Power checkbox uses native guarded arm/release and enable-output
+      readback; releasing clears Home as before. Simulator now honors enable/
+      release, cancels the target and requires a new motion request on re-enable.
+- [x] Offline native integration/boundary and complete simulator cycle tests
+      pass. Manual layouts inspected with simulated data. No controller accessed
+      or firmware flashed; driver-managed closed loop is unchanged.
+- [ ] Later UI step: Auto-tab pop-out numeric keypad for touch-first operation.
 
 ## Next session - remaining work
 

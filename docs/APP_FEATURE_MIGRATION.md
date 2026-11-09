@@ -1,6 +1,6 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-08. The active implementation is **custom controller 0.15.0**,
+Updated 2026-11-09. The active implementation is **custom controller 0.15.0**,
 not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
@@ -42,10 +42,20 @@ that statement does not independently complete the physical fault matrix.
 | Automatic cut-list workflow | Old MEGA state strings + timed callbacks | New controller events / acknowledgments required | Locked on live Teensy; simulate only |
 | Early return | Carriage return during cutting | Reassess collision/clamp/blade policy first | Locked on live hardware |
 | Current monitoring | ACS712 fields | INA228 future work | Deferred; INA/MCP quarantined/disconnected |
-| MEGA PID toggle | K0/K1 | Driver-managed closed loop | Retired on live Teensy; no duplicate HMI PID loop |
+| MEGA PID toggle | K0/K1 | Driver-managed closed loop | Removed from Manual UI in all modes; no duplicate HMI PID loop |
 | Diagnostics / settings | Raw legacy console | Live raw records in SETTINGS; bounded command boundary | Legacy motion/output writes rejected in Carriage mode |
 
 ## Manual-control behavior
+
+The November 9 UI cleanup retains Home, Motor Power Enabled and the existing
+numeric keypad. The retired calibration, duplicate target/jog fields and Manual
+speed/acceleration section are removed. Profiles remain in SETTINGS. Native
+preparation/stop/fault controls still share CARRIAGE state. Checking Motor Power
+uses the existing guarded arm request; unchecking uses XDISABLE and invalidates
+Home. The checkbox reflects fresh ENA readback, not measured supply or torque.
+Connect and telemetry refresh never enable or move the motor. Simulator enable/
+release now stops its motion model and does not replay the cancelled target.
+An Auto-tab pop-out keypad is planned separately; this pass does not add it.
 
 The previous 0.7.0 firmware stopped after 254 total pulses per arm. That was a
 commissioning allowance, not a timer. Version 0.9.0 removes that cumulative

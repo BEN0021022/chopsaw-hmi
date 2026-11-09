@@ -351,13 +351,10 @@ class MinimalHMI(QMainWindow):
         self._teensy_settings_dirty = set()
         self._teensy_settings_snapshot = None
         self._teensy_settings_active = None
-        self._teensy_manual_target_initialized = False
         self.carriage_tab.state_changed.connect(self.refresh_teensy_tabs)
         for profile, widgets in self.profile_setting_widgets().items():
             for widget in widgets:
                 widget.valueChanged.connect(lambda _value, p=profile: self.mark_teensy_profile_edit(p))
-        self.target_input.valueChanged.connect(self.refresh_teensy_tabs)
-        self.rel_input.valueChanged.connect(self.refresh_teensy_tabs)
         self.auto_jog_input.valueChanged.connect(self.refresh_teensy_tabs)
         for radio,_,_ in self.board_size_radios: radio.toggled.connect(self.refresh_teensy_tabs)
         self.tabs.addTab(self.carriage_tab, "CARRIAGE")
@@ -409,6 +406,7 @@ class MinimalHMI(QMainWindow):
         grid.addWidget(QLabel("Board Sensor:"), 3, 0); self.board_sensor_label = self.pill("OFF", "#ef4444"); grid.addWidget(self.board_sensor_label, 3, 1)
         grid.addWidget(QLabel("Current Position (in):"), 4, 0)
         self.position_label = QLabel("0.0000"); self.position_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #60a5fa;"); grid.addWidget(self.position_label, 4, 1)
+        dash.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         left.addWidget(dash)
 
         ctrl = QGroupBox("Controls"); v = QVBoxLayout(ctrl)
@@ -439,12 +437,12 @@ class MinimalHMI(QMainWindow):
         home_hint=QLabel("HOME runs while disarmed. Set the maximum search distance before starting.")
         home_hint.setWordWrap(True); prep.addWidget(home_hint)
         v.addWidget(self.manual_teensy_setup)
-        self.enable_chk = QCheckBox("Motor Power Enabled"); self.enable_chk.setChecked(True); self.enable_chk.toggled.connect(self.toggle_motor_power); v.addWidget(self.enable_chk)
-        self.pid_chk    = QCheckBox("PID Control Enabled"); self.pid_chk.setChecked(True); self.pid_chk.toggled.connect(self.toggle_pid_control); v.addWidget(self.pid_chk)
-        home_row = QHBoxLayout()
-        self.manual_home_button = QPushButton("Home (H)"); self.manual_home_button.clicked.connect(self.home_motor); home_row.addWidget(self.manual_home_button)
-        self.near_cal_btn = QPushButton("Near Calibration"); self.near_cal_btn.clicked.connect(self.near_calibrate); home_row.addWidget(self.near_cal_btn)
-        v.addLayout(home_row)
+        self.enable_chk = QCheckBox("Motor Power Enabled")
+        self.enable_chk.toggled.connect(self.toggle_motor_power)
+        v.addWidget(self.enable_chk)
+        self.manual_home_button = QPushButton("Home")
+        self.manual_home_button.clicked.connect(self.home_motor)
+        v.addWidget(self.manual_home_button)
         self.manual_teensy_actions = QWidget()
         actions = QHBoxLayout(self.manual_teensy_actions); actions.setContentsMargins(0,0,0,0)
         self.manual_stop = QPushButton("STOP / DISARM")
@@ -457,36 +455,13 @@ class MinimalHMI(QMainWindow):
         for button in (self.manual_stop,self.manual_reset,self.manual_release): actions.addWidget(button)
         v.addWidget(self.manual_teensy_actions)
 
-        row = QHBoxLayout(); row.addWidget(QLabel("Set Length:"))
-        self.target_input = QDoubleSpinBox(); self.target_input.setRange(0.0, self.home_position); self.target_input.setDecimals(4); row.addWidget(self.target_input)
-        self.manual_go = QPushButton("Go"); self.manual_go.clicked.connect(lambda: self.set_length()); row.addWidget(self.manual_go); v.addLayout(row)
-
-        row2 = QHBoxLayout(); row2.addWidget(QLabel("Jog By:"))
-        self.rel_input = QDoubleSpinBox(); self.rel_input.setRange(-100, 100); self.rel_input.setDecimals(4); row2.addWidget(self.rel_input)
-        self.manual_jog = QPushButton("Move"); self.manual_jog.clicked.connect(self.move_relative); row2.addWidget(self.manual_jog); v.addLayout(row2)
-
-        row3 = QHBoxLayout(); row3.addWidget(QLabel("Measured Length (in):"))
-        self.calibrate_input = QDoubleSpinBox(); self.calibrate_input.setRange(0.01, 1000); self.calibrate_input.setDecimals(4); row3.addWidget(self.calibrate_input)
-        cal_btn = QPushButton("Calibrate"); cal_btn.clicked.connect(self.initiate_calibration); row3.addWidget(cal_btn); v.addLayout(row3)
-        self.manual_calibration_widgets = [row3.itemAt(i).widget() for i in range(row3.count())]
-
-        params = QGroupBox("Motor Parameters (Manual Mode)"); pg = QGridLayout(params)
-        self.manual_motor_params = params
-        pg.addWidget(QLabel("Max Speed (steps/s):"), 0, 0)
-        self.max_speed = QDoubleSpinBox(); self.max_speed.setRange(1, 20000); self.max_speed.setDecimals(0); self.max_speed.setValue(3000); pg.addWidget(self.max_speed, 0, 1)
-        pg.addWidget(QLabel("Acceleration (steps/s²):"), 1, 0)
-        self.acceleration = QDoubleSpinBox(); self.acceleration.setRange(1, 50000); self.acceleration.setDecimals(0); self.acceleration.setValue(1000); pg.addWidget(self.acceleration, 1, 1)
-        params_btn = QPushButton("Apply (A speed,accel)"); params_btn.clicked.connect(self.set_motor_parameters); pg.addWidget(params_btn, 2, 0, 1, 2)
-        params_btn.setMinimumHeight(15)
-        v.addWidget(params)
+        ctrl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         left.addWidget(ctrl); left.addStretch()
 
         right_column_layout = QVBoxLayout()
+        right_column_layout.addWidget(QLabel("Carriage target (in)"))
         self.keypad = KeypadWidget()
-
-        
-
-        self.keypad.value_entered.connect(self.target_input.setValue)
+        self.keypad.setToolTip("Enter a carriage target in inches. ENTER requests a move using the active controller's checks.")
         self.keypad.value_entered.connect(self.set_length)
         right_column_layout.addWidget(self.keypad)
         right_column_layout.addStretch()
@@ -1553,7 +1528,7 @@ class MinimalHMI(QMainWindow):
         if hasattr(self, "refresh_ports_button"):
             self.refresh_ports_button.setEnabled(not connected)
 
-        for name in ("norm_speed","norm_accel","gentle_speed","gentle_accel","fast_speed","fast_accel","max_speed","acceleration"):
+        for name in ("norm_speed","norm_accel","gentle_speed","gentle_accel","fast_speed","fast_accel"):
             widget = getattr(self,name,None)
             if widget is not None:
                 widget.setEnabled(controller.key != TEENSY_CARRIAGE)
@@ -1564,12 +1539,17 @@ class MinimalHMI(QMainWindow):
         self.legacy_tab.setEnabled(manual_ready or (connected and native_manual))
         self.manual_teensy_setup.setVisible(native_manual)
         self.manual_teensy_actions.setVisible(native_manual)
-        for widget in (self.enable_chk,self.pid_chk,self.near_cal_btn,self.manual_motor_params,*self.manual_calibration_widgets):
-            widget.setVisible(not native_manual)
-        self.manual_home_button.setText("HOME CARRIAGE" if native_manual else "Home (H)")
-        self.rel_input.setRange(-2 if native_manual else -100,2 if native_manual else 100)
+        self.manual_home_button.setText("Home")
+        self.enable_chk.setToolTip(
+            "Check to enable and arm through the shared driver checks. Uncheck to release the motor; Home must be repeated. "
+            "Reflects the controller enable output, not measured motor power."
+            if native_manual else "Enable or release the simulated carriage motor."
+        )
         if not native_manual:
-            for widget in (self.manual_home_button,self.manual_go,self.manual_jog,self.target_input,self.rel_input,self.keypad):
+            self.enable_chk.blockSignals(True)
+            self.enable_chk.setChecked(isinstance(self.ser, VirtualController) and self.ser.motor_enabled)
+            self.enable_chk.blockSignals(False)
+            for widget in (self.manual_home_button,self.enable_chk,self.keypad):
                 widget.setEnabled(True)
         self.auto_tab.setEnabled(auto_ready or native_manual)  # offline list planning remains available
         self.current_group.setVisible(not native_manual)
@@ -2174,18 +2154,6 @@ class MinimalHMI(QMainWindow):
         if self.active_controller().key == TEENSY_CARRIAGE:
             return self.carriage_tab.home()
         self.send_backend_commands(self.active_controller().home(), "home the carriage")
-    def near_calibrate(self):
-        if self.homed_label.text() != "HOMED":
-            self.log.append("NEAR CAL ERROR: System must be homed first.")
-            return
-        sensor_offset = self.board_sensor_location_input.value() if hasattr(self, 'board_sensor_location_input') else self.board_sensor_distance_inches
-        self.board_sensor_distance_inches = sensor_offset
-        self.log.append(f"Starting near calibration using board sensor offset {sensor_offset:.4f}\".")
-        self.send_backend_commands(
-            self.active_controller().near_calibrate(sensor_offset),
-            "run near calibration",
-        )
-
     def load_position(self):
         if self.active_controller().key == TEENSY_CARRIAGE:
             return self.carriage_tab.move_load_to(self.native_load_target())
@@ -2210,18 +2178,19 @@ class MinimalHMI(QMainWindow):
         return int(self.carriage_tab.x.get("SOFT_MAX_MILLI","0"))/1000
 
     def toggle_motor_power(self, checked):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            if checked:
+                self.send_command("XARM 1")
+            else:
+                self.carriage_tab.stop("XDISABLE")
+            self.refresh_teensy_tabs()  # display readback, never an optimistic enable
+            return
         self.send_backend_commands(
             self.active_controller().motor_power(checked), "change motor power"
         )
 
-    def toggle_pid_control(self, checked):
-        self.send_backend_commands(
-            self.active_controller().pid_control(checked), "change PID control"
-        )
-
-    # Replace the current set_length function with this:
-    def set_length(self, length=None):
-        target = length if length is not None else self.target_input.value()
+    def set_length(self, length):
+        target = length
         if self.active_controller().key == TEENSY_CARRIAGE:
             return self.carriage_tab.move_to(target)
 
@@ -2234,26 +2203,12 @@ class MinimalHMI(QMainWindow):
                 self.prepare_prediction(target)
         else:
             self.log.append(f"MOVE REJECTED: Target {target:.2f}\" is outside the valid range (0 to {self.home_position:.2f}\").")
-    def move_relative(self):
-        delta = self.rel_input.value()
-        if self.active_controller().key == TEENSY_CARRIAGE:
-            return self.carriage_tab.jog_distance(delta)
-        target = self.current_position + delta
-
-        # Instead of sending its own command, it now uses our safe function
-        self.set_length(target)
     # AUTO jog helper: move by a relative delta from current position
     def auto_jog(self, delta):
         if self.active_controller().key == TEENSY_CARRIAGE:
             return self.carriage_tab.jog_distance(float(delta))
         target = self.current_position + float(delta)
         self.set_length(target)
-    def set_motor_parameters(self):
-        speed = self.max_speed.value(); accel = self.acceleration.value()
-        self.send_backend_commands(
-            self.active_controller().set_motor_parameters(speed, accel),
-            "set motor parameters",
-        )
     def toggle_current_settings(self, visible):
         if hasattr(self, 'current_settings_panel'):
             self.current_settings_panel.setVisible(visible)
@@ -2328,12 +2283,6 @@ class MinimalHMI(QMainWindow):
         if hasattr(self, "auto_status_label"):
             self._set_cycle_status("STATUS: Overcurrent reset requested.")
 
-    def initiate_calibration(self):
-        self.send_backend_commands(
-            self.active_controller().calibration(self.calibrate_input.value()),
-            "calibrate travel",
-        )
-
     # ---------- Profiles ----------
     def profile_setting_widgets(self):
         return {1:(self.gentle_speed,self.gentle_accel),2:(self.norm_speed,self.norm_accel),
@@ -2372,18 +2321,17 @@ class MinimalHMI(QMainWindow):
         self.manual_stop.setEnabled(p.connected)
         self.manual_reset.setEnabled(link and not p.armed)
         self.manual_release.setEnabled(p.connected and p.compatible)
+        enabled = link and p.x.get("ENA") == "0"
+        self.enable_chk.blockSignals(True)
+        self.enable_chk.setChecked(enabled)
+        self.enable_chk.blockSignals(False)
+        self.enable_chk.setEnabled(link and (enabled or p.allowed("XARM 1")))
         known = link and p.x.get("POS_KNOWN") == "1" and not p.local_fault
         self.update_homed_status(1 if known else 0)
         if not known:
             self.position_label.setText("UNKNOWN")
-            self._teensy_manual_target_initialized = False
         elif not busy:
             self.position_label.setText(f"{160.5+int(p.x['HOME_OFFSET'])/127.12:.4f}")
-        if known and not self._teensy_manual_target_initialized:
-            self.target_input.blockSignals(True)
-            self.target_input.setValue(p.target.value())
-            self.target_input.blockSignals(False)
-            self._teensy_manual_target_initialized = True
         self.state_label.setText("FAULT" if p.local_fault or p.x.get("FAULT","NONE") != "NONE" else
                                  "HOMING" if p.homing else "MOVING" if busy else "ARMED" if p.armed else "DISARMED")
         for name,label in (("HOME",self.sensor_label),("BOARD_EDGE",self.board_sensor_label)):
@@ -2435,13 +2383,7 @@ class MinimalHMI(QMainWindow):
         self.auto_jog_left_btn.setText("Home")
         self.auto_jog_right_btn.setText("Saw")
         for radio,_,_ in self.board_size_radios: radio.setEnabled(not busy)
-        self.target_input.setEnabled(known and not busy)
         self.keypad.setEnabled(known and not busy)
-        self.manual_go.setEnabled(p.allowed(f"XMOVE {int(self.target_input.value()*1000+0.5)}"))
-        delta=self.rel_input.value()
-        count=int(abs(delta)*127.12+0.5)
-        self.manual_jog.setEnabled(bool(count) and p.allowed(f"XJOG {1 if delta>0 else -1} {count}"))
-        self.rel_input.setEnabled(not busy)
 
         edit = link and not p.armed and not busy
         if not link:
@@ -2533,6 +2475,10 @@ class MinimalHMI(QMainWindow):
         self.homed_label.setText(text); self.homed_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
     def update_motor_state(self, state):
+        if isinstance(self.ser, VirtualController):
+            self.enable_chk.blockSignals(True)
+            self.enable_chk.setChecked(self.ser.motor_enabled)
+            self.enable_chk.blockSignals(False)
         self.current_motor_state = state
         previous_motor_state = self.state_label.text()
         self.state_label.setText(state)
@@ -2674,10 +2620,6 @@ class MinimalHMI(QMainWindow):
         self.home_position = pos
         self.log.append(f"Max travel distance set to: {pos}\"")
         try:
-            # --- ADD THE NEW LINE HERE ---
-            if hasattr(self, 'target_input') and self.target_input is not None:
-                self.target_input.setRange(0.0, pos)
-
             if hasattr(self, 'board_sensor_location_input') and self.board_sensor_location_input is not None:
                 self.board_sensor_location_input.setRange(0, pos)
                 
@@ -2744,8 +2686,6 @@ class MinimalHMI(QMainWindow):
             "gentle_accel": self.gentle_accel,
             "fast_speed": self.fast_speed,
             "fast_accel": self.fast_accel,
-            "manual_speed": self.max_speed,
-            "manual_accel": self.acceleration,
             "kerf": self.kerf_input,
             "cut_length": self.cut_length_input,
             "board_sensor_location": self.board_sensor_location_input,
