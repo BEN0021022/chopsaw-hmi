@@ -1,6 +1,6 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-08. The active implementation is **custom controller 0.13.0**,
+Updated 2026-11-08. The active implementation is **custom controller 0.14.0**,
 not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
@@ -9,6 +9,12 @@ close it before opening the main app on the same COM port.
 0.13.0 adds profiles and bounded board-edge/truing, tested offline, then flashed
 and read back on COM4. The matching app is reopened with fresh compatible
 telemetry, disarmed, no queued motion. New physical acceptance remains pending.
+
+0.14.0 is now loaded with editable native pulse-rate/acceleration fields,
+MEGA V2.5 default profiles and pulse-timing feedback. Actual parameter edits were
+read back without motor enable or pulses; matching app reopened disarmed.
+See SPEED_TUNING.md. The operator reported 0.13.0 tests good, including Fast;
+that statement does not independently complete the physical fault matrix.
 
 ## Feature mapping
 
@@ -25,7 +31,7 @@ telemetry, disarmed, no queued motion. New physical acceptance remains pending.
 | Home | H, positive seek, home coordinate 160.5 in | XHOME selected search limit; seek/release/backoff/slow latch/pull-off | User confirmed Home success; repeatability/reference acceptance remains |
 | Absolute length / load positions | S inches | XMOVE integer milliinches; known position + explicit arm | Implemented 0.11.0; native inch target and load presets; physical acceptance pending |
 | Soft limits | Legacy target clamping | Firmware target-time and per-pulse bounds | Implemented; physical envelope acceptance pending |
-| Profiles / speed / acceleration | Z, A speed,accel | Commissioning default plus disarmed-only Gentle/Normal/Fast selection | Prepared 0.12.0, tested offline; flash and physical acceptance pending; see MOTION_PROFILES.md |
+| Profiles / speed / acceleration | Z, A speed,accel | XPROFILE id [rate accel], native editable controls and acknowledged RAM settings | Active 0.14.0; MEGA defaults, 1-20000 pps / 1-50000 pps² editable ranges; higher-rate physical acceptance pending; see SPEED_TUNING.md |
 | Board detection / truing | J / N, board-edge offset | XEDGE pulse bound/offset/overlap; XTRUING capture token | Prepared 0.13.0; detection disarms, separate explicit truing move; Home reference retained; geometry/physical acceptance pending |
 | Door | Ad hoc/old hardware | Door/D29 active LOW, controller interlock | User confirmed input; firmware/app cancellation tested |
 | Saw endpoints | Old SSEN | UP Limit Z/D22; DOWN Fd/Hld/D16 | User-confirmed inputs, controller interlocks |
@@ -55,7 +61,7 @@ and no homed coordinate is inferred from a clear input.
 1. Keep saw mains unplugged, valve supply disconnected and air isolated. Keep
    suspect INA/MCP disconnected. Launch `python main.py`, select Teensy Carriage,
    choose the Teensy COM port and connect. The source requires matching
-   0.13.0 telemetry; that firmware and matching app are now loaded.
+   0.14.0 telemetry; that firmware and matching app are now loaded.
 2. Check Home sensor is inactive (no trip/release sequence is required). Door closed, saw UP only,
    driver green ON/red OFF, alarm raw HIGH. Confirm isolation/driver checks.
 3. Confirm driver setup. Wait for controller acknowledgment, then ARM MANUAL CONTROL.

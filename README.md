@@ -9,12 +9,12 @@ The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active flashed firmware and reopened app are **0.13.0**, verified on COM4.
+Active flashed firmware and reopened app are **0.14.0**, verified on COM4.
 This adds bounded motion profiles and board-edge acquisition with a separate
 truing move; new physical acceptance remains pending. See
 [motion profiles](docs/MOTION_PROFILES.md) and [board-edge plan](docs/BOARD_EDGE_COMMISSIONING.md).
 Matching stable 0.11.0 source remains at checkpoint `cab3a16` for rollback.
-Prepared 0.14.0 adds editable pulse rates/acceleration and MEGA V2.5 defaults;
+0.14.0 adds editable pulse rates/acceleration and MEGA V2.5 defaults;
 see [speed tuning](docs/SPEED_TUNING.md). 0.13.0 is preserved at `8602038`.
 Controller source:
 `firmware/chopsaw_controller/chopsaw_controller.ino`. The separate Sensor Bench
@@ -125,7 +125,7 @@ notes, Git status, and hardware compatibility before creating a release.
 
 ## Controller modes
 
-- **Teensy Carriage:** active custom 0.11.0 firmware; native guarded carriage jogs.
+- **Teensy Carriage:** active custom 0.14.0 firmware; guarded carriage motion and editable rates.
 - **Legacy Arduino Mega:** archived, internal to the offline simulator only.
 - **Teensy Hardware Test:** separate diagnostics protocol; old operational tabs locked.
 - **Teensy grblHAL:** retained prototype only; operational controls locked. It

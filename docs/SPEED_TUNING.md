@@ -5,6 +5,12 @@ its fastest profile, and prioritized restoring MEGA-like cycle times. This
 report does not complete the physical fault matrix or board-geometry acceptance.
 Stable pre-tuning source is `8602038` (0.13.0).
 
+0.14.0 is now flashed/read back on COM4, and the matching app is open with
+fresh compatible telemetry, disarmed/unconfigured and no queued motion. A real
+board edit to 1700/2200 was acknowledged without enabling or generating pulses;
+Fast was restored to 2500/1500 and Commissioning selected before app reopening.
+Physical acceptance of higher rates remains for the operator.
+
 ## Operator controls
 
 On CARRIAGE, disarm, select Gentle/Normal/Fast, enter pulse rate and acceleration,

@@ -142,3 +142,29 @@ telemetry, no local fault, disarmed/unconfigured and no queued motion. Hardware
 motion acceptance remains for the operator. Local readback/startup records are
 under ignored tmp/commissioning/0.13.0; the original prepared bundle remains
 unchanged for hash verification.
+
+## Editable rate update: 0.14.0
+
+Operator reports 0.13.0 testing good, including Fast, and prioritizes cycle
+time. Added editable native pulse rate (1-20000 pps) and acceleration
+(1-50000 pps²) per Gentle/Normal/Fast profile, with disarmed-only apply and
+readback before arm. Defaults recover MEGA V2.5 150/200, 1000/500, 2500/1500;
+Commissioning stays 40/0. Values are RAM-only; old maximum-valued Windows
+settings are not automatically transmitted.
+
+Native checks pass: 83 policy, 87 frozen bench, 112 controller, 209 Home,
+113 positioning, 1668 profiles/ramp/timing and 165 edge. Actual sketch records
+with custom profile values replay into Qt (55 motion records). Main app, backend,
+safety-boundary and Sensor Bench tests pass. Microsecond mock tests exercise
+the actual cooperative pulse scheduler at 20kpps with exact pulse count/50us
+minimum rising-edge gap, five-microsecond HIGH, cancellation and timer wrap.
+This is software evidence, not a hardware speed/torque acceptance.
+
+Teensy 4.1 compile passed; flashed/read back 0.14.0 / CARRIAGE_V8 on COM4 after
+operator confirmed app closed/driver OFF. Startup was disarmed/unconfigured,
+unknown position, STEP/DIR LOW, ENA HIGH and zero pending/generated pulses.
+Applied 1700/2200 to Fast and verified the actual board ACK without enabling
+or moving, restored Fast 2500/1500, selected Commissioning, then reopened app.
+App telemetry is compatible/fresh, disarmed, no local fault or queued motion.
+Offscreen layout inspected at 1280x900, dark editable controls, fixed STOP.
+Local source/firmware bundle and readbacks: tmp/commissioning/0.14.0.

@@ -1,7 +1,7 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Active firmware: custom **0.13.0** in `firmware/chopsaw_controller`, flashed
+Active firmware: custom **0.14.0** in `firmware/chopsaw_controller`, flashed
 and read back on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
 Motion profiles and bounded board-edge/truing are compiled/software-tested;
 new physical acceptance remains pending. Stable rollback source is `cab3a16` (0.11.0).
@@ -14,8 +14,9 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 Record outstanding physical responses in the [fault acceptance matrix](docs/TEENSY_FAULT_ACCEPTANCE_MATRIX.md).
-Prepared next build: **0.14.0**, editable pulse rate/acceleration and recovered
-MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Not flashed yet.
+Current build **0.14.0** has editable pulse rate/acceleration and recovered
+MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Actual board rate-edit
+readback passed without enabling or moving; matching app reopened disarmed.
 
 ## Current run - work through these next
 
@@ -33,7 +34,9 @@ MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Not flashed yet.
 - [x] Operator reports 0.13.0 testing good, including its fastest profile.
       This is motion feedback, not completion of the physical fault matrix.
 - [x] Prepare editable 0.14.0 profiles with controller readback and pulse-timing feedback.
-- [ ] Flash/read back 0.14.0 and accept the selected higher operating rates.
+- [x] Flash/read back 0.14.0 / CARRIAGE_V8; verify actual rate edits, restore
+      default profiles and select Commissioning; reopen compatible/fresh app.
+- [ ] Accept the operator-selected higher operating rates on the carriage.
 - [x] Prepare bounded board-edge search and a separate captured truing move;
       preserves the Home reference, no automatic pneumatic or saw action.
 - [ ] Accept edge detection/geometry on the machine and finish the stock workflow.

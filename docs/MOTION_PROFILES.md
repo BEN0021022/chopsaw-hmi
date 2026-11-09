@@ -1,4 +1,9 @@
-# Motion profiles - prepared controller 0.12.0
+# Historical commissioning profiles - 0.12.0/0.13.0
+
+Active controller/app **0.14.0** now provides editable rate/acceleration with
+MEGA defaults. Use [speed tuning](SPEED_TUNING.md) for current controls, limits
+and defaults. The table and acceptance sequence below preserve the initial
+commissioning profile history; they are not the active 0.14.0 speed limits.
 
 Prepared offline on 2026-11-08 as 0.12.0, checkpoint `dd333ce`; also included in
 0.13.0. That build is now flashed/read back on COM4 with the matching app

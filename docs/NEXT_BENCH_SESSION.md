@@ -7,6 +7,12 @@ and zero queued motion. Continue with acceptance below; no motion was sent by
 the agent. Checkpoint `cab3a16` preserves matching 0.11.0 source; profile-only
 checkpoint is `dd333ce`. The loading section remains for subsequent reloads.
 
+Latest: the operator reported 0.13.0 testing good and requested faster,
+editable rates. **0.14.0 is now flashed/read back**, and the matching app is
+reopened disarmed. Native rate/acceleration controls are described in
+[speed tuning](SPEED_TUNING.md); default Fast is 2500 pulses/s, not the old
+127-pulses/s commissioning cap. Pre-tuning 0.13.0 is at `8602038`.
+
 ## Load and verify together
 
 Close the current app to release COM4 and turn driver power off. Keep saw mains
@@ -24,9 +30,10 @@ identity must not arm, enable, home or move anything.
 2. Keep Commissioning speed and accept the pending 0.11.0 absolute feature:
    approximately 0.1 inch toward the saw, then back to Home/load. Check displayed
    endpoint and STOP. Confirm the complete path before any long load preset.
-3. Disarm and apply Gentle; inspect acknowledged rate/acceleration. Accept short
-   out-and-back, stopping and direction changes before Normal or Fast. A label
-   named Fast is still initially capped at about one inch/second.
+3. Disarm, select an editable profile, enter pulse rate and acceleration, and
+   apply. Inspect the acknowledged values before arming for the operator's test.
+   A short move may not reach full speed because it ramps up and down; higher-rate
+   physical operating limits remain to be established. See SPEED_TUNING.md.
 4. Accept stationary board sensor operation, then a short bounded edge search
    with supported stock and verified clearance. Detection must stop/disarm.
    Review the captured geometry before rearming for the separate truing move.
