@@ -84,5 +84,20 @@ int main() {
     positionReady(); const unsigned before = fakePulses; command(target);
     CHECK(!outputsArmed && !xPositionKnown && !xRemaining && fakePulses == before);
   }
+  // Explicit Load uses the same guarded move path, selecting stored FAST only
+  // after acceptance. It does not arm, change limits or rewrite profile values.
+  prepareManual(); command("XLOAD 135000"); CHECK(!xRemaining && xProfile==0);
+  positionReady(); command("OFF"); command("XPROFILE 3 3000 1500"); command("XPROFILE 2");
+  command("XLOAD 135000"); CHECK(!xRemaining && xProfile==2 && !outputsArmed);
+  command("XARM 1"); fakeTime+=200;
+  command("XLOAD 160390"); CHECK(!xRemaining && xProfile==2 && xPositionKnown);
+  command("XLOAD 135000");
+  CHECK(xAbsoluteMove && xProfile==3 && xRamp.parameters.maxRate==3000 && xRamp.parameters.acceleration==1500);
+  const uint32_t loadId=xMoveId;
+  command("XLOAD 111000"); CHECK(xMoveId==loadId); // no queued replacement
+  runMove(); CHECK(xHomeOffset==Positioning::offsetForMilli(135000) && outputsArmed && xPositionKnown);
+  command("XLOAD 160389"); runMove(); CHECK(xHomeOffset==-14);
+  command("XLOAD 63000"); xHomeOffset=Positioning::MinOffset;
+  fakeTime+=25; loop(); CHECK(interlocks.fault==bench::Fault::SoftLimit && !outputsArmed && !xPositionKnown);
   printf("Referenced positioning and soft limits: %u checks passed\n", checks);
 }

@@ -145,6 +145,7 @@ class MinimalHMI(QMainWindow):
         ]
 
         self.active_profile_name = "NORMAL"
+        self._legacy_cut_completion_ready = False  # simulator harness only; no operator button
         self.clamp_engaged = False
         self.clamp_left_engaged = False
         self.clamp_right_engaged = False
@@ -357,6 +358,8 @@ class MinimalHMI(QMainWindow):
                 widget.valueChanged.connect(lambda _value, p=profile: self.mark_teensy_profile_edit(p))
         self.target_input.valueChanged.connect(self.refresh_teensy_tabs)
         self.rel_input.valueChanged.connect(self.refresh_teensy_tabs)
+        self.auto_jog_input.valueChanged.connect(self.refresh_teensy_tabs)
+        for radio,_,_ in self.board_size_radios: radio.toggled.connect(self.refresh_teensy_tabs)
         self.tabs.addTab(self.carriage_tab, "CARRIAGE")
         self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
@@ -505,7 +508,7 @@ class MinimalHMI(QMainWindow):
         live = QGroupBox("Live Status"); g1 = QGridLayout(live)
         g1.setContentsMargins(12, 10, 12, 10)
         g1.setHorizontalSpacing(12)
-        g1.setVerticalSpacing(10)
+        g1.setVerticalSpacing(6)
         g1.setColumnStretch(0, 0)
         g1.setColumnStretch(1, 1)
         g1.addWidget(QLabel("Current Position (in):"), 0, 0)
@@ -522,6 +525,12 @@ class MinimalHMI(QMainWindow):
         g1.addWidget(QLabel("Clamp Status:"), 3, 0)
         self.auto_clamp_status_label = self.pill("UNCLAMPED", "#475569")
         g1.addWidget(self.auto_clamp_status_label, 3, 1)
+        self.auto_sensor_pills = {}
+        for row,(key,title) in enumerate((("FENCE_DOOR","Guard door:"),("SAW_UP","Saw fully UP:"),
+                                          ("SAW_DOWN","Saw fully DOWN:"),("CL57T_ALM","Driver alarm:")),4):
+            label=self.pill("UNKNOWN","#475569")
+            g1.addWidget(QLabel(title),row,0); g1.addWidget(label,row,1)
+            self.auto_sensor_pills[key]=label
         live.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         left_col.addWidget(live)
 
@@ -638,6 +647,25 @@ class MinimalHMI(QMainWindow):
         main_layout.addWidget(self.current_settings_panel)
 
         left_col.addWidget(current_group)
+
+        self.auto_teensy_setup = QGroupBox("Prepare carriage")
+        prep=QVBoxLayout(self.auto_teensy_setup)
+        self.auto_isolation=QCheckBox("Isolation and driver checks confirmed")
+        self.auto_isolation.toggled.connect(lambda checked: self.carriage_tab.consent.setChecked(checked))
+        prep.addWidget(self.auto_isolation)
+        hint=QLabel("Blade unplugged; valve power off; air isolated.")
+        hint.setWordWrap(True); prep.addWidget(hint)
+        row=QHBoxLayout()
+        self.auto_configure=QPushButton("Setup")
+        self.auto_configure.setToolTip("Confirm the verified driver setup")
+        self.auto_configure.clicked.connect(lambda: self.send_command("XCONFIG 0 1"))
+        self.auto_home=QPushButton("HOME")
+        self.auto_home.clicked.connect(self.home_motor)
+        row.addWidget(self.auto_configure); row.addWidget(self.auto_home)
+        self.auto_arm=QPushButton("ARM CARRIAGE")
+        self.auto_arm.clicked.connect(lambda: self.carriage_tab.toggle_arm())
+        row.addWidget(self.auto_arm); prep.addLayout(row)
+        left_col.addWidget(self.auto_teensy_setup)
 
         # Jog controls (AUTO)
         jog = QGroupBox("Jog"); jg = QVBoxLayout(jog)
@@ -841,7 +869,7 @@ class MinimalHMI(QMainWindow):
         cyc.addLayout(radio_layout) # Add the radio button layout to the main cycle_group layout
         # --- END MODIFIED SECTION ---
 
-        # The START CYCLE and CUT COMPLETE buttons remain as they were
+        # Start remains unavailable for live Teensy until automatic-cycle acceptance.
         self.start_cycle_button = QPushButton("START CYCLE")
         self.start_cycle_button.setProperty("role", "touch")
         self.start_cycle_button.clicked.connect(self.start_auto_cycle)
@@ -852,16 +880,6 @@ class MinimalHMI(QMainWindow):
         """)
         cyc.addWidget(self.start_cycle_button)
 
-        self.cut_complete_button = QPushButton("CUT COMPLETE")
-        self.cut_complete_button.setProperty("role","touch")
-        self.cut_complete_button.setEnabled(False)
-        self.cut_complete_button.clicked.connect(self.cut_complete_pressed)
-        self.cut_complete_button.setStyleSheet("""
-            QPushButton { background-color: #1e293b; color: #475569; font-weight: bold; font-size: 24px; min-height: 25px; max-height: 55px; border: 1px solid #334155; }
-            QPushButton:enabled { background-color: #2563eb; color: white; border: none; }
-            QPushButton:enabled:hover { background-color: #1d4ed8; }
-        """)
-        cyc.addWidget(self.cut_complete_button)
             
             
         right_col.addWidget(cycle_group)
@@ -876,15 +894,12 @@ class MinimalHMI(QMainWindow):
         sv = QVBoxLayout(status_group)
 
         # --- NEW: Set the min/max height for the status box ---
-        status_group.setMinimumHeight(60) # Adjust this value as needed
-        status_group.setMaximumHeight(70) # Adjust this value as needed
+        status_group.setMinimumHeight(90)
+        status_group.setMaximumHeight(120)
 
         self.auto_status_label = QLabel("STATUS: Waiting to Start")
         self.auto_status_label.setWordWrap(True)
-        self.auto_status_label.setStyleSheet("""
-            font-weight: bold;
-            font-size: 16px;      /* Adjust font size 
-        """)
+        self.auto_status_label.setStyleSheet("font-weight:bold; font-size:14px; color:#e2e8f0;")
 
 
         sv.addWidget(self.auto_status_label)
@@ -965,7 +980,7 @@ class MinimalHMI(QMainWindow):
         return CutListManagerTab(
             storage_path=storage_path,
             on_load_lines=self.load_cut_list_lines,
-            on_switch_to_auto=lambda: self.tabs.setCurrentIndex(1),
+            on_switch_to_auto=lambda: self.tabs.setCurrentWidget(self.auto_tab),
             log_fn=lambda msg: self.log.append(msg),
         )
 
@@ -1105,7 +1120,7 @@ class MinimalHMI(QMainWindow):
         self.auto_clamp_checkbox.setChecked(self.auto_clamp_enabled)
         self.auto_clamp_checkbox.setToolTip(
             "OFF (recommended for current firmware): the HMI never sends cylinder or saw\n"
-            "commands; you cut manually and press CUT COMPLETE.\n"
+            "commands; automatic mechanism control remains unavailable.\n"
             "ON: the HMI drives the air clamps and saw automatically. Only enable this\n"
             "once the controller firmware supports the cylinder/saw commands.")
         self.auto_clamp_checkbox.toggled.connect(self._on_auto_clamp_toggled)
@@ -1171,17 +1186,6 @@ class MinimalHMI(QMainWindow):
         self.fa_start_cycle_button.clicked.connect(self.start_auto_cycle)
         bottom_row.addWidget(self.fa_start_cycle_button)
 
-        self.fa_cut_complete_button = QPushButton("CUT COMPLETE")
-        self.fa_cut_complete_button.setFixedHeight(50)
-        self.fa_cut_complete_button.setMinimumWidth(160)
-        self.fa_cut_complete_button.setEnabled(False)
-        self.fa_cut_complete_button.setStyleSheet("""
-            QPushButton { background-color: #1e293b; color: #475569; font-weight: bold; font-size: 17px; border-radius: 10px; padding: 0 16px; border: 1px solid #334155; }
-            QPushButton:enabled { background-color: #2563eb; color: white; border: none; }
-            QPushButton:enabled:hover { background-color: #1d4ed8; }
-        """)
-        self.fa_cut_complete_button.clicked.connect(self.cut_complete_pressed)
-        bottom_row.addWidget(self.fa_cut_complete_button)
 
         bottom_widget = QWidget()
         bottom_widget.setLayout(bottom_row)
@@ -1292,7 +1296,7 @@ class MinimalHMI(QMainWindow):
                 if self.auto_cycle_state not in ("FINISHED", "WAITING_FOR_NEW_BOARD"):
                     self._set_cycle_status("STATUS: Saw up — clamps released. Loading next board...")
             else:
-                self._set_cycle_status("STATUS: Saw up — clamps released. Press CUT COMPLETE.")
+                self._set_cycle_status("STATUS: Simulation stroke complete; awaiting simulated completion.")
 
     def _actuate_saw(self):
         """
@@ -1506,6 +1510,10 @@ class MinimalHMI(QMainWindow):
         self.update_clamp_ui()
 
     def update_clamp_ui(self):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            self.set_pill(self.auto_clamp_status_label,"UNKNOWN","#475569")
+            self.auto_clamp_status_label.setToolTip("No clamp feedback sensor is configured.")
+            return
         if self.clamp_engaged:
             if hasattr(self, 'clamp_button'):
                 self.clamp_button.setText("UNCLAMP")
@@ -1563,7 +1571,18 @@ class MinimalHMI(QMainWindow):
         if not native_manual:
             for widget in (self.manual_home_button,self.manual_go,self.manual_jog,self.target_input,self.rel_input,self.keypad):
                 widget.setEnabled(True)
-        self.auto_tab.setEnabled(auto_ready)
+        self.auto_tab.setEnabled(auto_ready or native_manual)  # offline list planning remains available
+        self.current_group.setVisible(not native_manual)
+        self.auto_teensy_setup.setVisible(native_manual)
+        self.cancel_cycle_button.setText("STOP / DISARM" if native_manual else "CANCEL CYCLE")
+        self.resume_on_reset_button.setEnabled(auto_ready)
+        self.resume_on_reset_button.setVisible(not native_manual)
+        self._set_start_enabled(auto_ready)
+        self.auto_jog_input.setRange(0.01 if native_manual else 0.001,2 if native_manual else 100)
+        if not native_manual:
+            for widget in (self.load_button,self.cancel_cycle_button,self.auto_jog_input,self.auto_jog_left_btn,self.auto_jog_right_btn,
+                           self.qjog_left_01,self.qjog_right_01,self.qjog_left_025,self.qjog_right_025,
+                           self.qjog_left_1,self.qjog_right_1,self.qjog_left_2,self.qjog_right_2): widget.setEnabled(True)
         if hasattr(self, "full_auto_tab"):
             self.full_auto_tab.setEnabled(auto_ready)
 
@@ -1784,6 +1803,8 @@ class MinimalHMI(QMainWindow):
     # --- NEW: Method to cancel the auto cycle ---
     def cancel_auto_cycle(self):
         """Stops any active auto cycle and resets the state."""
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            return self.carriage_tab.stop()
         # 1. Send a command to stop the motor's current movement. M0 (Move 0) is a safe stop command.
         self.cycle_generation += 1
         self.send_backend_commands(
@@ -1881,6 +1902,8 @@ class MinimalHMI(QMainWindow):
         self.advance_auto_cycle()
 
     def cut_complete_pressed(self):
+        if not isinstance(self.ser,VirtualController):
+            return False
         if self.clamps_engaged_cutting:
             # Acknowledged before the saw-up edge arrived; book the cut now
             self.clamps_engaged_cutting = False
@@ -1921,11 +1944,11 @@ class MinimalHMI(QMainWindow):
             self.fa_start_cycle_button.setEnabled(allowed)
 
     def _set_cut_complete_enabled(self, enabled):
-        self.cut_complete_button.setEnabled(enabled)
-        if hasattr(self, 'fa_cut_complete_button'):
-            self.fa_cut_complete_button.setEnabled(enabled)
+        self._legacy_cut_completion_ready = bool(enabled and isinstance(self.ser,VirtualController))
 
     def advance_auto_cycle(self):
+        if not self.active_controller().capabilities.automatic_cycle_ready:
+            return False
         self.perform_early_return = False # Reset flag at start of each advance
         if self.auto_cycle_state == "DETECTING":
             self._set_cycle_status("STATUS: Detecting board edge...")
@@ -2164,6 +2187,8 @@ class MinimalHMI(QMainWindow):
         )
 
     def load_position(self):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            return self.carriage_tab.move_load_to(self.native_load_target())
         self.switch_profile("FAST", True)
 
         # The selected radio determines the load position; None means home position
@@ -2177,6 +2202,12 @@ class MinimalHMI(QMainWindow):
 
         self.log.append(log_msg)
         self.set_length(target_pos)
+
+    def native_load_target(self):
+        for radio, _, load_pos in self.board_size_radios:
+            if radio.isChecked() and load_pos is not None:
+                return load_pos
+        return int(self.carriage_tab.x.get("SOFT_MAX_MILLI","0"))/1000
 
     def toggle_motor_power(self, checked):
         self.send_backend_commands(
@@ -2213,6 +2244,8 @@ class MinimalHMI(QMainWindow):
         self.set_length(target)
     # AUTO jog helper: move by a relative delta from current position
     def auto_jog(self, delta):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            return self.carriage_tab.jog_distance(float(delta))
         target = self.current_position + float(delta)
         self.set_length(target)
     def set_motor_parameters(self):
@@ -2357,6 +2390,51 @@ class MinimalHMI(QMainWindow):
             raw=p.inputs.get(name) if p.fresh("INPUTS") else None
             self.set_pill(label,"UNKNOWN" if raw not in ("0","1") else "ON" if raw == "0" else "OFF",
                           "#334155" if raw not in ("0","1") else "#22c55e" if raw == "0" else "#ef4444")
+            for mirror in ((self.auto_homing_sensor_label,getattr(self,'fa_homing_sensor_label',None)) if name == "HOME" else
+                           (self.auto_board_sensor_label,getattr(self,'fa_board_sensor_label',None))):
+                if mirror is not None:
+                    self.set_pill(mirror,label.text(),"#334155" if raw not in ("0","1") else "#22c55e" if raw == "0" else "#ef4444")
+            if name == "BOARD_EDGE": self.board_sensor_tripped = raw == "0"
+        for name,label in self.auto_sensor_pills.items():
+            raw=p.inputs.get(name) if p.fresh("INPUTS") else None
+            if raw not in ("0","1"):
+                text,color="UNKNOWN","#475569"
+            elif name == "CL57T_ALM":
+                text,color=("NORMAL","#22c55e") if raw == "1" else ("ALARM","#ef4444")
+            elif name == "FENCE_DOOR":
+                text,color=("CLOSED","#22c55e") if raw == "0" else ("OPEN","#ef4444")
+            else:
+                text,color=("ACTIVE","#22c55e") if raw == "0" else ("INACTIVE","#475569")
+            self.set_pill(label,text,color)
+        self.set_pill(self.auto_clamp_status_label,"UNKNOWN","#475569")
+        if not known: self.auto_position_label.setText("UNKNOWN")
+        elif not busy: self.auto_position_label.setText(self.position_label.text())
+        saw=p.safety.get("SAW_POSITION","UNKNOWN") if p.fresh("SAFETY") else "UNKNOWN"
+        self.set_pill(self.fa_saw_position_label,saw,"#22c55e" if saw == "UP" else "#ef4444" if saw == "CONFLICT" else "#475569")
+        for label in (self.fa_outfeed_sensor_label,self.fa_fence_closed_label):
+            self.set_pill(label,"UNKNOWN","#475569")  # uncommissioned inputs are not confirmed feedback
+        self.auto_isolation.blockSignals(True)
+        self.auto_isolation.setChecked(p.consent.isChecked()); self.auto_isolation.blockSignals(False)
+        self.auto_configure.setEnabled(p.allowed("XCONFIG 0 1"))
+        self.auto_home.setEnabled(p.home_button.isEnabled())
+        self.auto_arm.setText("DISARM" if p.armed else "ARM")
+        self.auto_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
+        self.cancel_cycle_button.setEnabled(p.connected)
+        self.start_cycle_button.setEnabled(False)
+        self.fa_start_cycle_button.setEnabled(False)
+        self.auto_status_label.setText("Carriage controls only; Cycle Start unavailable. " + p.status.text())
+        self.load_button.setEnabled(p.allowed(f"XLOAD {int(self.native_load_target()*1000+0.5)}"))
+        self.load_button.setToolTip("Uses stored FAST profile. Requires Home, explicit arm and a clear path.")
+        jogs=((self.auto_jog_left_btn,self.auto_jog_input.value()),(self.auto_jog_right_btn,-self.auto_jog_input.value()),
+              (self.qjog_left_01,0.1),(self.qjog_right_01,-0.1),(self.qjog_left_025,0.25),(self.qjog_right_025,-0.25),
+              (self.qjog_left_1,1),(self.qjog_right_1,-1),(self.qjog_left_2,2),(self.qjog_right_2,-2))
+        for button,delta in jogs:
+            button.setEnabled(p.allowed(f"XJOG {1 if delta>0 else -1} {int(abs(delta)*127.12+0.5)}"))
+            button.setToolTip("Toward Home" if delta>0 else "Toward saw")
+        self.auto_jog_input.setEnabled(not busy)
+        self.auto_jog_left_btn.setText("Home")
+        self.auto_jog_right_btn.setText("Saw")
+        for radio,_,_ in self.board_size_radios: radio.setEnabled(not busy)
         self.target_input.setEnabled(known and not busy)
         self.keypad.setEnabled(known and not busy)
         self.manual_go.setEnabled(p.allowed(f"XMOVE {int(self.target_input.value()*1000+0.5)}"))
@@ -2508,7 +2586,7 @@ class MinimalHMI(QMainWindow):
                     # Manual mode: just record the piece; CUT COMPLETE books it
                     is_truing = self.auto_cycle_state == "WAITING_FOR_TRUING_CUT"
                     self._record_sim_piece(early_return=False, is_truing=is_truing)
-                    self._set_cycle_status("STATUS: In position — make the cut, press CUT COMPLETE.")
+                    self._set_cycle_status("STATUS: Simulation in position; awaiting simulated completion.")
 
     def update_sensor_status(self, status):
         text = "ON" if status == 1 else "OFF"; bg = "#22c55e" if status == 1 else "#ef4444"

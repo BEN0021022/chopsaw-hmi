@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.14.0";
+constexpr char FIRMWARE_VERSION[] = "0.15.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -235,7 +235,7 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V8,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V9,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1");
 }
 
 void publishPinMap() {
@@ -614,7 +614,8 @@ void __attribute__((noinline)) handleCommand(char *command) {
       char move[24]; snprintf(move, sizeof(move), "XMOVE %ld", static_cast<long>(xTruingMilli));
       handleCommand(move);
     }
-  } else if (startsWith(command, "XMOVE ")) {
+  } else if (startsWith(command, "XMOVE ") || startsWith(command, "XLOAD ")) {
+    const bool loadMove = startsWith(command, "XLOAD ");
     long milli = -1; char extra = '\0'; int32_t target = 0;
     if (sscanf(command + 6, "%ld %c", &milli, &extra) != 1 || milli < 0 || milli > carriage::Positioning::HomeMilli) {
       commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_ABSOLUTE_TARGET");
@@ -630,6 +631,7 @@ void __attribute__((noinline)) handleCommand(char *command) {
       Serial.println("BENCH_ERROR,CODE:X_SOFT_LIMIT");
     } else {
       xEdgeValid = false;
+      if (loadMove) xProfile = 3; // explicit accepted Load move selects stored FAST atomically
       const int32_t delta = target - xHomeOffset;
       xTargetOffset = target; ++xMoveId;
       xDirection = delta >= 0 ? 1 : -1;

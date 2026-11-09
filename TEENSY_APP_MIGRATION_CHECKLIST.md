@@ -20,6 +20,11 @@ readback passed without enabling or moving; matching app reopened disarmed.
 
 ## Current run - work through these next
 
+- [x] Prepare 0.15.0 partial AUTO: guarded jog/load, cut-list planning, native
+      sensor pills, no Cut Complete button and automatic entry points blocked.
+- [ ] Flash/read back 0.15.0, restore saved profile values without enabling,
+      and physically accept the restored AUTO controls. See [Auto plan](docs/AUTO_TAB_COMMISSIONING.md).
+
 - [x] Manual carriage motion: user-confirmed pass.
 - [x] First automatic Home cycle: user-confirmed success on 0.10.0.
 - [x] Absolute inch targets, per-pulse firmware soft limits and load presets:

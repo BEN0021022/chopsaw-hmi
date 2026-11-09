@@ -5,6 +5,11 @@ existing LF-terminated ASCII BENCH records plus CARRIAGE_V8. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
+Prepared 0.15.0 adds CARRIAGE_V9 / LOAD:FAST_V1 and `XLOAD <milli>`.
+It shares the XMOVE request/per-pulse guards, requires explicit arm and Home,
+and selects stored FAST only after accepting the target. It neither edits
+profile values nor arms automatically. See AUTO_TAB_COMMISSIONING.md.
+
 0.13.0 was flashed/read back on COM4 and the matching app reopened after the
 operator confirmed app closed and driver power OFF. Startup was disarmed,
 unconfigured, unknown position, zero queued motion and profile 0. New physical

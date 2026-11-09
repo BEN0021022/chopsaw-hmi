@@ -19,21 +19,21 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V8", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V9", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "VALVES_ISOLATED", "CAL_SPI": "127.12",
     "MAX_JOG": "254", "BASE_RATE": "40", "MAX_RATE": "20000", "MAX_ACCEL":"50000", "PROFILES": "EDITABLE_V1", "HOME_CHECK": "LEVEL_ONLY",
     "HOMING": "BOUNDED_V1", "HOME_MAX": "20594", "HOME_REF": "160.5",
     "ABSOLUTE": "REFERENCED_V1", "MAX_MOVE": "20594",
-    "EDGE_SEARCH": "BOUNDED_V1",
+    "EDGE_SEARCH": "BOUNDED_V1", "LOAD":"FAST_V1",
 }
 EDGE = re.compile(r"XEDGE ([1-9][0-9]{0,4}) (0|[1-9][0-9]{0,5}) (0|[1-9][0-9]{0,5})")
 TRUING = re.compile(r"XTRUING (0|[1-9][0-9]{0,9})")
 PROFILE = re.compile(r"XPROFILE ([0-3])(?: ([1-9][0-9]{0,4}) ([1-9][0-9]{0,4}))?")
 PROFILE_DEFAULTS = {0:(40,0),1:(150,200),2:(1000,500),3:(2500,1500)}
 PROFILE_FIELDS = tuple(f"PROFILE_{kind}{id}" for id in range(4) for kind in ("RATE","ACCEL"))
-ABSOLUTE = re.compile(r"XMOVE (0|[1-9][0-9]{0,5})")
+ABSOLUTE = re.compile(r"(?:XMOVE|XLOAD) (0|[1-9][0-9]{0,5})")
 HOME = re.compile(r"XHOME ([1-9][0-9]{0,4})")
 HOME_STAGES = {"SEEK", "RELEASE", "BACKOFF", "LATCH", "PULL_RELEASE", "PULL_OFF"}
 JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
@@ -238,7 +238,7 @@ class TeensyCarriagePanel(QWidget):
             self.load_preset.addItem(label, target)
         row.addWidget(self.load_preset)
         self.load_button = QPushButton("MOVE TO LOAD POSITION")
-        self.load_button.clicked.connect(lambda: self.move_to(self.selected_load_position()))
+        self.load_button.clicked.connect(lambda: self.move_load_to(self.selected_load_position()))
         row.addWidget(self.load_button)
         absolute_layout.addLayout(row)
         self.limit_note = QLabel()
@@ -247,7 +247,8 @@ class TeensyCarriagePanel(QWidget):
         absolute_layout.addWidget(self.absolute_progress)
         absolute_layout.addWidget(QLabel(
             "Home successfully, arm carriage motion, then select a target. Confirm the entire path is clear. "
-            "Moves use the acknowledged controller profile. STOP cancels; moves never queue or resume automatically."
+            "Load positions use the stored FAST profile; other moves use the selected profile. "
+            "STOP cancels; moves never queue or resume automatically."
         ))
         layout.addWidget(absolute_box)
         edge_box = QGroupBox("Board-edge search and truing proposal")
@@ -603,6 +604,11 @@ class TeensyCarriagePanel(QWidget):
             return True
         return False
 
+    def move_load_to(self, inches):
+        if not isinstance(inches,(int,float)) or not math.isfinite(inches) or inches < 0:
+            return False
+        return self.request_move(f"XLOAD {int(math.floor(inches*1000+0.5))}")
+
     def home(self):
         count = int(math.floor(self.home_search.value() * STEPS_PER_INCH + 0.5))
         command = f"XHOME {count}"
@@ -644,7 +650,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible carriage firmware 0.14.0 and verified machine pin map"
+            text = "Waiting for compatible carriage firmware 0.15.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":

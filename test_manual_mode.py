@@ -65,10 +65,10 @@ def drive_to_finish(w):
         app.processEvents()
         time.sleep(0.004)
         waiting = w.auto_cycle_state in ("WAITING_FOR_TRUING_CUT", "WAITING_FOR_CUT")
-        if waiting and w.cut_complete_button.isEnabled():
+        if waiting and w._legacy_cut_completion_ready:
             pump(0.10)  # let any clamp/saw commands fire first
             w.cut_complete_pressed()
-            pump_until(lambda: not w.cut_complete_button.isEnabled()
+            pump_until(lambda: not w._legacy_cut_completion_ready
                        or w.auto_cycle_state == "FINISHED", 5, "advance after cut")
     assert w.auto_cycle_state == "FINISHED", f"stuck in {w.auto_cycle_state}"
 

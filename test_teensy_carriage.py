@@ -62,7 +62,8 @@ def run():
         w.set_controls_enabled(True)
         p = w.carriage_tab
         assert p.connected
-        assert w.legacy_tab.isEnabled() and not w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
+        assert w.legacy_tab.isEnabled() and w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
+        assert not w.start_cycle_button.isEnabled() and not hasattr(w,'cut_complete_button')
         assert w.enable_chk.isHidden() and w.pid_chk.isHidden() and w.near_cal_btn.isHidden()
         assert w.manual_motor_params.isHidden() and not w.manual_home_button.isEnabled()
         assert not w.active_controller().capabilities.automatic_cycle_ready
@@ -208,7 +209,7 @@ def run():
         for index, target in ((1,135000),(2,111000),(3,87000),(4,63000),(0,160389)):
             p.load_preset.setCurrentIndex(index)
             p.load_button.click()
-            assert wire.writes[-1] == f"XMOVE {target}"
+            assert wire.writes[-1] == f"XLOAD {target}"
             packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-141,
                    HOME_STATE="DONE", MOVE_ID=index+10)
         assert not p.move_to(160.5) and not p.move_to(float("nan")) and not p.move_to(-1)
@@ -383,7 +384,65 @@ def run():
         w.settings.setValue('fast_speed',4321)
         w._save_settings()
         assert int(w.settings.value('fast_speed'))==4321, 'Do not overwrite archived simulator profile settings'
-        assert not w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
+        assert w.auto_tab.isEnabled() and not w.start_cycle_button.isEnabled() and not w.full_auto_tab.isEnabled()
+
+        # AUTO exposes planning and guarded carriage controls, never a cycle.
+        from PyQt6.QtWidgets import QPushButton
+        ready(p); w.tabs.setCurrentWidget(w.auto_tab)
+        assert w.auto_tab.isEnabled() and not w.start_cycle_button.isEnabled()
+        assert not any(button.text()=='CUT COMPLETE' for button in w.findChildren(QPushButton))
+        assert not w.resume_on_reset_button.isEnabled() and w.resume_on_reset_button.isHidden()
+        assert w.current_group.isHidden() and w.auto_clamp_status_label.text()=='UNKNOWN'
+        assert w.auto_homing_sensor_label.text()=='OFF' and w.auto_board_sensor_label.text()=='ON'
+        assert w.auto_sensor_pills['FENCE_DOOR'].text()=='CLOSED'
+        assert w.auto_sensor_pills['SAW_UP'].text()=='ACTIVE'
+        assert w.auto_sensor_pills['CL57T_ALM'].text()=='NORMAL'
+        before=len(wire.writes)
+        w.start_auto_cycle(); w.resume_after_reset(); w.advance_auto_cycle(); w.cut_complete_pressed()
+        assert len(wire.writes)==before and not w.start_cycle_button.isEnabled()
+        w.clear_list_button.click()
+        w.cut_length_input.setValue(18); w.add_cut_button.click()
+        assert w.cut_list==[(1,18,'')] and len(wire.writes)==before
+        w.cut_list_display.setPlainText('12 A\n24 B')
+        w.update_from_box_button.click()
+        assert [cut[1] for cut in w.cut_list]==[12,24] and len(wire.writes)==before
+        # Imports preserve the list's own tab route; switching to AUTO never arms.
+        w.load_cut_list_lines(['18 A','24 B','30 C'])
+        assert len(w.cut_list)==3 and len(wire.writes)==before
+        w.auto_isolation.setChecked(True)
+        assert p.consent.isChecked() and w.manual_isolation.isChecked()
+        packet(p,CONFIGURED=1,READY=1)
+        w.auto_arm.click(); assert wire.writes[-1]=='XARM 1'
+        packet(p,ARMED=1,CONFIGURED=1)
+        for button,command in ((w.qjog_left_01,'XJOG 1 13'),(w.qjog_right_025,'XJOG -1 32'),
+                               (w.qjog_left_1,'XJOG 1 127'),(w.qjog_right_2,'XJOG -1 254')):
+            button.click(); assert wire.writes[-1]==command
+            assert not w.qjog_left_01.isEnabled()
+            packet(p,ARMED=1,CONFIGURED=1,MOVE_ID=int(p.x['MOVE_ID'])+1)
+        assert not w.auto_jog(3) and not w.load_position(), 'Load requires known Home'
+        packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE')
+        for index,target in ((0,160389),(1,135000),(2,111000),(3,87000),(4,63000)):
+            w.board_size_radios[index][0].setChecked(True)
+            w.load_button.click()
+            assert wire.writes[-1]==f'XLOAD {target}'
+            assert not w.load_button.isEnabled(), 'No load replacement while awaiting ACK'
+            packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE',
+                   MOVE_ID=int(p.x['MOVE_ID'])+1,PROFILE_ID=3,RATE_PPS=2500,ACCEL_PPS2=1500)
+        w.current_cut_index=1
+        w.cancel_cycle_button.click(); assert wire.writes[-1]=='OFF' and w.current_cut_index==1
+        packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE')
+        assert not w.load_button.isEnabled() and not w.qjog_left_01.isEnabled()
+        p.handle_line('BENCH_INPUTS,HOME:0,BOARD_EDGE:1,FENCE_DOOR:1,SAW_UP:1,SAW_DOWN:0,CL57T_ALM:0')
+        assert w.auto_homing_sensor_label.text()=='ON' and w.auto_board_sensor_label.text()=='OFF'
+        assert w.auto_sensor_pills['FENCE_DOOR'].text()=='OPEN'
+        assert w.auto_sensor_pills['SAW_DOWN'].text()=='ACTIVE'
+        assert w.auto_sensor_pills['CL57T_ALM'].text()=='ALARM'
+        p.received['INPUTS']-=3; p.refresh()
+        assert w.auto_board_sensor_label.text()=='UNKNOWN'
+        assert all(label.text()=='UNKNOWN' for label in w.auto_sensor_pills.values())
+        p.session(False)
+        before=len(wire.writes); w.add_cut_button.click()
+        assert len(wire.writes)==before and w.auto_tab.isEnabled(), 'Disconnected cut-list planning stays available'
 
         # Invalid packets and missing move ACKs fail closed.
         ready(p)
