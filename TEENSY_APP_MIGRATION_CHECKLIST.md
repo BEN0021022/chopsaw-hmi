@@ -3,9 +3,10 @@
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Active firmware: custom **0.15.0** in `firmware/chopsaw_controller`, flashed
 and read back on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
-Motion profiles and bounded board-edge/truing are compiled/software-tested;
-new physical acceptance remains pending. Stable rollback source is `cab3a16` (0.11.0).
-See [profile plan](docs/MOTION_PROFILES.md) and [edge plan](docs/BOARD_EDGE_COMMISSIONING.md).
+Homing and motion profiles are operator-confirmed working. Restored AUTO controls
+and board-edge geometry still need their specific physical tests.
+Rollback sources: `e51f14f` (pre-AUTO, firmware 0.14.0) and `cab3a16` (0.11.0).
+See [speed tuning](docs/SPEED_TUNING.md) and [edge plan](docs/BOARD_EDGE_COMMISSIONING.md).
 Main app mode: **Teensy Carriage**. The breakout is a grblHAL-compatible board;
 the currently flashed firmware is custom, not stock grblHAL.
 
@@ -14,50 +15,46 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 Record outstanding physical responses in the [fault acceptance matrix](docs/TEENSY_FAULT_ACCEPTANCE_MATRIX.md).
-Current build **0.14.0** has editable pulse rate/acceleration and recovered
+Current build **0.15.0** has editable pulse rate/acceleration and recovered
 MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Actual board rate-edit
 readback passed without enabling or moving; matching app reopened disarmed.
 
-## Current run - work through these next
+## End-of-day checkpoint - 2026-11-08
 
-- [x] Prepare 0.15.0 partial AUTO: guarded jog/load, cut-list planning, native
-      sensor pills, no Cut Complete button and automatic entry points blocked.
-- [x] Flash/read back 0.15.0 / CARRIAGE_V9 / LOAD:FAST_V1 and restore saved
-      profiles without enabling; reopen AUTO with fresh compatible telemetry,
-      disarmed/unconfigured, unknown position, zero queued motion, Cycle Start disabled.
-- [ ] Rehome and physically accept restored AUTO jog/load controls.
-      See [Auto plan](docs/AUTO_TAB_COMMISSIONING.md).
+- [x] Carriage motion and bounded homing: operator-confirmed working.
+- [x] Editable pulse rate/acceleration and shared profile readback: implemented,
+      tested and flashed. Operator reports smooth motion at 3000 pps / 1500 pps?.
+- [x] Record seven-flash following fault around 4000 pps; operator elected to
+      stay below 4000. ENA release did not clear it; reset investigation deferred.
+      No automatic reset or retry added.
+- [x] Operator accepts inherited software limits for current testing, based on
+      the prior MEGA setup. App/controller target and per-pulse guards remain.
+- [x] MANUAL Home/setup/arm/stop and SETTINGS profile editing use shared native
+      state and acknowledgments. Retired MEGA controls remain unavailable.
+- [x] AUTO restored: bounded jogs, FAST load presets, cut-list Add/import/edit/
+      update/clear and fresh sensor pills. Cut Complete removed.
+- [x] Cycle Start, Resume and live automatic cutting remain blocked as requested.
+      Clamp feedback stays UNKNOWN; disconnected current display is hidden.
+- [x] Deploy/read back 0.15.0 / CARRIAGE_V9 / LOAD:FAST_V1, restore saved profiles
+      without enabling, reopen AUTO with fresh compatible telemetry and no queued motion.
+- [x] Firmware/native, main-app/boundary and simulator regressions pass; layouts
+      inspected at 1280x900. Local Git checkpoints and rollback artifacts saved.
+- [x] In-app MIGRATION tab displays this checklist; Refresh reloads it.
 
-- [x] Manual carriage motion: user-confirmed pass.
-- [x] First automatic Home cycle: user-confirmed success on 0.10.0.
-- [x] Absolute inch targets, per-pulse firmware soft limits and load presets:
-      implemented/tested/flashed in 0.11.0; physical acceptance next.
-- [x] In-app MIGRATION tab displays this master checklist; Refresh reloads it.
-- [x] Enable supported MANUAL carriage controls with shared setup/arm/stop,
-      bounded Home and readback. SETTINGS now edits/applies acknowledged native
-      Teensy profile values; retired MEGA controls remain unavailable.
-- [ ] Rehome after flash, try an absolute target about 0.1 inch toward the saw,
-      then return to Home/load position. Confirm travel/direction and STOP.
-- [x] Prepare controlled acceleration and Commissioning/Gentle/Normal/Fast profiles
-      in 0.12.0; software tests pass. Default remains the proven constant 40 pulses/s.
-- [x] Load matching 0.13.0 firmware/app; verify CARRIAGE_V7, D40 enable,
-      Commissioning profile, disarmed/unconfigured, unknown position and zero queued motion.
-- [x] Operator reports 0.13.0 testing good, including its fastest profile.
-      This is motion feedback, not completion of the physical fault matrix.
-- [x] Prepare editable 0.14.0 profiles with controller readback and pulse-timing feedback.
-- [x] Flash/read back 0.14.0 / CARRIAGE_V8; verify actual rate edits, restore
-      default profiles and select Commissioning; reopen compatible/fresh app.
-- [ ] Accept the operator-selected higher operating rates on the carriage.
-- [x] Prepare bounded board-edge search and a separate captured truing move;
-      preserves the Home reference, no automatic pneumatic or saw action.
-- [ ] Accept edge detection/geometry on the machine and finish the stock workflow.
-- [ ] Fit coil suppression, then accept each pneumatic output with saw unplugged.
-- [ ] Integrate clamp/saw sequence and automatic cut-list completion/recovery.
-- [ ] Complete physical fault matrix, documentation, release and remote backup.
+## Next session - remaining work
 
-Absolute moves can span the referenced range; they are not limited to the
-2-inch manual jog cap. The whole selected path must be clear. Current speed
-remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
+- [ ] Rehome after the latest flash, then physically test restored AUTO jogs,
+      FAST load presets, STOP and live sensor pills. See [Auto plan](docs/AUTO_TAB_COMMISSIONING.md).
+- [ ] Accept board-edge detection, captured offset/truing geometry and stock handling.
+- [ ] Acquire/install/verify 1N4007 coil suppression, polarity and branch fuses;
+      accept individual pneumatic outputs with saw mains unplugged.
+- [ ] Define clamp retention/fault behavior, then integrate pneumatic/saw sequencing
+      and automatic cut-list completion/recovery. Cycle Start stays unavailable meanwhile.
+- [ ] Finish remaining physical fault tests, release documentation and GitHub backup.
+
+Absolute/load moves use the referenced range, not the two-inch jog allowance.
+Commissioning starts at 40 pulses/s; editable profiles determine jog/ordinary
+absolute speeds, and Load selects stored FAST. Checklist refresh never moves hardware.
 
 ## Stage 1 - Preserve the baseline and establish the Teensy workspace
 
@@ -128,16 +125,18 @@ remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
       requests. Wait for parameter ACK; synchronize readbacks between tabs,
       preserve unapplied drafts and keep simulator settings separate.
 - [x] Main-app inch jogs rounded at 127.12 pulses/inch, 0.01-2 in per click,
-      254 pulses per click, fixed 40 pulses/s. No queued jogs or autorepeat.
+      254 pulses per click. Initial commissioning speed was 40 pulses/s; current
+      jogs use the selected editable profile. No queued jogs or autorepeat.
 - [x] Replace the old 254-pulse per-arm diagnostic allowance with repeatable
       manual jogs in 0.9.0. Each move is bounded; completion stays armed.
       Stop, faults and watchdog still cancel/disarm. New manual identity rejects
       old budget-based firmware; UI waits for enable-settling feedback.
 - [x] Remove restart Home-trip ritual from manual mode as requested; actual
       Home input must still be clear and remains a stop input. Absolute position
-      stays unknown until real homing is implemented and accepted.
+      requires a completed Home cycle; a clear input alone establishes nothing.
 - [x] Signed commanded displacement and move acknowledgment IDs from the controller.
-      Absolute position remains unknown; no encoder/absolute claim is fabricated.
+      Referenced position requires successful Home; no streamed encoder position
+      or fabricated reference is claimed.
 - [x] Backend, main-app integration, safety-boundary, Sensor Bench, native firmware,
       and existing simulator/manual-cycle regression tests pass. Teensy build passes.
 - [x] Flash and identify controller 0.7.0 on COM4, correct D40 map and calibration;
@@ -167,7 +166,10 @@ remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
       speed fields cannot override them. Native ramp and main-app tests pass.
 - [x] Flash/read back 0.13.0 and reopen compatible main app on CARRIAGE with fresh
       telemetry, no local fault and no arm/motion commanded by agent.
-- [ ] Accept profile behavior on the physical carriage.
+- [x] Operator confirmed Home/profiles working, with smooth motion at
+      3000 pps / 1500 pps?. A following fault occurred around 4000 pps.
+- [x] Deploy partial AUTO in 0.15.0: native jog/load, planning and sensor feedback.
+- [ ] Physically test the restored AUTO jog/load paths after the latest flash.
 - [x] Prepare 0.13.0 bounded edge acquisition, capture expiry/token checks and
       guarded separate truing move; native, Qt and actual-protocol replay tests pass.
 - [ ] Physically accept board-edge geometry, truing proposal and stock handling.
@@ -209,4 +211,5 @@ remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
 - [ ] Reserve/document future sensor, clamp, actuator and pneumatic expansion without
       changing validated assignments or weakening existing interlocks.
 
-Remaining effort: [12-24 active engineering hours for the core workflow](docs/MIGRATION_EFFORT_ESTIMATE.md), plus physical acceptance and hardware time.
+The [original effort estimate](docs/MIGRATION_EFFORT_ESTIMATE.md) predates the
+latest completed migrations. Unchecked items above are the current remaining work.
