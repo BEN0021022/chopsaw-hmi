@@ -71,6 +71,18 @@ readback passed without enabling or moving; matching app reopened disarmed.
       now has a focused Cut Entry card with a full-width 64px minimum-height
       length field, larger text and Add button. Keypad workflow remains intact;
       layouts fit at 1280x900 in native mode.
+- [x] AUTO Live Status has a steady green/red/gray health border and readable
+      reason. Native health checks compatible identity, fresh controller/safety/
+      sensor records, configured digital inputs and current carriage interlocks.
+      Deferred clamp/current/MCP feedback does not prevent green; valid OFF
+      readings are not faults. Health remains separate from Home/arm readiness.
+- [x] Small telemetry activity dot flashes briefly at most once per second,
+      driven by new validated controller/simulator records. GUI timer ticks alone
+      cannot create activity; stale required records turn red even when X data
+      continues. Simulator health is explicitly labeled and covers virtual data.
+- [x] Read-only health policy/Qt tests cover faults, missing/stale data, reconnect
+      startup, future required sensors and heartbeat expiry. Existing main-app,
+      keypad/boundary and simulator regressions pass; native layout fits 1280x900.
 
 ## Next session - remaining work
 

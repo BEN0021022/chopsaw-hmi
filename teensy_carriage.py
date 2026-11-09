@@ -421,6 +421,7 @@ class TeensyCarriagePanel(QWidget):
             return
         f = message.fields
         if message.kind == "BENCH_HELLO":
+            self.received["HELLO"] = time.monotonic()
             compatible = all(f.get(k) == value for k, value in IDENTITY.items())
             if self.compatible and not compatible:
                 self.trip_local("Controller identity changed")

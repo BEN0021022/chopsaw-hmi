@@ -27,6 +27,7 @@ from PyQt6.QtGui import QTextCursor, QIcon
 from config import SERIAL_PORT, BAUD_RATE, PROFILE_MAP
 from serial_handler import SignalBridge, listen_for_data
 from ui_components import KeypadWidget, CutLengthKeypad, CurrentGraphWidget
+from live_health import native_health, simulator_health, simulator_data_valid, HealthState, TelemetryActivity
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
@@ -191,10 +192,20 @@ class MinimalHMI(QMainWindow):
         self.pred_timer = QTimer(self); self.pred_timer.setInterval(30); self.pred_timer.timeout.connect(self.tick_predict)
         self.pred_active = False; self.pred_start_time = 0.0; self.pred_start_pos = 0.0; self.pred_target_pos = 0.0; self.pred_vmax_in = 0.0; self.pred_acc_in = 0.0; self.pred_dir = 1.0
 
+        self._health_session = None
+        self._health_started = time.monotonic()
+        self._sim_health_fields = {}
+        self._sim_health_received = self._sim_activity_received = None
+        self._health_activity = TelemetryActivity()
         self.init_ui()
         self.apply_theme()
         self._load_settings()
         self.update_current_monitor_ui()
+        self.health_timer = QTimer(self)
+        self.health_timer.setInterval(100)
+        self.health_timer.timeout.connect(self.refresh_live_health)
+        self.health_timer.start()
+        self.refresh_live_health()
 
         # Background update check (silent; only surfaces a banner if newer)
         self._update_checker = _UpdateChecker(self)
@@ -484,9 +495,11 @@ class MinimalHMI(QMainWindow):
         # Left: Live Status
         left_col = QVBoxLayout()
         live = QGroupBox("Live Status"); g1 = QGridLayout(live)
+        self.auto_live_status = live
+        live.setObjectName("autoLiveStatus")
         g1.setContentsMargins(12, 10, 12, 10)
         g1.setHorizontalSpacing(12)
-        g1.setVerticalSpacing(6)
+        g1.setVerticalSpacing(4)
         g1.setColumnStretch(0, 0)
         g1.setColumnStretch(1, 1)
         g1.addWidget(QLabel("Current Position (in):"), 0, 0)
@@ -509,6 +522,17 @@ class MinimalHMI(QMainWindow):
             label=self.pill("UNKNOWN","#475569")
             g1.addWidget(QLabel(title),row,0); g1.addWidget(label,row,1)
             self.auto_sensor_pills[key]=label
+        health_row = QHBoxLayout()
+        health_row.setSpacing(8)
+        self.live_health_dot = QLabel()
+        self.live_health_dot.setFixedSize(10, 10)
+        self.live_health_dot.setAccessibleName("Telemetry activity")
+        self.live_health_dot.setToolTip("Brief activity flash on fresh telemetry, at most once a second.")
+        health_row.addWidget(self.live_health_dot)
+        self.live_health_label = QLabel("Disconnected")
+        self.live_health_label.setWordWrap(True)
+        health_row.addWidget(self.live_health_label, 1)
+        g1.addLayout(health_row, 8, 0, 1, 2)
         live.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         left_col.addWidget(live)
 
@@ -2333,6 +2357,7 @@ class MinimalHMI(QMainWindow):
         if not hasattr(self,"carriage_tab") or not hasattr(self,"settings_profile_combo"):
             return
         p = self.carriage_tab
+        self.refresh_live_health()
         if self.active_controller().key != TEENSY_CARRIAGE:
             self.settings_profile_feedback.setText("Simulator profile values; apply the selected profile explicitly.")
             self.settings_profile_combo.setEnabled(True)
@@ -2493,9 +2518,57 @@ class MinimalHMI(QMainWindow):
     def update_message_log(self, msg):
         if self.active_controller().key == TEENSY_CARRIAGE:
             self.carriage_tab.handle_line(msg)
+        elif isinstance(self.ser, VirtualController) and self.is_connected() and msg.startswith("POS:"):
+            self.refresh_live_health()  # establish this connection's session before storing data
+            self._sim_health_fields = dict(part.split(":", 1) for part in msg.split(",") if ":" in part)
+            self._sim_health_received = time.monotonic()
+            if simulator_data_valid(self._sim_health_fields):
+                self._sim_activity_received = self._sim_health_received
+            self.refresh_live_health()
         self.log.append(msg)
         if hasattr(self, "speed_serial_console"):
             self.speed_serial_console.append(msg)
+    def refresh_live_health(self):
+        """Display-only: cannot configure, arm, acknowledge or move hardware."""
+        if not hasattr(self, "carriage_tab"):
+            return
+        now = time.monotonic()
+        mode = "sim" if isinstance(self.ser, VirtualController) else self.active_controller().key
+        connected = self.is_connected()
+        session = (self.ser, mode, connected)
+        if session != self._health_session:
+            self._health_session = session
+            self._health_started = now
+            self._sim_health_fields = {}
+            self._sim_health_received = self._sim_activity_received = None
+            self._health_activity = TelemetryActivity()
+        receipt = None
+        if mode == TEENSY_CARRIAGE:
+            p = self.carriage_tab
+            state = native_health(connected=connected and p.connected, compatible=p.compatible,
+                                  records={"X":p.x, "SAFETY":p.safety, "INPUTS":p.inputs},
+                                  received=p.received, started=self._health_started, now=now,
+                                  local_fault=p.local_fault, stale_seconds=p.stale_seconds)
+            receipt = p.received.get("X") if connected and p.connected and p.compatible else None
+        elif mode == "sim":
+            state = simulator_health(connected=connected, fields=self._sim_health_fields,
+                                     received=self._sim_health_received, started=self._health_started, now=now)
+            receipt = self._sim_activity_received if connected else None
+        else:
+            state = HealthState("neutral", "Health unavailable in this mode")
+        color = {"healthy":"#22c55e", "fault":"#ef4444", "neutral":"#64748b"}[state.level]
+        if self.auto_live_status.property("healthState") != state.level:
+            self.auto_live_status.setProperty("healthState", state.level)
+            self.auto_live_status.setStyleSheet(f"QGroupBox#autoLiveStatus {{ border: 2px solid {color}; }}")
+            self.live_health_label.setStyleSheet(f"color:{color}; font-size:13px; font-weight:600;")
+        self.live_health_label.setText(state.text)
+        self.live_health_label.setToolTip("\n".join(state.details) or state.text)
+        self.auto_live_status.setAccessibleDescription(state.text)
+        active = self._health_activity.update(receipt, now)
+        if self.live_health_dot.property("active") != active:
+            self.live_health_dot.setProperty("active", active)
+            self.live_health_dot.setStyleSheet("background:" + ("#38bdf8" if active else "#334155") + "; border-radius:5px;")
+
     def update_position_label_from_device(self, pos):
         self.current_position = pos
         self.position_label.setText(f"{pos:.4f}")
@@ -2865,6 +2938,7 @@ class MinimalHMI(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
+        self.health_timer.stop()
         self._save_settings()
         self._stop_listener()
         event.accept()

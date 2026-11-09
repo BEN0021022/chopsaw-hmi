@@ -72,6 +72,38 @@ before. AUTO's **Cut Entry** card holds the enlarged length field, optional
 keypad checkbox and Add Cut to List. The sensor/kerf move does not change native
 controller geometry or apply any firmware settings automatically.
 
+## Live Status health display
+
+The AUTO frame uses a steady green border for healthy feedback, red for faults,
+missing/stale required data or blocking carriage interlocks, and gray while
+disconnected or awaiting initial records. Startup gets a two-second grace period;
+missing feedback after that is red. A reason appears inside the frame; its tooltip
+lists additional issues. Green describes feedback health, not arming or automatic
+cutting readiness. Homing and arming still use the existing controls/interlocks.
+
+Native mode requires compatible identity and fresh X, SAFETY and INPUTS records.
+Home/Board may legitimately be either OFF or ON. Guard closed, driver alarm normal,
+consistent saw-UP endpoints and no controller/local fault are required under the
+current carriage-only policy. Unknown clamp feedback and deferred INA/MCP/outfeed
+channels are excluded. Valid binary telemetry cannot prove every wire or switch
+is intact; electrical fault diagnosis still depends on sensor/wiring design.
+
+Simulator mode says **Simulator healthy** and checks its actual virtual position,
+state, Home/Board/saw and overcurrent records. It does not claim to have checked
+the physical guard or driver. Other diagnostic modes show health unavailable.
+A small blue dot flashes for 180 ms at most once per second when new validated
+controller X or complete simulator data arrives. It never pulses the border and
+does not generate activity from GUI timer ticks or log text alone.
+
+`live_health.py` centralizes the read-only policy. Add future commissioned inputs
+to `NATIVE_SENSORS` with a `SensorRule` describing the telemetry field, source
+record, valid values and optional fault state. A new required field remains red
+until valid data is present; `required=False` explicitly defers a channel. New
+record types also need their telemetry parser wired before commissioning. The
+health display sends no commands and does not alter firmware safety behavior.
+
+## Manual jog allowance
+
 The previous 0.7.0 firmware stopped after 254 total pulses per arm. That was a
 commissioning allowance, not a timer. Version 0.9.0 removes that cumulative
 allowance from the main app: every click is independently bounded to 254 pulses
