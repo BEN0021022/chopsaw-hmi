@@ -29,6 +29,7 @@ from serial_handler import SignalBridge, listen_for_data
 from ui_components import KeypadWidget, CutLengthKeypad, CurrentGraphWidget
 from live_health import native_health, simulator_health, simulator_data_valid, HealthState, TelemetryActivity
 from pneumatic_timing import CylinderTimingPanel, CLAMPS, simulation_clamps
+from manual_pneumatics import ManualPneumatics
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
@@ -384,6 +385,7 @@ class MinimalHMI(QMainWindow):
         # Log (hidden — keep object so log.append() calls don't crash)
         self.log = QTextBrowser()
         self.log.document().setMaximumBlockCount(500)
+        self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
 
@@ -412,7 +414,13 @@ class MinimalHMI(QMainWindow):
 
     def create_legacy_tab(self):
         w = QWidget(); content = QHBoxLayout(w)
-        left = QVBoxLayout()
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setStyleSheet('QScrollArea { background:#0b1222; border:0; }')
+        left_body = QWidget(); left_body.setObjectName('manualBody')
+        left_body.setStyleSheet('QWidget#manualBody { background:#0b1222; }')
+        left = QVBoxLayout(left_body)
+        left_scroll.setWidget(left_body)
         dash = QGroupBox("Dashboard"); grid = QGridLayout(dash)
         grid.addWidget(QLabel("Homed Status:"), 0, 0)
         self.homed_label = QLabel("NOT HOMED"); self.homed_label.setStyleSheet("color: orange; font-weight: bold;"); grid.addWidget(self.homed_label, 0, 1)
@@ -471,7 +479,10 @@ class MinimalHMI(QMainWindow):
         v.addWidget(self.manual_teensy_actions)
 
         ctrl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        left.addWidget(ctrl); left.addStretch()
+        left.addWidget(ctrl)
+        self.manual_pneumatics = ManualPneumatics(self)
+        left.addWidget(self.manual_pneumatics)
+        left.addStretch()
 
         right_column_layout = QVBoxLayout()
         right_column_layout.addWidget(QLabel("Carriage target (in)"))
@@ -481,7 +492,7 @@ class MinimalHMI(QMainWindow):
         right_column_layout.addWidget(self.keypad)
         right_column_layout.addStretch()
 
-        content.addLayout(left, 2)
+        content.addWidget(left_scroll, 2)
         content.addLayout(right_column_layout, 1)
         return w
 
@@ -1628,6 +1639,22 @@ class MinimalHMI(QMainWindow):
                 f"STATUS: {controller.label} is diagnostics-only until validation is complete."
             )
         self.refresh_teensy_tabs()
+        self.manual_pneumatics.refresh()
+        self.refresh_manual_motion_locks()
+
+    def refresh_manual_motion_locks(self):
+        if not isinstance(self.ser, VirtualController):
+            return
+        free = self.is_connected() and not self.manual_pneumatics.motion_locked()
+        for widget in (self.manual_home_button,self.keypad,self.enable_chk,self.load_button,self.resume_on_reset_button,
+                       self.auto_jog_left_btn,self.auto_jog_right_btn,self.qjog_left_01,self.qjog_right_01,
+                       self.qjog_left_025,self.qjog_right_025,self.qjog_left_1,self.qjog_right_1,
+                       self.qjog_left_2,self.qjog_right_2):
+            widget.setEnabled(free)
+        if not free:
+            self._set_start_enabled(False)
+        elif self.auto_cycle_state in ('IDLE','FINISHED','WAITING_FOR_NEW_BOARD'):
+            self._set_start_enabled(True)
 
     # ---------- Cut list ----------
     def add_cut_to_list(self):
@@ -1866,6 +1893,8 @@ class MinimalHMI(QMainWindow):
     # --- END NEW ---
 
     def resume_after_reset(self):
+        if self.manual_pneumatics.motion_locked():
+            return False
         if getattr(self, '_simulation_pneumatic_pending', False):
             return False
         
@@ -1914,6 +1943,8 @@ class MinimalHMI(QMainWindow):
 
 
     def start_auto_cycle(self):
+        if self.manual_pneumatics.motion_locked():
+            return False
         if getattr(self, '_simulation_pneumatic_pending', False):
             return False
         controller = self.active_controller()
@@ -1975,6 +2006,7 @@ class MinimalHMI(QMainWindow):
         allowed = (
             enabled
             and not getattr(self, '_simulation_pneumatic_pending', False)
+            and not self.manual_pneumatics.motion_locked()
             and self.is_connected()
             and self.active_controller().capabilities.automatic_cycle_ready
         )
@@ -2179,6 +2211,10 @@ class MinimalHMI(QMainWindow):
         self.log.append(f"Serial connection lost: {error}")
 
     def send_command(self, cmd):
+        if (self.manual_pneumatics.motion_locked()
+                and (cmd == 'H' or re.fullmatch(r'[SJN][+-]?[0-9.]+', cmd))):
+            self.log.append('MOVE BLOCKED: release the manual clamp and return/release the saw first.')
+            return False
         if self.active_controller().key == TEENSY_CARRIAGE:
             if not self.carriage_tab.allowed(cmd):
                 self.log.append(f"BLOCKED in Teensy Carriage mode: {cmd}")
@@ -2943,6 +2979,7 @@ class MinimalHMI(QMainWindow):
 
     def closeEvent(self, event):
         self.health_timer.stop()
+        self.manual_pneumatics.timer.stop()
         self._save_settings()
         self._stop_listener()
         event.accept()

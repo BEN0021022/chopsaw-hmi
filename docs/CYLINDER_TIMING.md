@@ -63,6 +63,25 @@ cancellation stops its pending stroke events and releases virtual clamps
 immediately; normal-cycle release delays do not postpone cancellation. This
 does not specify a safe real-machine fault response.
 
+## Manual controls (Simulator)
+
+The MANUAL tab also has independent main-clamp, saw-travel and blade-trigger
+buttons plus a combined Manual Saw Cycle and Stop. These are functional in
+Simulator only; their handlers reject native hardware even when invoked directly.
+They do not use the Auto simulation checkbox, legacy clamp-selection rules or
+cut-list advancement. Manual saw activation requires a settled virtual main
+clamp and UP. A normal manual cycle returns UP, releases the trigger after the
+configured waits and leaves the clamp held until an explicit Release command.
+Carriage motion and Auto startup are excluded while the manual clamp/saw is active.
+
+Manual Stop cancels delayed callbacks/virtual stroke events, releases the virtual
+trigger and retains the clamp. Freshness loss or disconnect cannot automatically
+resume a pending action. The virtual stop resets the simulated saw UP; this is
+not proof of the mechanical result of a real fault. Native controls remain visibly
+locked: current firmware permits only one pneumatic output at a time, so it cannot
+support the combined held-clamp/saw/trigger workflow. A controller-owned manual
+sequence and its physical feedback/retention policy must be commissioned first.
+
 ## Physical clamp selection remains separate
 
 The archived simulator fixture uses main/fence for truing, all virtual clamps

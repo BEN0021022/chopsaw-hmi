@@ -48,6 +48,8 @@ class VirtualController:
 
         # Saw
         self.saw_up = 1
+        self.saw_down = False
+        self.blade_pressed = False
         self._saw_busy = False
         self._saw_timing = {}
 
@@ -183,6 +185,27 @@ class VirtualController:
             self._events.clear()
             self._saw_busy = False
             self.saw_up = 1
+            self.saw_down = False
+            self.blade_pressed = False
+
+    def set_manual_blade(self, pressed):
+        with self._lock:
+            self.blade_pressed = bool(pressed)
+
+    def manual_saw_travel(self, down):
+        with self._lock:
+            if self._saw_busy:
+                return False
+            self._saw_busy = True
+            self.saw_down = False
+            def arrive():
+                self.saw_up = 0 if down else 1
+                self.saw_down = bool(down)
+                self._saw_busy = False
+            if down:
+                self._schedule(.4, lambda: setattr(self, 'saw_up', 0))
+            self._schedule(1.6 if down else 1.0, arrive)
+            return True
 
     def _start_saw_stroke(self):
         if self._saw_busy:
@@ -193,6 +216,7 @@ class VirtualController:
             self.saw_up = 0
 
         def cut():
+            self.saw_down = True
             if self.board_remaining is not None:
                 # Everything past the blade is removed; remaining edge sits at the blade
                 back = self.board_edge + self.board_remaining
@@ -201,6 +225,7 @@ class VirtualController:
 
         def up():
             self.saw_up = 1
+            self.saw_down = False
             self._saw_busy = False
 
         timing = self._saw_timing

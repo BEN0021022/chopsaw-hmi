@@ -97,6 +97,19 @@ readback passed without enabling or moving; matching app reopened disarmed.
       measured clamp eligibility and fault retention/release remain uncommissioned.
       Planned confirmation/travel limits are saved only; they do not change
       Sensor Bench/manual firmware guards. No firmware change or flash in this pass.
+- [x] MANUAL / Manual Machine Controls UI: main clamp/release, saw lower/return,
+      trigger press/release, combined manual saw cycle and Stop. Simulator uses
+      shared timing snapshots, keeps the clamp after a normal cut, requires
+      clamp settling before saw activation, and excludes carriage motion while
+      clamped/saw-active. Manual cuts never advance the Auto cut list.
+- [x] Test independent manual functions, combined cut, retained clamp, timing,
+      Stop/disconnect/stale-data cancellation, native source-level lockout and
+      regression of the existing simulated Auto cycle. Left Manual column scrolls.
+- [ ] Enable these controls on real Teensy hardware only after a controller-owned
+      combined pneumatic protocol, interlocks/feedback and fault/clamp-retention
+      policy are implemented and physically accepted. Current manual-test firmware
+      permits one pneumatic output at a time and cannot hold a clamp while cycling
+      saw/trigger. Main-app native actuator controls remain disabled.
 
 ## Next session - remaining work
 

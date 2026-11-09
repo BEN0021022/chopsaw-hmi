@@ -40,6 +40,7 @@ that statement does not independently complete the physical fault matrix.
 | Blade trigger cylinder | Original trigger/brake mechanism | OUT 2 / Flood TTL D19 | Main app unavailable; validate OFF release/brake, no blade-powered test yet |
 | Cut-list editing/import | Python UI | Same retained Python feature | Available; simulator regression passes |
 | Cylinder timing | Two global waits inside Full Auto | SETTINGS / Cylinder Timing, per-device configuration and explicit phases | Simulator integrated; native sequencing/feedback limits remain planned; see CYLINDER_TIMING.md |
+| Manual clamp/saw | Direct operator/manual mechanisms | MANUAL / Manual Machine Controls | UI and Simulator active; native handlers/buttons remain locked pending combined controller sequencing and physical acceptance |
 | Automatic cut-list workflow | Old MEGA state strings + timed callbacks | New controller events / acknowledgments required | Locked on live Teensy; simulate only |
 | Early return | Carriage return during cutting | Reassess collision/clamp/blade policy first | Locked on live hardware |
 | Current monitoring | ACS712 fields | INA228 future work | Deferred; INA/MCP quarantined/disconnected |
