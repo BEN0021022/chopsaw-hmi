@@ -1,8 +1,10 @@
 # Unloaded cut-list test - 2026-11-09
 
 **Software prepared: firmware 0.16.0 / CARRIAGE_V10 and matching main app.**
-Compiled and tested offline. Not flashed or physically accepted yet. Last known
-deployed firmware is 0.15.0; its source and HEX remain preserved for rollback.
+Compiled/tested offline, then flashed/read back on COM4 on 2026-11-09 with
+operator isolation confirmed. Startup disarmed/unconfigured, all outputs OFF,
+position unknown, zero queued pulses, blade lock 1. No arming/motion commanded
+by the agent. Physical acceptance pending; 0.15.0 source/HEX rollback preserved.
 
 ## Confirmed scope
 
@@ -91,7 +93,8 @@ Independent guarding and hazardous-energy controls remain necessary.
   capture, truing, two list items, FAST return, blade lock, stop/stale/config/
   readback guards. No carriage pulses while clamped.
 - Existing carriage, keypad, health, timing, boundary and simulator regressions.
-- Teensy 4.1 compile completed; no upload or physical commands sent.
+- Teensy 4.1 compile and isolated upload completed. Read-only verification;
+  no setup, arming, valve or motion commands sent by the agent.
 - Prepared build: `tmp/commissioning/0.16.0`; rollback: `tmp/commissioning/0.15.0`.
   Manifest records matching source revision and hashes. Local artifacts are
   not a GitHub backup or published release.

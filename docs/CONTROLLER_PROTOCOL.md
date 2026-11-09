@@ -1,8 +1,8 @@
 # Controller protocol
 
 Updated 2026-11-09. Prepared main-app controller firmware **0.16.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V10. Not flashed yet;
-last deployed baseline is 0.15.0. 115200 baud,
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V10. Flashed/read back
+on COM4 with operator isolation confirmed; physical acceptance pending. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 

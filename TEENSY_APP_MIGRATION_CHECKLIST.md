@@ -2,8 +2,9 @@
 
 Updated 2026-11-09. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Prepared source/build: custom **0.16.0 / CARRIAGE_V10**, unloaded cut-list mode.
-Not flashed or physically accepted yet. Last deployed **0.15.0** was read back
-on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
+Flashed/read back on COM4 on 2026-11-09 after operator isolation confirmation;
+startup disarmed, unconfigured, outputs OFF, position unknown, no queued motion.
+Physical unloaded acceptance pending. Deployed 0.15.0 rollback preserved.
 Homing and motion profiles are operator-confirmed working. Restored AUTO controls
 and board-edge geometry still need their specific physical tests.
 Rollback sources: `e51f14f` (pre-AUTO, firmware 0.14.0) and `cab3a16` (0.11.0).
@@ -128,7 +129,9 @@ actual-sketch/Qt two-item cut-list integration passing. No hardware accessed.
       stored FAST Load return. Production list progress is preserved.
 - [x] Check no carriage pulses while clamped, stop/stale/no-retry boundaries,
       real endpoint timeouts and simulator regression; compile Teensy 4.1 HEX.
-- [ ] Flash 0.16.0 and perform physical unloaded acceptance tonight.
+- [x] Flash/read back 0.16.0 on COM4 with operator isolation confirmed; unloaded
+      state OFF, blade lock 1, all outputs OFF, no queued pulses; verification reads only.
+- [ ] Perform physical unloaded acceptance tonight.
 
 - [x] Correct health display so ALREADY_ARMED is not mistaken for a feedback fault;
       arming remains separate from healthy telemetry.

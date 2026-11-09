@@ -1,7 +1,8 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-09. Prepared source is **custom controller 0.16.0**, not flashed
-yet; last deployed baseline is 0.15.0. This is not stock grblHAL.
+Updated 2026-11-09. Active **custom controller 0.16.0** was flashed/read back on
+COM4 with operator isolation confirmed; physical unloaded acceptance pending.
+Startup disarmed, outputs OFF, unknown position, no queued pulses. Not stock grblHAL.
 The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;

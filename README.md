@@ -9,8 +9,10 @@ The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Prepared app/firmware is **0.16.0 / CARRIAGE_V10**, compiled/tested offline but
-not flashed yet. Last deployed baseline is **0.15.0**, verified on COM4.
+Active app/firmware is **0.16.0 / CARRIAGE_V10**, compiled/tested offline, then
+flashed/read back on COM4 on 2026-11-09 with operator isolation confirmed.
+Startup disarmed, outputs OFF, position unknown, no queued motion. Physical
+unloaded acceptance remains pending; **0.15.0** rollback is preserved.
 The new build adds Manual unloaded clamp/saw controls and a separate AUTO
 **Run unloaded cut-list test**: real detector acquisition, truing, feed/stroke
 per item and FAST return. Manually trip/hold the real board detector until truing
@@ -58,7 +60,8 @@ custom firmware; stock grblHAL is not running on the board.
 - The MIGRATION tab shows the master checklist; Refresh reloads current status.
 - Blade/current controls remain unavailable; INA/MCP disconnected. Isolate valve
   power/air for initial carriage-only checks, then follow unloaded acceptance
-  before powering pneumatics. No firmware upload was performed during preparation.
+  before powering pneumatics. Deployment verification used reads only; no
+  setup, arming, valve or motion commands were sent by the agent.
 
 The last MEGA HMI remains in sibling `ChopSawHMI` at
 `legacy-mega-last-working-2026-11-06`; recovered MEGA firmware is also preserved

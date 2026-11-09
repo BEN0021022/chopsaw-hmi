@@ -3,8 +3,9 @@
 Read the [prepared dry-run procedure](TONIGHT_DRY_RUN.md).
 
 Matching app and **0.16.0 / CARRIAGE_V10 / UNLOADED_V1** firmware are prepared,
-compiled and tested offline. They have **not been flashed or physically tested**.
-Last deployed baseline is 0.15.0; the new controls require the matching build.
+compiled/tested offline, then flashed/read back on COM4 with operator isolation
+confirmed on 2026-11-09. **Physical testing remains pending.** Startup disarmed,
+outputs OFF, position unknown, no queued motion; matching app required.
 
 1. App closed, driver OFF, valve power disconnected, air isolated, saw unplugged:
    flash and verify prepared build. Boot disarmed with outputs OFF.
