@@ -65,6 +65,12 @@ starts hidden after reopening. Physical keyboard entry works either way.
 Invalid or empty input cannot append the previous length. Entry/list edits do
 not send serial commands, even when the native carriage is armed.
 
+Blade Kerf and Board Sensor Distance are now in SETTINGS under **Cutting and
+Sensors**, using the same defaults, saved preference keys and consumers as
+before. AUTO's **Cut Entry** card holds the enlarged length field, optional
+keypad checkbox and Add Cut to List. The sensor/kerf move does not change native
+controller geometry or apply any firmware settings automatically.
+
 The previous 0.7.0 firmware stopped after 254 total pulses per arm. That was a
 commissioning allowance, not a timer. Version 0.9.0 removes that cumulative
 allowance from the main app: every click is independently bounded to 254 pulses

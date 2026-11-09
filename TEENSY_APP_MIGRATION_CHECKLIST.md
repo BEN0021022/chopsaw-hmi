@@ -64,6 +64,11 @@ readback passed without enabling or moving; matching app reopened disarmed.
 - [x] Exercise repeated touch/keyboard entries, validation, close/toggle, resize,
       preference restore and zero serial writes using fake serial while armed.
       Inspect native and simulator layouts; full simulator cycle regressions pass.
+- [x] Move Blade Kerf and Board Sensor Distance to SETTINGS / Cutting and Sensors,
+      retaining defaults, saved preference keys and simulation bindings. AUTO
+      now has a focused Cut Entry card with a full-width 64px minimum-height
+      length field, larger text and Add button. Keypad workflow remains intact;
+      layouts fit at 1280x900 in native mode.
 
 ## Next session - remaining work
 
