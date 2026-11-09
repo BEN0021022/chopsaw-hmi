@@ -1,7 +1,7 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Active firmware: custom **0.14.0** in `firmware/chopsaw_controller`, flashed
+Active firmware: custom **0.15.0** in `firmware/chopsaw_controller`, flashed
 and read back on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
 Motion profiles and bounded board-edge/truing are compiled/software-tested;
 new physical acceptance remains pending. Stable rollback source is `cab3a16` (0.11.0).
@@ -22,8 +22,11 @@ readback passed without enabling or moving; matching app reopened disarmed.
 
 - [x] Prepare 0.15.0 partial AUTO: guarded jog/load, cut-list planning, native
       sensor pills, no Cut Complete button and automatic entry points blocked.
-- [ ] Flash/read back 0.15.0, restore saved profile values without enabling,
-      and physically accept the restored AUTO controls. See [Auto plan](docs/AUTO_TAB_COMMISSIONING.md).
+- [x] Flash/read back 0.15.0 / CARRIAGE_V9 / LOAD:FAST_V1 and restore saved
+      profiles without enabling; reopen AUTO with fresh compatible telemetry,
+      disarmed/unconfigured, unknown position, zero queued motion, Cycle Start disabled.
+- [ ] Rehome and physically accept restored AUTO jog/load controls.
+      See [Auto plan](docs/AUTO_TAB_COMMISSIONING.md).
 
 - [x] Manual carriage motion: user-confirmed pass.
 - [x] First automatic Home cycle: user-confirmed success on 0.10.0.

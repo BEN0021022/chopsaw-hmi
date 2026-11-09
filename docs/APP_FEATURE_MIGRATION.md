@@ -1,6 +1,6 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-08. The active implementation is **custom controller 0.14.0**,
+Updated 2026-11-08. The active implementation is **custom controller 0.15.0**,
 not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
@@ -29,7 +29,7 @@ that statement does not independently complete the physical fault matrix.
 | Position display | Encoder POS plus step estimate | POS_STEPS displacement plus POS_KNOWN/HOME_OFFSET after Home | Homed coordinate only after completed Home; fault/release invalidation |
 | Closed-loop error | MEGA encoder/PID fields | CL57T closes loop; ALM on Halt/D14 | Alarm trips motion; real 7-flash fault traced to loose encoder wire and resolved |
 | Home | H, positive seek, home coordinate 160.5 in | Shared MANUAL/CARRIAGE XHOME and search limit; seek/release/backoff/slow latch/pull-off | User confirmed Home success; tab integration tested; repeatability/reference acceptance remains |
-| Absolute length / load positions | S inches | XMOVE integer milliinches; known position + explicit arm | Implemented 0.11.0; native inch target and load presets; physical acceptance pending |
+| Absolute length / load positions | S inches | XMOVE / XLOAD integer milliinches; known position + explicit arm | AUTO/CARRIAGE loads use stored FAST via XLOAD; same target/per-pulse limits; physical tab acceptance pending |
 | Soft limits | Legacy target clamping | Firmware target-time and per-pulse bounds | Implemented; physical envelope acceptance pending |
 | Profiles / speed / acceleration | Z, A speed,accel | XPROFILE id [rate accel], editable CARRIAGE and SETTINGS controls with acknowledged RAM settings | Active 0.14.0; MEGA defaults, 1-20000 pps / 1-50000 pps² editable ranges; higher-rate physical acceptance pending; see SPEED_TUNING.md |
 | Board detection / truing | J / N, board-edge offset | XEDGE pulse bound/offset/overlap; XTRUING capture token | Prepared 0.13.0; detection disarms, separate explicit truing move; Home reference retained; geometry/physical acceptance pending |
@@ -61,7 +61,7 @@ and no homed coordinate is inferred from a clear input.
 1. Keep saw mains unplugged, valve supply disconnected and air isolated. Keep
    suspect INA/MCP disconnected. Launch `python main.py`, select Teensy Carriage,
    choose the Teensy COM port and connect. The source requires matching
-   0.14.0 telemetry; that firmware and matching app are now loaded.
+   0.15.0 telemetry; that firmware and matching app are now loaded.
 2. Check Home sensor is inactive (no trip/release sequence is required). Door closed, saw UP only,
    driver green ON/red OFF, alarm raw HIGH. Confirm isolation/driver checks.
 3. Confirm driver setup. Wait for controller acknowledgment, then ARM MANUAL CONTROL.

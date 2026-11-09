@@ -193,3 +193,29 @@ compatible/fresh, disarmed, no queued pulses, reference retained. Existing
 profile 2 readback was 3500 pps / 4000 pps² and was not changed by the agent.
 DOOR_OPEN correctly blocked Home. No Home, arm, jog, parameter edit or other
 hardware-output command was sent during this app update; no flash performed.
+
+## Partial AUTO commissioning: 0.15.0
+
+Operator requested all practical AUTO preparation/carriage features while
+leaving Cycle Start unavailable and retiring Cut Complete, then confirmed app
+closed and driver OFF. Restored cut-list Add/import/edit/update/clear, stock
+presets, native Home/setup/arm/stop, bounded jogs and fresh sensor pills. Clamp
+feedback stays UNKNOWN; deferred current card hidden. Start, Resume and every
+old automatic entry point remain blocked. No pneumatic commands exposed.
+
+XLOAD shares XMOVE validation and per-pulse limits, selecting stored FAST only
+on acceptance. No implicit arm, queued replacement or profile-parameter edit.
+Native checks: 83 policy, 87 bench, 112 manual, 209 Home, 127 positioning/load,
+1668 profile/ramp/timing, 165 edge; 55 actual motion records replay into Qt.
+Expanded main-app tests, backend, boundary, Sensor Bench, manual-mode simulator
+and full cut-list simulator tests pass. AUTO rendered/inspected at 1280x900.
+Arduino Teensy 4.1 compile passes.
+
+Captured existing profiles using read-only commands before flashing, then
+flashed/read back 0.15.0 / CARRIAGE_V9 / LOAD:FAST_V1 on COM4. Startup was
+unconfigured/disarmed, unknown reference, STEP/DIR LOW, ENA HIGH, no fault or
+queued pulses. Restored Gentle 150/200, Normal 3500/4000, Fast 2500/1500 as
+nonmotion disarmed parameter writes; selected Commissioning. Reopened AUTO:
+compatible/fresh, no local fault, no queued motion, Start disabled. No Home,
+arm, jog, Load or valve command was sent by agent. Physical tab tests pending.
+Local artifacts/readbacks are under tmp/commissioning/0.15.0.

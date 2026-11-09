@@ -1,11 +1,11 @@
 # Controller protocol
 
-Updated 2026-11-08. Active main-app controller firmware **0.14.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V8. 115200 baud,
+Updated 2026-11-08. Active main-app controller firmware **0.15.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V9. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
-Prepared 0.15.0 adds CARRIAGE_V9 / LOAD:FAST_V1 and `XLOAD <milli>`.
+Flashed/read-back 0.15.0 adds CARRIAGE_V9 / LOAD:FAST_V1 and `XLOAD <milli>`.
 It shares the XMOVE request/per-pulse guards, requires explicit arm and Home,
 and selects stored FAST only after accepting the target. It neither edits
 profile values nor arms automatically. See AUTO_TAB_COMMISSIONING.md.
@@ -30,15 +30,15 @@ Main-app motion requires all of:
 
 ```
 PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
-X_APP:CARRIAGE_V8,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
+X_APP:CARRIAGE_V9,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
 INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
 INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12
 MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY
 HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
-ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1
+ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1
 ```
 
-Active firmware version is 0.14.0. Reads HELLO, PINMAP and STATUS are sent on
+Active firmware version is 0.15.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.
@@ -53,6 +53,7 @@ is older than two seconds. Firmware is authoritative if the PC stops responding.
 | XJOG -1 n / XJOG 1 n | Queue one bounded jog, 1-254 pulses per click; A/-1/LOW toward saw, B/+1/HIGH toward Home |
 | XHOME n | Explicitly arm/start bounded homing; initial search 1-20594 pulses, main UI default 254 (~2 in); must be disarmed/configured; Home may start active |
 | XMOVE n | Absolute target in integer milliinches; requires Home-valid position, explicit arm, clear Home and idle motion; firmware soft limits apply |
+| XLOAD n | Same validated absolute target, selecting stored FAST atomically on acceptance; requires Home and explicit arm; no profile parameter edits |
 | XPROFILE n | Select profile 0-3 while disarmed/idle; RAM-only, no enable or motion; rates below |
 | XPROFILE id rate accel | Edit/select profile 1-3 while disarmed/idle; 1-20000 pps, 1-50000 pps²; RAM-only; no enable/motion |
 | XEDGE pulses offset trim | Search toward saw at 40 pulses/s; 1-20594 pulses, offset/trim 0-160500 milliinches; requires known Home, armed/settled/idle, sensor initially clear and entire search inside soft limits |

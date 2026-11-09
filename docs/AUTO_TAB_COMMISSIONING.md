@@ -4,6 +4,12 @@ Prepared 2026-11-08. This slice restores planning and operator-requested carriag
 operations. Cycle Start, Resume and automatic cutting remain unavailable on live
 Teensy. Full Auto remains locked. No pneumatic output is exposed by this change.
 
+0.15.0 is now flashed/read back on COM4. Saved rates were restored as disarmed
+parameter writes: Gentle 150/200, Normal 3500/4000, Fast 2500/1500. Commissioning
+is selected at startup. The matching app is open on AUTO with fresh compatible
+telemetry, disarmed/unconfigured, unknown position, no queued motion and Start
+disabled. Rehome before Load. No Home, arm, jog or load was commanded by the agent.
+
 ## Available controls
 
 - Add cut, edit/update the cut-list text, import a list, clear the list, choose

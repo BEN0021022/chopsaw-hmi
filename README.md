@@ -9,7 +9,10 @@ The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active flashed firmware and reopened app are **0.14.0**, verified on COM4.
+Active flashed firmware and reopened app are **0.15.0**, verified on COM4.
+AUTO now exposes cut-list planning, live sensor status, bounded jogs and
+FAST-profile load moves. Cycle Start/Resume stay disabled; Cut Complete is removed.
+See [Auto tab commissioning](docs/AUTO_TAB_COMMISSIONING.md).
 This adds bounded motion profiles and board-edge acquisition with a separate
 truing move; new physical acceptance remains pending. See
 [motion profiles](docs/MOTION_PROFILES.md) and [board-edge plan](docs/BOARD_EDGE_COMMISSIONING.md).
@@ -125,7 +128,7 @@ notes, Git status, and hardware compatibility before creating a release.
 
 ## Controller modes
 
-- **Teensy Carriage:** active custom 0.14.0 firmware; guarded carriage motion and editable rates.
+- **Teensy Carriage:** active custom 0.15.0 firmware; guarded carriage motion, editable rates and partial AUTO controls.
 - **Legacy Arduino Mega:** archived, internal to the offline simulator only.
 - **Teensy Hardware Test:** separate diagnostics protocol; old operational tabs locked.
 - **Teensy grblHAL:** retained prototype only; operational controls locked. It
