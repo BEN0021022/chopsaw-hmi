@@ -1,15 +1,15 @@
 # Controller protocol
 
-Updated 2026-11-08. Prepared main-app controller firmware **0.13.0** uses the
+Updated 2026-11-08. Active main-app controller firmware **0.13.0** uses the
 existing LF-terminated ASCII BENCH records plus CARRIAGE_V7. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
-This document describes prepared source, not a deployed upgrade. The last
-flashed/read-back board and already-open app remain 0.11.0 / CARRIAGE_V5.
-The edited app intentionally rejects that older identity for motion. Profiles
-were prepared in 0.12.0 / CARRIAGE_V6 and remain included in 0.13.0, which adds
-EDGE_SEARCH:BOUNDED_V1. Neither prepared build is physically accepted.
+0.13.0 was flashed/read back on COM4 and the matching app reopened after the
+operator confirmed app closed and driver power OFF. Startup was disarmed,
+unconfigured, unknown position, zero queued motion and profile 0. New physical
+acceptance remains pending. Stable 0.11.0 / CARRIAGE_V5 is preserved at `cab3a16`.
+Profiles originated in 0.12.0 / CARRIAGE_V6; 0.13.0 adds EDGE_SEARCH:BOUNDED_V1.
 
 ## Identity
 
@@ -25,7 +25,7 @@ HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
 ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1
 ```
 
-Prepared firmware version is 0.13.0. Reads HELLO, PINMAP and STATUS are sent on
+Active firmware version is 0.13.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.

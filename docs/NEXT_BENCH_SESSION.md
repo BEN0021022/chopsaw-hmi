@@ -1,9 +1,11 @@
 # Next bench session
 
-Prepared 2026-11-08 while the operator was away. The board and open app remain
-on 0.11.0. New source is 0.13.0; do not mix the edited app with old firmware
-and expect motion to be available. Checkpoint `cab3a16` preserves the matching
-0.11.0 source. Profile-only checkpoint is `dd333ce`.
+Prepared 2026-11-08 while the operator was away. After the operator returned
+and confirmed app closed/driver OFF, 0.13.0 was flashed/read back on COM4 and
+the matching app reopened. Startup is disarmed/unconfigured, unknown position
+and zero queued motion. Continue with acceptance below; no motion was sent by
+the agent. Checkpoint `cab3a16` preserves matching 0.11.0 source; profile-only
+checkpoint is `dd333ce`. The loading section remains for subsequent reloads.
 
 ## Load and verify together
 

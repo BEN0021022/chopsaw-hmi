@@ -1,8 +1,9 @@
 # Motion profiles - prepared controller 0.12.0
 
 Prepared offline on 2026-11-08 as 0.12.0, checkpoint `dd333ce`; also included in
-prepared 0.13.0. Neither new build is flashed or physically accepted. The last
-read-back controller is 0.11.0. Keep its checkpoint `cab3a16` for rollback.
+0.13.0. That build is now flashed/read back on COM4 with the matching app
+reopened. Physical profile acceptance is pending. Keep 0.11.0 checkpoint
+`cab3a16` for rollback.
 
 | Profile | Maximum pulses/s | Acceleration, pulses/s² | Approximate maximum in/s |
 | --- | ---: | ---: | ---: |

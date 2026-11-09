@@ -1,14 +1,14 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-08. The active implementation is **custom controller 0.11.0**,
+Updated 2026-11-08. The active implementation is **custom controller 0.13.0**,
 not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
 close it before opening the main app on the same COM port.
 
-Prepared source is now 0.13.0: profiles and bounded board-edge/truing, tested
-offline. It has not been flashed. The already-open app remains on 0.11.0;
-restarting the edited source requires the matching 0.13.0 controller.
+0.13.0 adds profiles and bounded board-edge/truing, tested offline, then flashed
+and read back on COM4. The matching app is reopened with fresh compatible
+telemetry, disarmed, no queued motion. New physical acceptance remains pending.
 
 ## Feature mapping
 
@@ -54,8 +54,8 @@ and no homed coordinate is inferred from a clear input.
 
 1. Keep saw mains unplugged, valve supply disconnected and air isolated. Keep
    suspect INA/MCP disconnected. Launch `python main.py`, select Teensy Carriage,
-   choose the Teensy COM port and connect. The prepared source now requires matching
-   0.13.0 telemetry; the already-open 0.11.0 session is the preserved baseline.
+   choose the Teensy COM port and connect. The source requires matching
+   0.13.0 telemetry; that firmware and matching app are now loaded.
 2. Check Home sensor is inactive (no trip/release sequence is required). Door closed, saw UP only,
    driver green ON/red OFF, alarm raw HIGH. Confirm isolation/driver checks.
 3. Confirm driver setup. Wait for controller acknowledgment, then ARM MANUAL CONTROL.

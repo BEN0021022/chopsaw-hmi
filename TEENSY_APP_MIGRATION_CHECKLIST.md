@@ -1,9 +1,10 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-08. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Active firmware: custom **0.11.0** in `firmware/chopsaw_controller`.
-Prepared source: **0.13.0**, motion profiles and bounded board-edge/truing;
-compiled/software-tested offline, not flashed or physically accepted.
+Active firmware: custom **0.13.0** in `firmware/chopsaw_controller`, flashed
+and read back on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
+Motion profiles and bounded board-edge/truing are compiled/software-tested;
+new physical acceptance remains pending. Stable rollback source is `cab3a16` (0.11.0).
 See [profile plan](docs/MOTION_PROFILES.md) and [edge plan](docs/BOARD_EDGE_COMMISSIONING.md).
 Main app mode: **Teensy Carriage**. The breakout is a grblHAL-compatible board;
 the currently flashed firmware is custom, not stock grblHAL.
@@ -25,7 +26,9 @@ Record outstanding physical responses in the [fault acceptance matrix](docs/TEEN
       then return to Home/load position. Confirm travel/direction and STOP.
 - [x] Prepare controlled acceleration and Commissioning/Gentle/Normal/Fast profiles
       in 0.12.0; software tests pass. Default remains the proven constant 40 pulses/s.
-- [ ] Load the matching 0.13.0 app/firmware and physically accept the new profiles.
+- [x] Load matching 0.13.0 firmware/app; verify CARRIAGE_V7, D40 enable,
+      Commissioning profile, disarmed/unconfigured, unknown position and zero queued motion.
+- [ ] Physically accept the new profiles.
 - [x] Prepare bounded board-edge search and a separate captured truing move;
       preserves the Home reference, no automatic pneumatic or saw action.
 - [ ] Accept edge detection/geometry on the machine and finish the stock workflow.
@@ -138,7 +141,9 @@ remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
 - [x] Prepare 0.12.0 controlled acceleration and bounded profiles; RAM-only,
       disarmed-only selection and acknowledged app feedback. Legacy editable
       speed fields cannot override them. Native ramp and main-app tests pass.
-- [ ] Flash/read back matching 0.13.0 and accept profile behavior on the physical carriage.
+- [x] Flash/read back 0.13.0 and reopen compatible main app on CARRIAGE with fresh
+      telemetry, no local fault and no arm/motion commanded by agent.
+- [ ] Accept profile behavior on the physical carriage.
 - [x] Prepare 0.13.0 bounded edge acquisition, capture expiry/token checks and
       guarded separate truing move; native, Qt and actual-protocol replay tests pass.
 - [ ] Physically accept board-edge geometry, truing proposal and stock handling.

@@ -126,3 +126,19 @@ layout was rendered and inspected at 1280x900 using the Windows Segoe UI fonts:
 new edge/geometry controls fit without horizontal overflow, and STOP/release
 remain outside the scrolling area. This was a mock-window render, not a live
 machine-control test or an interaction with the open hardware session.
+
+## 0.13.0 loaded for operator acceptance
+
+Operator returned and confirmed the app closed and driver power OFF. Verified
+prepared firmware-bundle SHA-256 hashes, uploaded to the discovered Teensy 4.1
+and read back COM4: FW 0.13.0 / CARRIAGE_V7 / STEP2_DIR3_EN40. Startup:
+ARMED 0, CONFIGURED 0, REMAINING 0, POS_KNOWN 0, STEP/DIR LOW, ENA HIGH,
+profile 0 at 40 pulses/s with acceleration 0, no fault. Door closed, saw UP,
+Home/board sensor clear and alarm raw HIGH. Readback used HELLO/PINMAP/STATUS
+only; no configure, arm, Home, jog, valve or motor-enable command sent.
+
+Reopened matching main app on CARRIAGE/COM4 and observed compatible/fresh
+telemetry, no local fault, disarmed/unconfigured and no queued motion. Hardware
+motion acceptance remains for the operator. Local readback/startup records are
+under ignored tmp/commissioning/0.13.0; the original prepared bundle remains
+unchanged for hash verification.
