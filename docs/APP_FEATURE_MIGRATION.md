@@ -58,7 +58,8 @@ release now stops its motion model and does not replay the cancelled target.
 AUTO now also offers a **Keypad** checkbox beside Cut Length. With it enabled,
 tapping the length selects the current value and opens a nonmodal keypad over
 the left status column. It edits the same spin box; Add Cut to List appends the
-length and leaves the keypad open. Back/Clear and Close keypad support touch
+length, leaves the keypad open and selects Cut Length for the next entry without
+another tap. Back/Clear and Close keypad support touch
 entry; closing leaves the preference enabled for the next tap. Disabling the
 checkbox or leaving AUTO hides it. The preference persists, but the overlay
 starts hidden after reopening. Physical keyboard entry works either way.

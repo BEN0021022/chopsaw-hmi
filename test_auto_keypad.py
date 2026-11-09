@@ -52,11 +52,12 @@ def run():
         QTest.keyClicks(editor, '12.75')
         add()
         assert [c[1] for c in w.cut_list] == [12.75]
+        assert editor.selectedText() == editor.text(), 'Add selects the next keyboard entry'
 
         QTest.mouseClick(w.cut_length_keypad_checkbox, Qt.MouseButton.LeftButton)
         assert popup.isHidden(), 'Enabling is a preference; tapping the field opens it'
+        tap_field()
         for length in ('18.375', '24.5', '.25'):
-            tap_field()
             assert popup.isVisible() and editor.selectedText() == editor.text()
             for char in length:
                 tap_key(char)
@@ -64,6 +65,7 @@ def run():
             add()
             assert w.cut_list[-1][1] == float(length)
             assert popup.isVisible(), 'Keep open for multiple entries'
+            assert editor.selectedText() == editor.text(), 'Next length needs no extra field tap'
         assert [c[1] for c in w.cut_list] == [12.75, 18.375, 24.5, .25]
 
         # Edits go into the same field; Clear cannot silently add the old value.

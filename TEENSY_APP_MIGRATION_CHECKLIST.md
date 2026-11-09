@@ -61,6 +61,8 @@ readback passed without enabling or moving; matching app reopened disarmed.
       repeated entries. Close keypad hides it; the checkbox preference persists.
       Physical typing remains available with the keypad on or off. Invalid/empty
       entries cannot add a stale value. Tab changes hide the overlay.
+- [x] Successful Add Cut to List returns focus to Cut Length and selects its
+      value so the next keypad/keyboard entry replaces it without another tap.
 - [x] Exercise repeated touch/keyboard entries, validation, close/toggle, resize,
       preference restore and zero serial writes using fake serial while armed.
       Inspect native and simulator layouts; full simulator cycle regressions pass.

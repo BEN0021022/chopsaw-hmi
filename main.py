@@ -1621,6 +1621,8 @@ class MinimalHMI(QMainWindow):
             self.cut_list.append((self.next_cut_number, L, ""))
             self.next_cut_number += 1
             self.update_cut_list_display()
+            self.cut_length_input.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.cut_length_input.selectAll()
 
     def clear_cut_list(self):
         self.cut_list.clear()
