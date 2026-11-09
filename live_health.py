@@ -47,7 +47,7 @@ def fault(issues):
 
 
 def native_health(*, connected, compatible, records, received, started, now,
-                  local_fault="", sensors=NATIVE_SENSORS, stale_seconds=STALE_SECONDS):
+                  local_fault="", sensors=NATIVE_SENSORS, stale_seconds=STALE_SECONDS, allow_saw_travel=False):
     if not connected:
         return HealthState("neutral", "Disconnected")
     if local_fault:
@@ -83,16 +83,16 @@ def native_health(*, connected, compatible, records, received, started, now,
     safety = records.get("SAFETY", {})
     if inputs.get("SAW_UP") == inputs.get("SAW_DOWN") == "0":
         issues.append("Saw position signals conflict")
-    elif inputs.get("SAW_UP") == "1" or inputs.get("SAW_DOWN") == "0":
+    elif not allow_saw_travel and (inputs.get("SAW_UP") == "1" or inputs.get("SAW_DOWN") == "0"):
         issues.append("Saw not fully UP")  # current carriage-only commissioning policy
     if safety.get("DOOR_CLOSED") not in ("0", "1"):
         issues.append("Guard safety data invalid")
     elif safety["DOOR_CLOSED"] != "1":
         issues.append("Guard open")
-    if safety.get("SAW_POSITION") != "UP":
+    if safety.get("SAW_POSITION") not in (('UP','DOWN','BETWEEN') if allow_saw_travel else ('UP',)):
         issues.append("Saw safety position: " + safety.get("SAW_POSITION", "UNKNOWN"))
     blocker = safety.get("BLOCKER")
-    if blocker not in ("NONE", "ALREADY_ARMED"):
+    if blocker not in ("NONE", "ALREADY_ARMED", "DRY_RUN_ACTIVE"):
         issues.append("Interlock: " + (blocker or "UNKNOWN"))
     issues = list(dict.fromkeys(issues))
     return fault(issues) if issues else HealthState("healthy", "System healthy")

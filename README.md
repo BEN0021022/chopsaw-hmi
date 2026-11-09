@@ -3,13 +3,20 @@
 PyQt6 operator interface for the chop-saw carriage, cut-list workflow, machine
 I/O, simulation, current monitoring, and packaged Windows releases.
 
-## Current Teensy build (2026-11-08)
+## Current Teensy build (2026-11-09)
 
 The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active flashed firmware and reopened app are **0.15.0**, verified on COM4.
+Prepared app/firmware is **0.16.0 / CARRIAGE_V10**, compiled/tested offline but
+not flashed yet. Last deployed baseline is **0.15.0**, verified on COM4.
+The new build adds Manual unloaded clamp/saw controls and a separate AUTO
+**Run unloaded cut-list test**: real detector acquisition, truing, feed/stroke
+per item and FAST return. Manually trip/hold the real board detector until truing
+starts. Blade trigger D19 is hard locked OFF. Saw mains stay physically unplugged;
+no stock. Normal stroke retains clamp; unloaded Stop/fault releases it and
+requests UP. Physical acceptance is pending. Follow [the dry-run procedure](docs/TONIGHT_DRY_RUN.md).
 AUTO now exposes cut-list planning, live sensor status, bounded jogs and
 FAST-profile load moves. Cycle Start/Resume stay disabled; Cut Complete is removed.
 See [Auto tab commissioning](docs/AUTO_TAB_COMMISSIONING.md).
@@ -45,11 +52,13 @@ custom firmware; stock grblHAL is not running on the board.
   release/backoff/slow latch/pull-off, recovered 160.5-inch sensor reference.
   User confirmed Home success. Referenced absolute inch targets and load
   presets are now implemented, with firmware soft limits; their physical
-  acceptance is pending. Profiles and automatic cutting remain unavailable. The old operational tabs stay blocked
-  on real hardware. Cut-list editing and the offline simulator are retained.
+  acceptance is pending. Profiles are editable in SETTINGS. Production automatic
+  cutting remains blocked; native Manual/AUTO unloaded controls require matching
+  identity, acknowledged timings and fresh feedback. Offline simulator retained.
 - The MIGRATION tab shows the master checklist; Refresh reloads current status.
-- Main-app pneumatic/blade/current controls are unavailable. Keep saw unplugged,
-  valve 12V disconnected, air isolated, INA/MCP disconnected during carriage tests.
+- Blade/current controls remain unavailable; INA/MCP disconnected. Isolate valve
+  power/air for initial carriage-only checks, then follow unloaded acceptance
+  before powering pneumatics. No firmware upload was performed during preparation.
 
 The last MEGA HMI remains in sibling `ChopSawHMI` at
 `legacy-mega-last-working-2026-11-06`; recovered MEGA firmware is also preserved

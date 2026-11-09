@@ -30,6 +30,7 @@ from ui_components import KeypadWidget, CutLengthKeypad, CurrentGraphWidget
 from live_health import native_health, simulator_health, simulator_data_valid, HealthState, TelemetryActivity
 from pneumatic_timing import CylinderTimingPanel, CLAMPS, simulation_clamps
 from manual_pneumatics import ManualPneumatics
+from dry_run_control import NativeDryRun, COMMAND as DRY_COMMAND, TRAVEL as DRY_TRAVEL
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
@@ -199,6 +200,7 @@ class MinimalHMI(QMainWindow):
         self._sim_health_fields = {}
         self._sim_health_received = self._sim_activity_received = None
         self._health_activity = TelemetryActivity()
+        self.dry_run = NativeDryRun(self)
         self.init_ui()
         self.apply_theme()
         self._load_settings()
@@ -386,6 +388,7 @@ class MinimalHMI(QMainWindow):
         self.log = QTextBrowser()
         self.log.document().setMaximumBlockCount(500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
+        self.dry_run.changed.connect(self.manual_pneumatics.refresh)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
 
@@ -438,9 +441,9 @@ class MinimalHMI(QMainWindow):
         self.manual_teensy_status = QLabel()
         self.manual_teensy_status.setWordWrap(True)
         prep.addWidget(self.manual_teensy_status)
-        isolation_note=QLabel("Saw unplugged; valve 12V disconnected; air isolated; driver and carriage clearance checked.")
+        isolation_note=QLabel("Unloaded test only: saw unplugged, blade trigger locked OFF; driver and carriage clearance checked.")
         isolation_note.setWordWrap(True); prep.addWidget(isolation_note)
-        self.manual_isolation = QCheckBox("Isolation and driver checks confirmed")
+        self.manual_isolation = QCheckBox("Unloaded / unplugged and driver checks confirmed")
         self.manual_isolation.toggled.connect(lambda checked: self.carriage_tab.consent.setChecked(checked))
         prep.addWidget(self.manual_isolation)
         row = QHBoxLayout()
@@ -472,7 +475,7 @@ class MinimalHMI(QMainWindow):
         self.manual_stop.setStyleSheet("background:#b91c1c; color:white; font-weight:bold")
         self.manual_stop.clicked.connect(lambda: self.carriage_tab.stop())
         self.manual_reset = QPushButton("Acknowledge fault")
-        self.manual_reset.clicked.connect(lambda: self.carriage_tab.acknowledge())
+        self.manual_reset.clicked.connect(lambda: self.dry_run.acknowledge())
         self.manual_release = QPushButton("Release motor")
         self.manual_release.clicked.connect(lambda: self.carriage_tab.stop("XDISABLE"))
         for button in (self.manual_stop,self.manual_reset,self.manual_release): actions.addWidget(button)
@@ -664,10 +667,10 @@ class MinimalHMI(QMainWindow):
 
         self.auto_teensy_setup = QGroupBox("Prepare carriage")
         prep=QVBoxLayout(self.auto_teensy_setup)
-        self.auto_isolation=QCheckBox("Isolation and driver checks confirmed")
+        self.auto_isolation=QCheckBox("Unloaded / unplugged and driver checks confirmed")
         self.auto_isolation.toggled.connect(lambda checked: self.carriage_tab.consent.setChecked(checked))
         prep.addWidget(self.auto_isolation)
-        hint=QLabel("Blade unplugged; valve power off; air isolated.")
+        hint=QLabel("No stock; saw unplugged; blade trigger locked OFF.")
         hint.setWordWrap(True); prep.addWidget(hint)
         row=QHBoxLayout()
         self.auto_configure=QPushButton("Setup")
@@ -927,11 +930,33 @@ class MinimalHMI(QMainWindow):
 
         sv.addWidget(self.auto_status_label)
         right_col.addWidget(status_group)
+        self.auto_dry_group = QGroupBox('Unloaded cut-list test')
+        dry_layout = QVBoxLayout(self.auto_dry_group)
+        self.auto_dry_consent = QCheckBox('Unloaded / unplugged; air checks confirmed')
+        self.auto_dry_consent.toggled.connect(self.dry_run.consent.setChecked)
+        self.dry_run.consent.toggled.connect(self.auto_dry_consent.setChecked)
+        dry_layout.addWidget(self.auto_dry_consent)
+        dry_hint=QLabel('Blade trigger locked OFF. Home first. Trip and hold the board detector until truing starts. Cut-list progress is preserved.')
+        dry_hint.setWordWrap(True); dry_layout.addWidget(dry_hint)
+        self.auto_dry_configure=QPushButton('Load dry-run timings')
+        self.auto_dry_configure.clicked.connect(self.dry_run.configure)
+        self.auto_dry_run=QPushButton('Run unloaded cut-list test')
+        self.auto_dry_run.clicked.connect(self.dry_run.start_sequence)
+        self.auto_dry_stop=QPushButton('Stop dry run / release clamp')
+        self.auto_dry_stop.clicked.connect(lambda: self.dry_run.stop())
+        self.auto_dry_status=QLabel('Requires matching 0.16.0 firmware.'); self.auto_dry_status.setWordWrap(True)
+        for widget in (self.auto_dry_configure,self.auto_dry_run,self.auto_dry_stop,self.auto_dry_status): dry_layout.addWidget(widget)
+        right_col.insertWidget(0, self.auto_dry_group)
 
 
         # --- MODIFIED: Removed setMaximumWidth(420) to allow widening ---
         right_wrap = QWidget(); right_wrap.setLayout(right_col)
-        top_row.addWidget(right_wrap)
+        right_wrap.setObjectName('autoCycleColumn')
+        right_wrap.setStyleSheet('QWidget#autoCycleColumn { background:#0b1222; }')
+        right_scroll = QScrollArea(); right_scroll.setWidgetResizable(True)
+        right_scroll.setStyleSheet('QScrollArea { background:#0b1222; border:0; }')
+        right_scroll.setWidget(right_wrap)
+        top_row.addWidget(right_scroll)
         root.addLayout(top_row)
 
         # Profiles moved to Speed Settings tab
@@ -1593,6 +1618,7 @@ class MinimalHMI(QMainWindow):
         manual_ready = connected and capabilities.manual_motion_ready
         auto_ready = connected and capabilities.automatic_cycle_ready
         native_manual = controller.key == TEENSY_CARRIAGE
+        self.auto_dry_group.setVisible(native_manual)
         self.cylinder_timing.set_simulator_mode(isinstance(self.ser, VirtualController))
         self.tabs.setTabText(self.tabs.indexOf(self.legacy_tab),"MANUAL" if native_manual else "MANUAL / SIM")
         self.legacy_tab.setEnabled(manual_ready or (connected and native_manual))
@@ -1644,6 +1670,12 @@ class MinimalHMI(QMainWindow):
 
     def refresh_manual_motion_locks(self):
         if not isinstance(self.ser, VirtualController):
+            if self.dry_run.motion_locked():
+                for widget in (self.manual_home_button,self.keypad,self.enable_chk,self.manual_configure,
+                               self.manual_arm,self.manual_release,self.load_button,self.auto_arm,self.auto_home,
+                               self.auto_configure,self.auto_jog_left_btn,self.auto_jog_right_btn,
+                               self.qjog_left_01,self.qjog_right_01,self.qjog_left_025,self.qjog_right_025,
+                               self.qjog_left_1,self.qjog_right_1,self.qjog_left_2,self.qjog_right_2): widget.setEnabled(False)
             return
         free = self.is_connected() and not self.manual_pneumatics.motion_locked()
         for widget in (self.manual_home_button,self.keypad,self.enable_chk,self.load_button,self.resume_on_reset_button,
@@ -2216,7 +2248,21 @@ class MinimalHMI(QMainWindow):
             self.log.append('MOVE BLOCKED: release the manual clamp and return/release the saw first.')
             return False
         if self.active_controller().key == TEENSY_CARRIAGE:
-            if not self.carriage_tab.allowed(cmd):
+            dry = self.dry_run
+            stopping = cmd in ('OFF','XARM 0','XDISABLE','RESET','DOFF')
+            if dry.sequence and not dry.issuing_sequence:
+                if stopping:
+                    dry.sequence=None; dry.pending=None; dry.message='Unloaded dry list stopped.'
+                elif cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE'):
+                    self.log.append('BLOCKED: unloaded list owns machine sequencing.'); return False
+            if (dry.motion_locked() and not dry.issuing_sequence and not stopping and
+                    cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE') and not DRY_COMMAND.fullmatch(cmd)):
+                self.log.append('BLOCKED: unloaded pneumatics own machine control.'); return False
+            if cmd=='XDISABLE' and dry.motion_locked():
+                self.log.append('BLOCKED: stop the unloaded test before releasing motor holding.'); return False
+            allowed = (dry.allowed(cmd) if DRY_COMMAND.fullmatch(cmd) or (cmd=='KEEPALIVE' and dry.data.get('ARMED')=='1')
+                       else self.carriage_tab.allowed(cmd))
+            if not allowed:
                 self.log.append(f"BLOCKED in Teensy Carriage mode: {cmd}")
                 return False
         if self.ser and self.ser.is_open:
@@ -2451,7 +2497,10 @@ class MinimalHMI(QMainWindow):
             else:
                 text,color=("ACTIVE","#22c55e") if raw == "0" else ("INACTIVE","#475569")
             self.set_pill(label,text,color)
-        self.set_pill(self.auto_clamp_status_label,"UNKNOWN","#475569")
+        if self.dry_run.fresh():
+            self.set_pill(self.auto_clamp_status_label,'ON COMMANDED' if self.dry_run.data.get('CLAMP')=='1' else 'OFF COMMANDED','#92400e' if self.dry_run.data.get('CLAMP')=='1' else '#475569')
+        else:
+            self.set_pill(self.auto_clamp_status_label,"UNKNOWN","#475569")
         if not known: self.auto_position_label.setText("UNKNOWN")
         elif not busy: self.auto_position_label.setText(self.position_label.text())
         saw=p.safety.get("SAW_POSITION","UNKNOWN") if p.fresh("SAFETY") else "UNKNOWN"
@@ -2467,7 +2516,7 @@ class MinimalHMI(QMainWindow):
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(False)
         self.fa_start_cycle_button.setEnabled(False)
-        self.auto_status_label.setText("Carriage controls only; Cycle Start unavailable. " + p.status.text())
+        self.auto_status_label.setText("Cutting unavailable. Use the unloaded test above. " + p.status.text())
         self.load_button.setEnabled(p.allowed(f"XLOAD {int(self.native_load_target()*1000+0.5)}"))
         self.load_button.setToolTip("Uses stored FAST profile. Requires Home, explicit arm and a clear path.")
         jogs=((self.auto_jog_left_btn,self.auto_jog_input.value()),(self.auto_jog_right_btn,-self.auto_jog_input.value()),
@@ -2555,6 +2604,7 @@ class MinimalHMI(QMainWindow):
     def update_message_log(self, msg):
         if self.active_controller().key == TEENSY_CARRIAGE:
             self.carriage_tab.handle_line(msg)
+            self.dry_run.handle(msg)
         elif isinstance(self.ser, VirtualController) and self.is_connected() and msg.startswith("POS:"):
             self.refresh_live_health()  # establish this connection's session before storing data
             self._sim_health_fields = dict(part.split(":", 1) for part in msg.split(",") if ":" in part)
@@ -2585,7 +2635,8 @@ class MinimalHMI(QMainWindow):
             state = native_health(connected=connected and p.connected, compatible=p.compatible,
                                   records={"X":p.x, "SAFETY":p.safety, "INPUTS":p.inputs},
                                   received=p.received, started=self._health_started, now=now,
-                                  local_fault=p.local_fault, stale_seconds=p.stale_seconds)
+                                  local_fault=p.local_fault or self.dry_run.local_fault, stale_seconds=p.stale_seconds,
+                                  allow_saw_travel=self.dry_run.fresh() and self.dry_run.data.get('STATE') in DRY_TRAVEL)
             receipt = p.received.get("X") if connected and p.connected and p.compatible else None
         elif mode == "sim":
             state = simulator_health(connected=connected, fields=self._sim_health_fields,
@@ -2980,6 +3031,7 @@ class MinimalHMI(QMainWindow):
     def closeEvent(self, event):
         self.health_timer.stop()
         self.manual_pneumatics.timer.stop()
+        self.dry_run.timer.stop()
         self._save_settings()
         self._stop_listener()
         event.accept()

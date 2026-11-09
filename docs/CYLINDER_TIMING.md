@@ -13,23 +13,25 @@ own independent values. Planned entries do not declare hardware installed.
 
 | Stage/device | Configurable values | Current use |
 | --- | --- | --- |
-| Board positioning | Settle after carriage stops | Simulator |
-| Each clamp | Engage delay, engage settling, release delay, release clearance | Simulator's participating virtual clamps |
+| Board positioning | Settle after carriage stops | Simulator; prepared native unloaded mode |
+| Each clamp | Engage delay, engage settling, release delay, release clearance | Simulator; main clamp in prepared native unloaded mode |
 | Each clamp | Confirmation limit | Saved plan; feedback not configured/enforced |
-| Saw travel | Downstroke delay, bottom dwell, return-UP delay, settle after UP | Simulator |
-| Saw travel | Down/UP travel limits | Saved plan; future controller phase watchdogs |
+| Saw travel | Downstroke delay, bottom dwell, return-UP delay, settle after UP | Simulator; prepared native unloaded mode |
+| Saw travel | Down/UP travel limits | Enforced in prepared native unloaded mode; not in simulator |
 | Blade trigger | Press delay, spin-up wait, release delay after UP, braking wait | Simulator timing model |
 
 **Save Timing Settings** persists the values locally. Closing the app also saves
 them. Editing/saving never sends hardware commands. Settings is scrollable so
 more devices/settings can be added without enlarging the application window.
 
-Live Teensy automatic cutting remains unavailable. These fields do not change
-the independent Sensor Bench/manual firmware's provisional five-second limits.
-Native timing transfer, phase watchdogs and combined pneumatic sequencing still
-need implementation and physical acceptance. Values shown here are not verified
-physical operating times. In particular, newly introduced normal-cycle delays
-default to zero; planned confirmation/travel limits start at 5000 ms.
+Live Teensy cutting remains unavailable. Prepared 0.16.0 adds a separate native
+unloaded mode, awaiting flash/physical acceptance. **Load dry-run timings** on
+Manual/Auto transfers eleven main-clamp/saw/board fields while disarmed; the
+controller returns configuration token/hash. Edits require another Load before
+new actuation. Delays are 0-5000 ms; saw travel limits are 100-5000 ms. Trigger,
+additional-clamp and clamp-confirmation fields are not loaded. Values are not
+verified physical times; new delays default to zero and travel limits to 5000 ms.
+Legacy Sensor Bench guards remain separate. See [tonight's procedure](TONIGHT_DRY_RUN.md).
 
 ## Saved-value migration
 
@@ -55,8 +57,8 @@ An acknowledgment or new cycle cannot bypass those phases.
 The fixed virtual travel model remains 0.4 seconds to leave UP, 1.6 seconds to
 the cut, and 2.6 seconds to return UP before added delays. These are simulation
 constants, not predictions of real cylinder speed. Normal-cycle delays are
-distinct from a destination-confirmation timeout. Planned timeouts are clearly
-marked and are not silently treated as active protection.
+distinct from destination timeouts. Native saw timeouts apply after loading the
+matching unloaded build; clamp confirmation remains planned without feedback.
 
 Stop, disconnect and automation-off invalidate pending callbacks. Simulator
 cancellation stops its pending stroke events and releases virtual clamps
@@ -66,8 +68,8 @@ does not specify a safe real-machine fault response.
 ## Manual controls (Simulator)
 
 The MANUAL tab also has independent main-clamp, saw-travel and blade-trigger
-buttons plus a combined Manual Saw Cycle and Stop. These are functional in
-Simulator only; their handlers reject native hardware even when invoked directly.
+buttons plus a combined Manual Saw Cycle and Stop. This section describes
+Simulator behavior; native unloaded actions use a separate acknowledged adapter.
 They do not use the Auto simulation checkbox, legacy clamp-selection rules or
 cut-list advancement. Manual saw activation requires a settled virtual main
 clamp and UP. A normal manual cycle returns UP, releases the trigger after the
@@ -77,10 +79,20 @@ Carriage motion and Auto startup are excluded while the manual clamp/saw is acti
 Manual Stop cancels delayed callbacks/virtual stroke events, releases the virtual
 trigger and retains the clamp. Freshness loss or disconnect cannot automatically
 resume a pending action. The virtual stop resets the simulated saw UP; this is
-not proof of the mechanical result of a real fault. Native controls remain visibly
-locked: current firmware permits only one pneumatic output at a time, so it cannot
-support the combined held-clamp/saw/trigger workflow. A controller-owned manual
-sequence and its physical feedback/retention policy must be commissioned first.
+not proof of the mechanical result of a real fault.
+
+## Native unloaded controls (prepared 0.16.0)
+
+Explicit preparation, matching identity, fresh feedback and loaded timings are
+required. Arm enables no valve. Clamp must settle before Lower or Unloaded Saw
+Cycle; real DOWN then UP switches govern completion and travel timeouts. Normal
+stroke keeps the main clamp commanded ON. Release requires UP. Trigger buttons
+are disabled and D19 is hard locked OFF in firmware, including raw commands.
+
+Unloaded Stop/fault cancels the sequence, requests saw UP and **releases** the
+clamp. This differs from simulator manual Stop and is only for no-stock testing.
+Carriage and pneumatics are mutually excluded. Settling is not verified grip;
+production behavior still needs commissioning.
 
 ## Physical clamp selection remains separate
 

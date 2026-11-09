@@ -19,10 +19,10 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V9", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V10", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
-    "COMMISSIONING": "VALVES_ISOLATED", "CAL_SPI": "127.12",
+    "COMMISSIONING": "UNLOADED_DRY_RUN", "CAL_SPI": "127.12",
     "MAX_JOG": "254", "BASE_RATE": "40", "MAX_RATE": "20000", "MAX_ACCEL":"50000", "PROFILES": "EDITABLE_V1", "HOME_CHECK": "LEVEL_ONLY",
     "HOMING": "BOUNDED_V1", "HOME_MAX": "20594", "HOME_REF": "160.5",
     "ABSOLUTE": "REFERENCED_V1", "MAX_MOVE": "20594",
@@ -101,12 +101,12 @@ class TeensyCarriagePanel(QWidget):
         setup = QGroupBox("Prepare carriage motion")
         setup_layout = QVBoxLayout(setup)
         isolation_note = QLabel(
-            "Saw unplugged; valve 12V disconnected; air isolated; carriage clear; driver green ON/red OFF."
+            "Unloaded test: saw unplugged; trigger locked OFF; carriage clear; driver green ON/red OFF."
         )
         isolation_note.setWordWrap(True)
         setup_layout.addWidget(isolation_note)
         self.consent = QCheckBox(
-            "Isolation and driver checks confirmed"
+            "Unloaded / unplugged and driver checks confirmed"
         )
         self.consent.toggled.connect(self._consent_changed)
         setup_layout.addWidget(self.consent)
@@ -651,7 +651,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible carriage firmware 0.15.0 and verified machine pin map"
+            text = "Waiting for compatible firmware 0.16.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":

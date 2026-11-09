@@ -1,7 +1,8 @@
 # Main app feature migration: MEGA to Teensy
 
-Updated 2026-11-09. The active implementation is **custom controller 0.15.0**,
-not stock grblHAL. The main app's **Teensy Carriage** mode owns one serial
+Updated 2026-11-09. Prepared source is **custom controller 0.16.0**, not flashed
+yet; last deployed baseline is 0.15.0. This is not stock grblHAL.
+The main app's **Teensy Carriage** mode owns one serial
 connection, parses controller records on the Qt thread and applies a command
 allowlist at the serial-write boundary. Sensor Bench remains a separate tool;
 close it before opening the main app on the same COM port.
@@ -35,13 +36,13 @@ that statement does not independently complete the physical fault matrix.
 | Board detection / truing | J / N, board-edge offset | XEDGE pulse bound/offset/overlap; XTRUING capture token | Prepared 0.13.0; detection disarms, separate explicit truing move; Home reference retained; geometry/physical acceptance pending |
 | Door | Ad hoc/old hardware | Door/D29 active LOW, controller interlock | User confirmed input; firmware/app cancellation tested |
 | Saw endpoints | Old SSEN | UP Limit Z/D22; DOWN Fd/Hld/D16 | User-confirmed inputs, controller interlocks |
-| Main left clamp | C/D/L/U (legacy command collision) | OUT 1 / AUX1 TTL D32 | Bench LED proven; main app unavailable until diode/coil acceptance and clamp fault policy |
-| Saw travel cylinder | Old saw cycle command | OUT 0 / AUX2 TTL D33 | OFF=UP confirmed; suppression and isolated pneumatic dry run pending |
-| Blade trigger cylinder | Original trigger/brake mechanism | OUT 2 / Flood TTL D19 | Main app unavailable; validate OFF release/brake, no blade-powered test yet |
+| Main left clamp | C/D/L/U (legacy command collision) | DCLAMP / AUX1 TTL D32 | Prepared unloaded mode; ON clamps/OFF releases confirmed; combined physical acceptance pending |
+| Saw travel cylinder | Old saw cycle command | DCYCLE/DDOWN/DUP / AUX2 TTL D33 | Prepared held-clamp unloaded stroke using real endpoints; OFF=UP confirmed; physical acceptance pending |
+| Blade trigger cylinder | Original trigger/brake mechanism | Flood TTL D19 | Hard locked OFF throughout 0.16.0; trigger/brake commissioning separate |
 | Cut-list editing/import | Python UI | Same retained Python feature | Available; simulator regression passes |
-| Cylinder timing | Two global waits inside Full Auto | SETTINGS / Cylinder Timing, per-device configuration and explicit phases | Simulator integrated; native sequencing/feedback limits remain planned; see CYLINDER_TIMING.md |
-| Manual clamp/saw | Direct operator/manual mechanisms | MANUAL / Manual Machine Controls | UI and Simulator active; native handlers/buttons remain locked pending combined controller sequencing and physical acceptance |
-| Automatic cut-list workflow | Old MEGA state strings + timed callbacks | New controller events / acknowledgments required | Locked on live Teensy; simulate only |
+| Cylinder timing | Two global waits inside Full Auto | SETTINGS / Cylinder Timing, per-device phases | Simulator and prepared native unloaded timing transfer/ACK and travel deadlines; see CYLINDER_TIMING.md |
+| Manual clamp/saw | Direct operator/manual mechanisms | MANUAL / Manual Machine Controls | Prepared native unloaded clamp/lower/return/stroke; identity/ACK/fresh feedback required; physical acceptance pending |
+| Automatic cut-list workflow | Old MEGA strings + timed callbacks | Separate AUTO unloaded test using motion/pneumatic events | Real detector/truing, list feed/stroke, FAST Load prepared; production Start/Resume blocked |
 | Early return | Carriage return during cutting | Reassess collision/clamp/blade policy first | Locked on live hardware |
 | Current monitoring | ACS712 fields | INA228 future work | Deferred; INA/MCP quarantined/disconnected |
 | MEGA PID toggle | K0/K1 | Driver-managed closed loop | Removed from Manual UI in all modes; no duplicate HMI PID loop |
@@ -80,8 +81,10 @@ Timing configuration and the Simulator automation switch now live in SETTINGS.
 Full Auto no longer contains timing controls. The old board-settle and clamp-close
 values migrate into correctly named settings. Each participating virtual clamp
 has independent engage/release waits; saw travel and trigger waits use one
-per-cut snapshot. Live automatic cutting remains blocked. Confirmation/travel
-limits are marked planned and do not change manual bench firmware behavior.
+per-cut snapshot. Live cutting remains blocked. Prepared 0.16.0 separately loads
+eleven fields with configuration/hash ACK and enforces saw-travel deadlines for
+unloaded tests. Clamp confirmation and extra clamps remain planned. Native
+Manual/AUTO sequencing is controller-owned and cannot command the blade.
 See [Cylinder Timing](CYLINDER_TIMING.md) for field meanings, migration, simulator
 phase order and remaining physical clamp-eligibility requirements.
 
@@ -97,7 +100,8 @@ cutting readiness. Homing and arming still use the existing controls/interlocks.
 Native mode requires compatible identity and fresh X, SAFETY and INPUTS records.
 Home/Board may legitimately be either OFF or ON. Guard closed, driver alarm normal,
 consistent saw-UP endpoints and no controller/local fault are required under the
-current carriage-only policy. Unknown clamp feedback and deferred INA/MCP/outfeed
+carriage policy; expected travel in a fresh unloaded phase is permitted, while
+contradictory endpoints still fault. Unknown clamp feedback and deferred INA/MCP/outfeed
 channels are excluded. Valid binary telemetry cannot prove every wire or switch
 is intact; electrical fault diagnosis still depends on sensor/wiring design.
 

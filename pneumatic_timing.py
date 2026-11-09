@@ -34,8 +34,8 @@ DEVICES = (
         TimingField('saw.bottom_dwell', 'Dwell at bottom'),
         TimingField('saw.up_delay', 'Delay before return UP'),
         TimingField('saw.up_settle', 'Settle after confirmed UP'),
-        TimingField('saw.down_timeout', 'Down travel limit (planned)', 5000, planned_limit=True),
-        TimingField('saw.up_timeout', 'UP travel limit (planned)', 5000, planned_limit=True),
+        TimingField('saw.down_timeout', 'Down travel limit', 5000, planned_limit=True),
+        TimingField('saw.up_timeout', 'UP travel limit', 5000, planned_limit=True),
     )),
     ('Blade trigger cylinder', (
         TimingField('trigger.press_delay', 'Delay before pressing trigger'),
@@ -86,7 +86,7 @@ class CylinderTimingPanel(QGroupBox):
                 spin.setMaximumWidth(260)
                 spin.setStyleSheet('QSpinBox { background:#0b1222;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:6px;font-size:16px; }')
                 if field.planned_limit:
-                    spin.setToolTip('Saved for future controller feedback checks. Not enforced yet; does not change the separate manual bench firmware limits.')
+                    spin.setToolTip('Saw travel limits are enforced after loading into 0.16.0 unloaded-test firmware (100–5000 ms). Clamp confirmation limits require future feedback; they remain planned.')
                 self.fields[field.key] = spin
                 form.addRow(field.label + ':', spin)
             page_layout.addWidget(page)
@@ -98,7 +98,7 @@ class CylinderTimingPanel(QGroupBox):
         self.save_button = QPushButton('Save Timing Settings')
         self.save_button.clicked.connect(self.save)
         layout.addWidget(self.save_button)
-        self.feedback = QLabel('Changes apply to the next simulated cut. Save to retain them between sessions.')
+        self.feedback = QLabel('Save retains settings on this PC. For native unloaded tests, explicitly Load dry-run timings while disarmed; wait for acknowledgment.')
         self.feedback.setWordWrap(True)
         self.feedback.setStyleSheet('color:#94a3b8; font-size:13px;')
         layout.addWidget(self.feedback)
@@ -110,7 +110,9 @@ class CylinderTimingPanel(QGroupBox):
     def set_simulator_mode(self, simulator):
         self.mode_hint.setText(
             'Simulator: normal-cycle delays are active. Confirmation/travel limits remain planned.' if simulator else
-            'Saved timing plan only — live automatic pneumatics are not commissioned.'
+            'Unloaded Teensy tests: load the main-clamp / saw-travel timings from Manual or Auto. '
+            'Delays must be 0–5000 ms; saw travel limits 100–5000 ms. Blade trigger stays locked OFF. '
+            'Clamp confirmation and additional clamps remain planned.'
         )
 
     def snapshot(self):

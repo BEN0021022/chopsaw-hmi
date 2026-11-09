@@ -1,84 +1,99 @@
-# Unloaded commissioning preparation — 2026-11-09
+# Unloaded cut-list test - 2026-11-09
 
-This is a readiness audit and implementation queue, not a declaration that the
-combined test firmware is ready. The current baseline remains **0.15.0**.
+**Software prepared: firmware 0.16.0 / CARRIAGE_V10 and matching main app.**
+Compiled and tested offline. Not flashed or physically accepted yet. Last known
+deployed firmware is 0.15.0; its source and HEX remain preserved for rollback.
 
-## Operator-confirmed test scope
+## Confirmed scope
 
-- No board, stock or cutting during these tests.
-- Saw mains physically unplugged throughout.
-- Blade-trigger channel disabled/OFF; do not exercise it tonight.
-- Main clamp: ON clamps, OFF releases (confirmed 2026-11-09).
-- Saw-travel valve: OFF returns UP (previously operator-confirmed).
-- Fit/verify coil suppression and branch fuses before valve power; keep suspect
-  INA228/MCP disconnected.
+- No stock and no cutting. Saw mains physically unplugged throughout.
+- Blade-trigger Flood/D19 is hard locked OFF, including legacy raw commands.
+- Main clamp AUX1/D32: ON clamps, OFF releases (operator-confirmed).
+- Saw travel AUX2/D33: OFF returns UP (operator-confirmed).
+- Operator manually trips the **real Limit Y board detector** during acquisition.
+  No fake reference, sensor override or production-completion shortcut is used.
+- INA228/MCP remain disconnected. Fit/verify suppression and branch fuses before
+  energizing valves. Accept the unloaded mechanisms before running the list.
 
-Outputs are saw travel AUX2/D33, main clamp AUX1/D32 and blade trigger Flood/D19.
-Virtual clamp IDs 1/2/3 are not physical OUT channel numbers.
+## Prepared behavior
 
-## Ready now
+MANUAL provides acknowledged clamp/release, saw lower/return and one unloaded
+saw cycle. Configure timings, explicitly arm unloaded pneumatics, then Clamp.
+A stroke requires the clamp command to complete settling. This is **commanded
+clamp state**, not measured grip. A normal stroke leaves the clamp ON; Release
+waits for confirmed UP and the configured release clearance.
 
-- Baseline firmware/source/readbacks are preserved in `tmp/commissioning/0.15.0`.
-- Archived HEX SHA-256 matches its manifest:
-  `5E2BAB99FBFA21DEE529B0DE899720BE6386CFF20D0E5ADC4187B8AC56F6C267`.
-- Firmware source tree is unchanged: `b81f87f66cf43d861982c83d6eb65a6eb746735c`.
-- All seven host firmware suites passed 2026-11-09 (2451 checks), plus 55
-  actual-sketch motion-record replays through the Qt protocol parser.
-- Carriage Home, jog, absolute target and FAST Load commands exist; previous
-  operator tests passed. Physical fault acceptance still needs completion.
-- Sensor Bench supports individual pneumatic tests: one output at a time,
-  endpoint/door checks, five-second maximum ON, travel timeout and heartbeat.
-- New Manual actuator controls and timing settings work in Simulator. Their
-  native hardware handlers/buttons remain locked.
+AUTO has a separate **Run unloaded cut-list test** control. Production Start
+Cycle/Resume remain unavailable. The unloaded runner snapshots the cut list,
+kerf, sensor offset and trim; it does not consume or mark production cuts done.
 
-Flashing 0.15.0 does NOT enable combined manual controls or live Auto Start.
-Nothing has been flashed during this preparation.
+Sequence:
 
-## P0 work before combined tests
+1. Acquire an edge through the existing bounded real-detector search.
+2. Accept the captured truing target, choose stored Normal profile and move.
+3. Disarm carriage, settle board, clamp, wait clamp settling, cycle DOWN/UP using
+   the real endpoint switches, settle UP, release clamp and wait clearance.
+4. Feed each cut length plus kerf using referenced soft limits; repeat the
+   unloaded clamp/stroke/release sequence for each item.
+5. Return to selected Load using stored FAST; finish disarmed.
 
-1. **Controller-owned unloaded pneumatic mode:** hold main clamp while cycling
-   saw travel; hard-lock Flood/D19 OFF. Do not expose production cutting or raw
-   output commands as a shortcut.
-2. **Configuration/arm acknowledgments:** validate and transfer a bounded timing
-   snapshot; report the accepted configuration and exact dry-run capability.
-   Connect/reset/guard-close must never start or resume motion.
-3. **Native manual actions:** clamp/release, lower/return and one unloaded stroke.
-   Require clamp-command settling before downstroke, but label it commanded,
-   not verified grip. Use real UP/DOWN endpoints and bounded departure/arrival
-   deadlines; reject contradictions and queued/repeated stroke requests.
-4. **Carriage exclusion:** no feed while clamp ON or saw away from UP, and no
-   pneumatic sequence while carriage pulses remain. Holding torque is separate.
-5. **Unloaded fault policy:** saw OFF, clamp OFF/released, trigger locked OFF;
-   cancel pending phases and require recovery/rearm. This is not a production
-   clamp-retention policy. Test door, alarm, endpoint, timeout and link loss.
-6. **Native app adapter:** match new capability/identity, fresh phase/output
-   telemetry and acknowledgments; heartbeat locally. Do not unlock PC-timed
-   Simulator handlers to drive real valves.
-7. **Explicit no-stock cut-list stepping:** establish a separate operator-started
-   test reference from genuinely homed coordinates and validate every target.
-   Board-edge acquisition cannot run normally without a board. Do not fake Home,
-   switches or production edge detection. Start one move/cycle at a time initially;
-   do not mark real cuts complete or consume production progress.
-8. **Matching build package:** HEX/hashes, app revision, source rollback, passing
-   firmware/protocol tests and separate physical acceptance steps.
+There is one truing stroke plus one stroke per cut-list item. No blade trigger,
+automatic retry, early carriage return or resumption after a fault.
 
-## Physical acceptance order
+## At the machine
 
-1. Blade unplugged, valve power/air isolated: check exact identity, pin map,
-   polarity and timing readback; boot disarmed, zero queued motion, outputs OFF.
-2. Check door/endpoints by hand, then Home, short carriage jogs, direction and STOP
-   with valve power still disconnected.
-3. After diode/fuse checks, accept one cylinder at a time using regulated air and
-   flow controls. Measure travel and confirm OFF behavior before choosing limits.
-4. Only after the new combined path is implemented/tested and physically accepted,
-   test unloaded clamp + saw down/up, release and motion exclusion.
-5. Step a short no-stock cut list, explicitly starting each feed/cycle initially.
-6. Record controlled stop, guard, missing endpoint, alarm and link-loss responses.
+1. App closed, driver power OFF, valve power disconnected, air isolated and
+   saw unplugged: load prepared 0.16.0 and open the matching app. Verify identity,
+   pin map, outputs OFF and no queued pulses.
+2. Check door, Home, board detector and both saw endpoint pills. Verify valve
+   suppression/polarity and fuses. Check unloaded OFF/UP and clamp behavior with
+   regulated air and flow controls, one mechanism at a time.
+3. Confirm carriage preparation, Setup verified enable/alarm levels, power the
+   driver when ready and Home. Check short jog/Stop. Restore/edit stored Normal
+   and FAST rates conservatively; reboot resets their RAM values. The operator
+   preferred below 4000 pps after a following error there.
+4. In SETTINGS / Cylinder Timing, choose main-clamp and saw-travel delays.
+   In MANUAL or AUTO confirm unloaded/suppression/air preparation and click
+   **Load dry-run timings** while disarmed. Wait for controller readback.
+   Delays: 0-5000 ms. DOWN/UP travel limits: 100-5000 ms. Save retains values
+   on the PC; Load transfers them. Edits require another explicit Load.
+5. First accept MANUAL Clamp, Unloaded Saw Cycle, Return UP, Release and Stop.
+   Keep the carriage clear for subsequent automatic motion.
+6. Add a short list in AUTO and select Load. Detector starts clear; carriage
+   homed/disarmed; saw UP; clamp OFF. Click **Run unloaded cut-list test**.
+   This explicitly authorizes its automatic moves and unloaded strokes.
+7. At **SEARCH**, trip and hold the real board detector. Keep it active through
+   capture until the truing move starts; then release it. Search is bounded by
+   the CARRIAGE search-distance setting (initially two inches).
+8. Watch truing, each list move/stroke and final Load return. Record directions,
+   clearances, endpoints, times and fault/Stop results before increasing scope.
 
-Blade mains stay unplugged and the trigger channel disabled throughout.
+## Unloaded stop and fault behavior
 
-## Still excluded
+Stop/fault turns saw valve OFF (requests UP), **releases the clamp**, locks blade
+trigger OFF and cancels the sequence. Holding torque is retained. Stop waits for
+UP or faults after five seconds. Recovery never arms or resumes; recover the
+physical condition, acknowledge, re-confirm preparation and Home if reference
+was invalidated. This release policy is specific to **no-stock tests**; it does
+not authorize real stock or describe a safe power/air-loss result.
 
-Blade operation; real cutting; production Auto/Full Auto; claiming grip from time;
-inheriting the simulator's three-inch clamp rule; automatic retry/resume; assuming
-retention on air/power loss. These need separate design and acceptance work.
+Firmware enforces exclusion with carriage pulses, real endpoints, door/alarm
+faults, 1500 ms heartbeat, 60 s maximum clamp ON, 15 s maximum saw valve ON and
+configured travel deadlines. The app validates identity, fresh readbacks,
+timing hash/configuration and request acknowledgments. Missing or contradictory
+feedback blocks advancement. Timed clamp settling is not grip feedback.
+Independent guarding and hazardous-energy controls remain necessary.
+
+## Offline verification and artifacts
+
+- Eight actual-firmware host suites and motion-record replay into Qt.
+- Actual sketch to main-app integration: Home, Manual actions, real-input edge
+  capture, truing, two list items, FAST return, blade lock, stop/stale/config/
+  readback guards. No carriage pulses while clamped.
+- Existing carriage, keypad, health, timing, boundary and simulator regressions.
+- Teensy 4.1 compile completed; no upload or physical commands sent.
+- Prepared build: `tmp/commissioning/0.16.0`; rollback: `tmp/commissioning/0.15.0`.
+  Manifest records matching source revision and hashes. Local artifacts are
+  not a GitHub backup or published release.
+
+Physical results remain unchecked in the [master checklist](../TEENSY_APP_MIGRATION_CHECKLIST.md).

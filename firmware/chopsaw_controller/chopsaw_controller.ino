@@ -15,10 +15,11 @@
 #include "positioning.h"
 #include "motion_profile.h"
 #include "edge_search.h"
+#include "dry_run.h"
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.15.0";
+constexpr char FIRMWARE_VERSION[] = "0.16.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -59,6 +60,7 @@ char commandBuffer[64];
 size_t commandLength = 0;
 bool discardCommand = false;
 bench::Interlocks interlocks;
+unloaded::DryRun dry;
 bool &outputsArmed = interlocks.armed;
 bool (&outputStates)[OUTPUT_COUNT] = interlocks.outputs;
 enum class TestMode { None, Pneumatic, Stepper, Homing, Edge };
@@ -98,15 +100,17 @@ uint32_t xLastStepAt = 0;
 void publishOutputs();
 void publishSafety();
 void publishX();
+void publishDry();
 
 // Teensy USB writes can wait when the host stops reading. During armed motion,
 // reserve enough room for a whole record rather than blocking the pulse loop.
 // See teensy4/usb_serial.h availableForWrite() timing guidance.
 bool telemetryRoom(unsigned bytes) {
-  return !outputsArmed || Serial.availableForWrite() >= static_cast<int>(bytes);
+  return !(outputsArmed || dry.armed) || Serial.availableForWrite() >= static_cast<int>(bytes);
 }
 
 void stopTests() {
+  if (dry.active()) dry.stop(millis());
   if (xHoming.active()) { xPositionKnown = false; xHoming.cancel(); }
   xEdge.cancel(); xEdgeValid = false;
   xRemaining = 0; xAbsoluteMove = false;
@@ -117,17 +121,19 @@ void stopTests() {
 }
 
 bool xReady() {
-  return xConfigured && digitalRead(HOME_PIN) == HIGH &&
+  return !dry.active() && !dry.failed() && xConfigured && digitalRead(HOME_PIN) == HIGH &&
          digitalRead(CL57T_ALARM_PIN) == xAlarmNormal && interlocks.readyToArm();
 }
 
 void applyOutputs() {
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
-    digitalWrite(OUTPUT_PINS[index], outputStates[index] ? HIGH : LOW);
+    const bool on = index == 2 ? false : dry.active() ? (index == 0 ? dry.saw : dry.clamp) : outputStates[index];
+    digitalWrite(OUTPUT_PINS[index], on ? HIGH : LOW);
   }
 }
 
 void commandFault() {
+  if (dry.active()) dry.trip("DRY_COMMAND",millis());
   xPositionKnown = false; xHoming.cancel();
   xEdge.cancel(); xEdgeValid = false;
   xRemaining = 0; xAbsoluteMove = false;
@@ -138,6 +144,8 @@ void commandFault() {
 }
 
 void updateSafety() {
+  dry.tick(digitalRead(FENCE_DOOR_PIN)==LOW, digitalRead(SAW_UP_PIN)==LOW,
+           digitalRead(SAW_DOWN_PIN)==LOW, digitalRead(CL57T_ALARM_PIN)==HIGH, millis());
   const bool wasArmed = outputsArmed;
   const bench::Fault previousFault = interlocks.fault;
   const bench::Travel previousTravel = interlocks.travel;
@@ -154,7 +162,7 @@ void updateSafety() {
     else if (testMode != TestMode::Homing && digitalRead(HOME_PIN) == LOW)
       interlocks.trip(bench::Fault::HomeLimit, millis());
   }
-  if (interlocks.fault != bench::Fault::None) xPositionKnown = false;
+  if (interlocks.fault != bench::Fault::None || dry.failed()) xPositionKnown = false;
   if (!xPositionKnown || digitalRead(BOARD_EDGE_PIN) == HIGH) xEdgeValid = false;
   if (!outputsArmed) xEdge.cancel();
   if (!outputsArmed) { xHoming.cancel(); testMode = TestMode::None; xRemaining = 0; xAbsoluteMove = false; }
@@ -235,7 +243,7 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V9,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V10,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,DRY_RUN:UNLOADED_V1,BLADE_LOCK:1");
 }
 
 void publishPinMap() {
@@ -251,15 +259,28 @@ void publishPinMap() {
 void publishOutputs() {
   if (!telemetryRoom(256)) return;
   Serial.print("BENCH_OUTPUTS,ARMED:");
-  Serial.print(outputsArmed && testMode == TestMode::Pneumatic ? 1 : 0);
+  Serial.print(dry.armed || (outputsArmed && testMode == TestMode::Pneumatic) ? 1 : 0);
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
     Serial.print(",CLAMP");
     Serial.print(index + 1);
     Serial.print(':');
-    Serial.print(outputStates[index] ? 1 : 0);
+    Serial.print(digitalRead(OUTPUT_PINS[index]) == HIGH ? 1 : 0);
   }
   Serial.print(",FAULT:");
-  Serial.println(interlocks.faultName());
+  Serial.println(dry.failed() ? dry.fault : interlocks.faultName());
+}
+
+void publishDry() {
+  if (!telemetryRoom(256)) return;
+  Serial.print("BENCH_DRY,PROTO:1,CFG:"); Serial.print(dry.configId);
+  Serial.print(",HASH:"); Serial.print(dry.timingHash);
+  Serial.print(",REQ:"); Serial.print(dry.requestId);
+  Serial.print(",ARMED:"); Serial.print(dry.armed ? 1 : 0);
+  Serial.print(",STATE:"); Serial.print(dry.name());
+  Serial.print(",CLAMP:"); Serial.print(dry.clamp ? 1 : 0);
+  Serial.print(",SAW:"); Serial.print(dry.saw ? 1 : 0);
+  Serial.print(",TRIGGER:0,LOCK:1,FAULT:"); Serial.print(dry.fault);
+  Serial.print(",UP_MS:"); Serial.println(millis());
 }
 
 void publishSafety() {
@@ -269,13 +290,13 @@ void publishSafety() {
   Serial.print(",SAW_POSITION:");
   Serial.print(interlocks.position());
   Serial.print(",READY:");
-  Serial.print(interlocks.readyToArm() ? 1 : 0);
+  Serial.print(!dry.active() && !dry.failed() && interlocks.readyToArm() ? 1 : 0);
   Serial.print(",RESET_READY:");
-  Serial.print(interlocks.readyToReset() ? 1 : 0);
+  Serial.print(!dry.active() && interlocks.readyToReset() ? 1 : 0);
   Serial.print(",FAULT:");
-  Serial.print(interlocks.faultName());
+  Serial.print(dry.failed() ? dry.fault : interlocks.faultName());
   Serial.print(",BLOCKER:");
-  Serial.println(interlocks.blocker());
+  Serial.println(dry.failed() ? dry.fault : dry.active() ? "DRY_RUN_ACTIVE" : interlocks.blocker());
 }
 
 void publishX() {
@@ -325,7 +346,7 @@ void publishX() {
   Serial.print(",TRIM_MILLI:"); Serial.print(xTrimMilli);
   Serial.print(",CAL_SPI:127.12,MOVE_ID:"); Serial.print(xMoveId);
   Serial.print(",UP_MS:"); Serial.print(millis());
-  Serial.print(",FAULT:"); Serial.println(interlocks.faultName());
+  Serial.print(",FAULT:"); Serial.println(dry.failed() ? dry.fault : interlocks.faultName());
 }
 
 void publishInputs() {
@@ -426,16 +447,54 @@ void publishI2cScan() {
 
 void publishStatus() {
   publishHello();
-  if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishHealth();
+  if (!outputsArmed && !dry.active() && interlocks.travel == bench::Travel::Idle) publishHealth();
   publishInputs();
-  if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishMcp();
+  if (!outputsArmed && !dry.active() && interlocks.travel == bench::Travel::Idle) publishMcp();
   publishOutputs();
   publishSafety();
   publishX();
+  publishDry();
 }
 
 bool startsWith(const char *text, const char *prefix) {
   return strncmp(text, prefix, strlen(prefix)) == 0;
+}
+
+bool unsignedArgs(const char *text, const char *prefix, unsigned count, uint32_t *values) {
+  if (!startsWith(text,prefix)) return false;
+  const char *p=text+strlen(prefix);
+  for (unsigned i=0;i<count;++i) {
+    if (i && *p++ != ' ') return false;
+    if (*p<'0' || *p>'9') return false;
+    uint32_t value=0;
+    while (*p>='0' && *p<='9') {
+      const unsigned digit=static_cast<unsigned>(*p-'0');
+      if (value > (UINT32_MAX-digit)/10u) return false;
+      value=value*10+digit; ++p;
+    }
+    values[i]=value;
+  }
+  return *p=='\0';
+}
+
+bool handleDryCommand(const char *command) {
+  const bool dryCommand = startsWith(command,"DSET ") || startsWith(command,"DCOMMIT ") ||
+      startsWith(command,"DARM ") || startsWith(command,"DCLAMP ") || strcmp(command,"DCYCLE")==0 ||
+      strcmp(command,"DDOWN")==0 || strcmp(command,"DUP")==0 || strcmp(command,"DOFF")==0;
+  if (!dryCommand) return false;
+  bool accepted=false;
+  uint32_t args[2]={0,0};
+  if (strcmp(command,"DOFF")==0) { stopTests(); accepted=true; }
+  else if (outputsArmed || xRemaining || interlocks.travel != bench::Travel::Idle || interlocks.fault != bench::Fault::None) {}
+  else if (startsWith(command,"DSET ")) accepted=unsignedArgs(command,"DSET ",2,args) && dry.configure(args[0],args[1]);
+  else if (startsWith(command,"DCOMMIT ")) accepted=unsignedArgs(command,"DCOMMIT ",1,args) && dry.commit(args[0]);
+  else if (startsWith(command,"DARM ")) accepted=unsignedArgs(command,"DARM ",1,args) && dry.arm(args[0],millis());
+  else if (startsWith(command,"DCLAMP ")) accepted=unsignedArgs(command,"DCLAMP ",1,args) && args[0]<=1 && dry.commandClamp(args[0]==1,millis());
+  else if (strcmp(command,"DCYCLE")==0 || strcmp(command,"DDOWN")==0) accepted=dry.stroke(strcmp(command,"DCYCLE")==0,millis());
+  else if (strcmp(command,"DUP")==0) accepted=dry.returnUp(millis());
+  if (!accepted) Serial.println("BENCH_ERROR,CODE:DRY_REQUEST_REJECTED");
+  applyOutputs(); publishDry(); publishSafety(); publishX();
+  return true;
 }
 
 void __attribute__((noinline)) handleCommand(char *command) {
@@ -443,6 +502,12 @@ void __attribute__((noinline)) handleCommand(char *command) {
   updateSafety();
   for (char *cursor = command; *cursor; ++cursor) {
     *cursor = toupper(*cursor);
+  }
+  if (handleDryCommand(command)) return;
+  if ((dry.active() || dry.failed()) && strcmp(command,"HELLO") && strcmp(command,"PINMAP") &&
+      strcmp(command,"STATUS") && strcmp(command,"PING") && strcmp(command,"KEEPALIVE") &&
+      strcmp(command,"OFF") && strcmp(command,"RESET") && strcmp(command,"XARM 0") && strcmp(command,"ARM 0")) {
+    Serial.println("BENCH_ERROR,CODE:DRY_MODE_ACTIVE"); publishDry(); return;
   }
   if (strcmp(command, "HELLO") == 0) {
     publishHello();
@@ -470,18 +535,24 @@ void __attribute__((noinline)) handleCommand(char *command) {
     publishOutputs();
     publishSafety();
   } else if (strcmp(command, "RESET") == 0) {
+    if ((dry.failed() || dry.active()) && !dry.reset(millis())) {
+      Serial.println("BENCH_ERROR,CODE:DRY_RESET_NOT_READY"); publishDry(); return;
+    }
     if (!interlocks.reset()) Serial.println("BENCH_ERROR,CODE:RESET_NOT_READY");
     applyOutputs();
     publishOutputs();
     publishSafety();
+    publishDry();
   } else if (strcmp(command, "ARM 0") == 0 || strcmp(command, "OFF") == 0) {
     stopTests();
     applyOutputs();
     publishOutputs();
     publishSafety();
     publishX();
+    publishDry();
   } else if (strcmp(command, "KEEPALIVE") == 0) {
     interlocks.keepalive(millis());
+    dry.keepalive(millis());
   } else if (startsWith(command, "OUT ")) {
     int output = -1;
     int state = -1;
@@ -493,6 +564,7 @@ void __attribute__((noinline)) handleCommand(char *command) {
       publishOutputs();
       return;
     }
+    if (output == 2 && state == 1) { Serial.println("BENCH_ERROR,CODE:BLADE_LOCKED"); applyOutputs(); return; }
     const char *error = state == 1 && (testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge) ? "STEPPER_MODE_ACTIVE" :
       interlocks.requestOutput(static_cast<uint8_t>(output), state == 1, millis());
     applyOutputs();
@@ -522,6 +594,7 @@ void __attribute__((noinline)) handleCommand(char *command) {
       xConfigured = false; xPositionKnown = false;
     }
     publishX();
+    publishDry();
   } else if (strcmp(command, "XARM 1") == 0) {
     if (!xReady() || !interlocks.arm(millis())) {
       Serial.println("BENCH_ERROR,CODE:X_NOT_READY");
@@ -885,10 +958,11 @@ void loop() {
     publishInputs();
     publishSafety();
     publishX();
-    if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishMcp();
+    publishDry();
+    if (!outputsArmed && !dry.active() && interlocks.travel == bench::Travel::Idle) publishMcp();
   }
   if (now - lastHealthAt >= HEALTH_INTERVAL_MS) {
     lastHealthAt = now;
-    if (!outputsArmed && interlocks.travel == bench::Travel::Idle) publishHealth();
+    if (!outputsArmed && !dry.active() && interlocks.travel == bench::Travel::Idle) publishHealth();
   }
 }

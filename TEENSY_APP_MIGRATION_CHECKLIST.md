@@ -1,8 +1,9 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-09. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Active firmware: custom **0.15.0** in `firmware/chopsaw_controller`, flashed
-and read back on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
+Prepared source/build: custom **0.16.0 / CARRIAGE_V10**, unloaded cut-list mode.
+Not flashed or physically accepted yet. Last deployed **0.15.0** was read back
+on COM4 on 2026-11-08 after operator confirmed app closed/driver OFF.
 Homing and motion profiles are operator-confirmed working. Restored AUTO controls
 and board-edge geometry still need their specific physical tests.
 Rollback sources: `e51f14f` (pre-AUTO, firmware 0.14.0) and `cab3a16` (0.11.0).
@@ -15,7 +16,7 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 Record outstanding physical responses in the [fault acceptance matrix](docs/TEENSY_FAULT_ACCEPTANCE_MATRIX.md).
-Current build **0.15.0** has editable pulse rate/acceleration and recovered
+Deployed baseline **0.15.0** has editable pulse rate/acceleration and recovered
 MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Actual board rate-edit
 readback passed without enabling or moving; matching app reopened disarmed.
 
@@ -93,10 +94,9 @@ readback passed without enabling or moving; matching app reopened disarmed.
       release phases, applies saw/trigger waits, and cancels pending actions on
       Stop/disconnect. Tests cover independent timings, migration, persistence,
       cancellation, phase bypass prevention and native automatic-cut lockout.
-- [ ] Native automatic pneumatic sequence, timing transfer, feedback watchdogs,
-      measured clamp eligibility and fault retention/release remain uncommissioned.
-      Planned confirmation/travel limits are saved only; they do not change
-      Sensor Bench/manual firmware guards. No firmware change or flash in this pass.
+- [x] Prepare 0.16.0 unloaded native timing transfer/readback, held-clamp/saw
+      sequencing and endpoint watchdogs. Clamp grip/eligibility feedback remains
+      deferred. Production cutting remains blocked; physical acceptance pending.
 - [x] MANUAL / Manual Machine Controls UI: main clamp/release, saw lower/return,
       trigger press/release, combined manual saw cycle and Stop. Simulator uses
       shared timing snapshots, keeps the clamp after a normal cut, requires
@@ -105,20 +105,30 @@ readback passed without enabling or moving; matching app reopened disarmed.
 - [x] Test independent manual functions, combined cut, retained clamp, timing,
       Stop/disconnect/stale-data cancellation, native source-level lockout and
       regression of the existing simulated Auto cycle. Left Manual column scrolls.
-- [ ] Enable these controls on real Teensy hardware only after a controller-owned
-      combined pneumatic protocol, interlocks/feedback and fault/clamp-retention
-      policy are implemented and physically accepted. Current manual-test firmware
-      permits one pneumatic output at a time and cannot hold a clamp while cycling
-      saw/trigger. Main-app native actuator controls remain disabled.
+- [x] Add native Manual clamp/release, lower/return and unloaded saw cycle, gated
+      by matching 0.16.0 identity, timing ACK, fresh feedback and explicit consent.
+      Blade trigger remains locked OFF. Normal stroke retains clamp; unloaded
+      Stop/fault releases it. Separate production retention policy still needed.
+- [ ] Flash/read back and physically accept the new unloaded Manual controls.
 
 ## Next session - remaining work
 
-Read [tonight's unloaded readiness audit](docs/TONIGHT_DRY_RUN.md). On 2026-11-09
+Read [tonight's unloaded procedure](docs/TONIGHT_DRY_RUN.md). On 2026-11-09
 the operator confirmed main clamp ON holds/OFF releases; testing has no stock,
 saw mains unplugged and blade-trigger output disabled. The 0.15.0 baseline
-artifact/source hashes and all seven firmware host suites plus 55 motion-record
-replays were verified. Combined native pneumatic firmware and no-stock cut-list
-stepping are **not yet prepared**; the P0 queue makes those gaps explicit.
+artifact/source hashes were verified. The combined **0.16.0 app/firmware is now
+prepared and compiled**, with eight host suites, 55 motion-record replays and
+actual-sketch/Qt two-item cut-list integration passing. No hardware accessed.
+
+- [x] Implement controller-owned unloaded sequence and hard-lock Flood/D19 OFF.
+- [x] Transfer bounded timing snapshot with configuration token/hash and phase/
+      request acknowledgments; reject stale/conflicting readbacks.
+- [x] Add separate AUTO unloaded cut-list runner: real manually tripped Limit Y
+      detection, captured truing, held clamp/saw DOWN/UP, feed lengths+kerf and
+      stored FAST Load return. Production list progress is preserved.
+- [x] Check no carriage pulses while clamped, stop/stale/no-retry boundaries,
+      real endpoint timeouts and simulator regression; compile Teensy 4.1 HEX.
+- [ ] Flash 0.16.0 and perform physical unloaded acceptance tonight.
 
 - [x] Correct health display so ALREADY_ARMED is not mistaken for a feedback fault;
       arming remains separate from healthy telemetry.
@@ -128,8 +138,10 @@ stepping are **not yet prepared**; the P0 queue makes those gaps explicit.
 - [ ] Accept board-edge detection, captured offset/truing geometry and stock handling.
 - [ ] Acquire/install/verify 1N4007 coil suppression, polarity and branch fuses;
       accept individual pneumatic outputs with saw mains unplugged.
-- [ ] Define clamp retention/fault behavior, then integrate pneumatic/saw sequencing
-      and automatic cut-list completion/recovery. Cycle Start stays unavailable meanwhile.
+- [x] Define unloaded-only fault behavior: saw OFF/UP, clamp OFF/released, blade
+      locked OFF; cancel sequence, no automatic retry or resumption.
+- [ ] Define production grip/coverage/retention and cutting recovery. Production
+      Cycle Start remains unavailable; use the separate unloaded-test control.
 - [ ] Finish remaining physical fault tests, release documentation and GitHub backup.
 
 Absolute/load moves use the referenced range, not the two-inch jog allowance.
@@ -263,13 +275,15 @@ absolute speeds, and Load selects stored FAST. Checklist refresh never moves har
       decide safe fault and air-loss behavior before automatic combined cycles.
 - [ ] Validate small trigger cylinder fully releases original switch on OFF; preserve
       factory brake function. No blade-powered acceptance is implied by dry runs.
-- [ ] Add main-app pneumatic mode and controller output/completion acknowledgments
-      after individual hardware acceptance. Do not reuse colliding MEGA C commands.
+- [x] Prepare main-app unloaded pneumatic mode with controller-owned phases,
+      output/completion acknowledgments and mutually exclusive carriage control.
+- [ ] Accept its individual and combined physical behavior after suppression checks.
 - [x] Implement bounded board-edge detection, captured offset/truing proposal
       and existing load positions in prepared source.
 - [ ] Accept those positions physically and complete safe stock return/loading policy.
-- [ ] Migrate cut-list sequencing to explicit motion and mechanism completion events;
-      door/UP/clamp permissions and timeouts at each transition. No blind timed advance.
+- [x] Prepare unloaded cut-list sequencing with motion/mechanism acknowledgments,
+      door/UP checks and timeouts. Clamp state is commanded, not verified grip.
+- [ ] Add production stock eligibility/grip policy before live cut-list cutting.
 - [ ] Validate carriage/stock/blade/clamp collision envelope; reconsider early return.
 - [ ] Dry run one complete cycle, then multiple boards, with blade power disconnected.
 

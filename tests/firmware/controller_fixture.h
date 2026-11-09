@@ -20,6 +20,7 @@ void command(const std::string &line) {
 }
 void restart() {
   interlocks = bench::Interlocks{};
+  dry = unloaded::DryRun{};
   commandLength = 0; discardCommand = false; testMode = TestMode::None;
   xConfigured = xHomeSeenActive = xHomeVerified = false;
   xHomeActive = bench::StableAssertion{}; xHomeInactive = bench::StableAssertion{};

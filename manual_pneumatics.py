@@ -24,6 +24,8 @@ class ManualPneumatics(QGroupBox):
         self.status.setWordWrap(True)
         self.status.setStyleSheet('color:#fbbf24; font-size:14px;')
         layout.addWidget(self.status, 0, 0, 1, 4)
+        self.native_controls = owner.dry_run.controls()
+        layout.addWidget(self.native_controls, 1, 0, 1, 4)
         self.labels = {}
         self.buttons = {}
         rows = (
@@ -31,7 +33,7 @@ class ManualPneumatics(QGroupBox):
             ('travel', 'Saw travel', ('lower','Lower'), ('up','Return UP')),
             ('trigger', 'Blade trigger', ('press','Press trigger'), ('unpress','Release trigger')),
         )
-        for row, (key, title, first, second) in enumerate(rows, 1):
+        for row, (key, title, first, second) in enumerate(rows, 2):
             layout.addWidget(QLabel(title), row, 0)
             self.labels[key] = QLabel('UNKNOWN')
             self.labels[key].setStyleSheet('font-size:13px; color:#94a3b8;')
@@ -48,16 +50,16 @@ class ManualPneumatics(QGroupBox):
         self.cycle_button.setStyleSheet('QPushButton { background:#166534; color:#e2e8f0; font-size:17px; }' + disabled)
         self.cycle_button.setEnabled(False)
         self.cycle_button.clicked.connect(lambda: self.request('cycle'))
-        layout.addWidget(self.cycle_button, 4, 0, 1, 3)
+        layout.addWidget(self.cycle_button, 5, 0, 1, 3)
         self.stop_button = QPushButton('STOP')
         self.stop_button.setMinimumHeight(48)
         self.stop_button.setStyleSheet('QPushButton { background:#b91c1c; color:white; font-weight:bold; }' + disabled)
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop)
-        layout.addWidget(self.stop_button, 4, 3)
-        note = QLabel('Normal saw cycle keeps the main clamp engaged. Release it explicitly after the cut. Future clamps are not configured here yet.')
-        note.setWordWrap(True); note.setStyleSheet('color:#94a3b8; font-size:13px;')
-        layout.addWidget(note, 5, 0, 1, 4)
+        layout.addWidget(self.stop_button, 5, 3)
+        self.note = QLabel('Normal saw cycle keeps the main clamp engaged. Release it explicitly after the cut.')
+        self.note.setWordWrap(True); self.note.setStyleSheet('color:#94a3b8; font-size:13px;')
+        layout.addWidget(self.note, 6, 0, 1, 4)
         self.timer = QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self.refresh)
@@ -78,6 +80,7 @@ class ManualPneumatics(QGroupBox):
 
     def motion_locked(self):
         sim = self.simulator()
+        if not sim: return self.owner.dry_run.motion_locked()
         return bool(sim and (self.phase or self.owner.clamp_left_engaged or sim.blade_pressed or not sim.saw_up))
 
     def wait(self, ms, callback):
@@ -95,6 +98,8 @@ class ManualPneumatics(QGroupBox):
 
     def request(self, action):
         self.refresh()
+        if not self.simulator():
+            return self.owner.dry_run.request(action) if action not in ('press','unpress') else False
         if not self.available() or self.phase:
             return False
         sim = self.simulator()
@@ -170,6 +175,9 @@ class ManualPneumatics(QGroupBox):
 
     def stop(self):
         sim = self.simulator()
+        if not sim:
+            if not self.owner.dry_run.native() or not self.owner.dry_run.compatible: return False
+            self.owner.dry_run.stop(); return True
         if (not sim or getattr(self.owner, '_simulation_pneumatic_pending', False)
                 or self.owner.auto_cycle_state not in ('IDLE','FINISHED','WAITING_FOR_NEW_BOARD')):
             return False
@@ -182,6 +190,28 @@ class ManualPneumatics(QGroupBox):
 
     def refresh(self):
         sim = self.simulator()
+        self.native_controls.setVisible(not bool(sim))
+        if not sim:
+            # Revoke delayed simulator callbacks on disconnect/mode change too.
+            if self.session is not None or self.phase:
+                self.token += 1; self.session = None; self.phase = ''; self.clamp_settled = False
+            native=self.owner.dry_run
+            commands={'engage':'DCLAMP 1','release':'DCLAMP 0','lower':'DDOWN','up':'DUP'}
+            for action,button in self.buttons.items(): button.setEnabled(native.allowed(commands.get(action,'')))
+            self.cycle_button.setText('Unloaded Saw Cycle')
+            self.cycle_button.setEnabled(native.allowed('DCYCLE'))
+            self.stop_button.setText('Stop / release')
+            self.stop_button.setEnabled(native.native() and native.compatible)
+            fresh=native.fresh()
+            self.labels['clamp'].setText(('ON commanded' if native.data.get('CLAMP')=='1' else 'OFF commanded') if fresh else 'UNKNOWN')
+            self.labels['travel'].setText(self.owner.carriage_tab.safety.get('SAW_POSITION','UNKNOWN') if fresh else 'UNKNOWN')
+            self.labels['trigger'].setText('LOCKED OFF' if native.compatible else 'UNKNOWN')
+            self.status.setText(native.message if native.compatible else 'Requires matching unloaded-test firmware 0.16.0. No hardware outputs are enabled here.')
+            self.note.setText('Unloaded tests only: saw mains unplugged, no stock. Trigger output stays OFF. Stop/fault releases the clamp; a normal stroke retains it.')
+            self.state_changed.emit()
+            return
+        self.cycle_button.setText('Manual Saw Cycle'); self.stop_button.setText('STOP')
+        self.note.setText('Normal saw cycle keeps the main clamp engaged. Release it explicitly after the cut.')
         session = (self.owner.ser, self.owner.cycle_generation)
         if session != self.session:
             self.session = session

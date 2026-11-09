@@ -1,7 +1,8 @@
 # Controller protocol
 
-Updated 2026-11-08. Active main-app controller firmware **0.15.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V9. 115200 baud,
+Updated 2026-11-09. Prepared main-app controller firmware **0.16.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V10. Not flashed yet;
+last deployed baseline is 0.15.0. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
@@ -30,15 +31,16 @@ Main-app motion requires all of:
 
 ```
 PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
-X_APP:CARRIAGE_V9,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
+X_APP:CARRIAGE_V10,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
 INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
-INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:VALVES_ISOLATED,CAL_SPI:127.12
+INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,CAL_SPI:127.12
 MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY
 HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
 ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1
+DRY_RUN:UNLOADED_V1,BLADE_LOCK:1
 ```
 
-Active firmware version is 0.15.0. Reads HELLO, PINMAP and STATUS are sent on
+Prepared firmware version is 0.16.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.
@@ -130,10 +132,53 @@ Pneumatic and Stepper modes are mutually exclusive. Stop retains ENA; release
 motor holding torque is an explicit separate action, not a safety disconnect.
 Do not infer a safe mechanical result on power/air loss from these software flags.
 
-Pneumatic testing additionally enforces one output at a time, 5s maximum ON,
+Legacy ARM/OUT pneumatic testing enforces one output at a time, 5s maximum ON,
 and down/return timeouts. RESET never clears an unsafe condition or arms.
 Suppression, fusing, guarding and independent hazardous-energy controls remain
-hardware requirements. No pneumatic or blade ON is exposed by the main app yet.
+hardware requirements. New unloaded Manual/Auto controls use the separate
+acknowledged protocol below; blade ON remains unavailable in every mode.
+
+## Unloaded pneumatic extension (prepared 0.16.0)
+
+Exact FW 0.16.0, DRY_RUN:UNLOADED_V1 and BLADE_LOCK:1 are also required by the
+app. OUT 0=D33 saw, OUT 1=D32 main clamp; D19 is always driven LOW. These are
+physical channel indices, not virtual clamp IDs. Production cutting is excluded.
+
+| Command | Meaning |
+|---|---|
+| DSET index milliseconds | Stage one timing (0..10); index 0 clears draft/config token. Disarmed, UP/door/alarm healthy, carriage idle only |
+| DCOMMIT nonzero-token | Commit complete 11-field snapshot; report token and FNV-1a32 hash over uint32 little-endian fields |
+| DARM token | Explicit arm, no valve ON; matching committed token and safe UP required |
+| DCLAMP 1 / DCLAMP 0 | Engage/settle or release/clearance; release requires settled UP |
+| DCYCLE / DDOWN | One automatic DOWN/UP stroke or lower-and-hold; settled commanded clamp required |
+| DUP | Return UP during a stroke; cannot queue/repeat strokes |
+| DOFF / OFF | Cancel, disarm, release clamp, request saw UP; retain carriage holding torque |
+| KEEPALIVE | 1500 ms firmware watchdog while armed |
+
+Timing indices: board.settle, main.engage_delay, main.engage_settle,
+main.release_delay, main.release_clearance, saw.down_delay, saw.down_timeout,
+saw.bottom_dwell, saw.up_delay, saw.up_timeout, saw.up_settle. All 0..5000 ms;
+travel timeouts minimum 100 ms. Additional clamp/trigger fields are not loaded.
+
+```
+BENCH_DRY,PROTO:1,CFG:123,HASH:456,REQ:7,ARMED:1,STATE:CLAMPED,CLAMP:1,SAW:0,TRIGGER:0,LOCK:1,FAULT:NONE,UP_MS:12000
+```
+
+REQ increments on accepted arm/action/stop; configuration is acknowledged by
+CFG and HASH. App never substitutes elapsed PC time for completion. States:
+OFF, READY, CLAMP_DELAY, CLAMP_SETTLE, CLAMPED, RELEASE_DELAY, RELEASE_CLEAR,
+DOWN_DELAY, DESCEND, DOWN, DWELL, UP_DELAY, RETURN, UP_SETTLE, STOP_RETURN, FAULT.
+BENCH_OUTPUTS now reports effective GPIO states, including unloaded outputs.
+BENCH_SAFETY has BLOCKER:DRY_RUN_ACTIVE while the unloaded engine owns control.
+
+Normal stroke retains clamp. Unloaded Stop/fault releases it and requests UP;
+StopReturn waits up to 5 s for UP. Door/alarm, contradictory/lost endpoints,
+configured travel deadline, watchdog, 60 s clamp ON or 15 s saw ON latch faults.
+Fault invalidates Home; recovery is explicit and never resumes. While this
+mode is active/faulted, carriage and legacy output commands cannot start.
+Fresh app phase/output consistency, timing/config and action ACKs are required.
+See [operator procedure](TONIGHT_DRY_RUN.md); no-stock policy is not a production
+stock-retention or power/air-loss safety policy.
 
 ## Bounded homing extension
 
