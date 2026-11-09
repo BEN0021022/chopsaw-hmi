@@ -62,7 +62,9 @@ def run():
         w.set_controls_enabled(True)
         p = w.carriage_tab
         assert p.connected
-        assert not w.legacy_tab.isEnabled() and not w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
+        assert w.legacy_tab.isEnabled() and not w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
+        assert w.enable_chk.isHidden() and w.pid_chk.isHidden() and w.near_cal_btn.isHidden()
+        assert w.manual_motor_params.isHidden() and not w.manual_home_button.isEnabled()
         assert not w.active_controller().capabilities.automatic_cycle_ready
         assert not w.active_controller().capabilities.manual_motion_ready
         assert w.active_controller().capabilities.carriage_jog_ready
@@ -305,6 +307,83 @@ def run():
         ready(p); p.consent.setChecked(True)
         packet(p, **dict(edge_fields,TRUING_MILLI=149738))
         assert p.local_fault == "Invalid board-edge telemetry"
+
+        # Manual tab shares consent/setup/Home/arm/stop and remains on that tab.
+        ready(p)
+        w.tabs.setCurrentWidget(w.legacy_tab)
+        assert w.position_label.text() == 'UNKNOWN'
+        assert not w.manual_home_button.isEnabled() and not w.manual_go.isEnabled()
+        w.manual_isolation.setChecked(True)
+        assert p.consent.isChecked() and w.manual_configure.isEnabled()
+        w.manual_configure.click()
+        assert wire.writes[-1] == 'XCONFIG 0 1'
+        packet(p,CONFIGURED=1,READY=1,HOME_RAW=0)
+        assert w.manual_home_button.isEnabled(), 'Manual Home may release an already active sensor'
+        w.manual_home_search.setValue(0.5)
+        assert p.home_search.value() == 0.5
+        w.manual_home_button.click()
+        assert wire.writes[-1] == 'XHOME 64' and w.tabs.currentWidget() == w.legacy_tab
+        packet(p,ARMED=1,CONFIGURED=1,HOME_RAW=0,HOME_STATE='RELEASE',MOVE_ID=1,JOG_READY=0)
+        assert not w.manual_home_button.isEnabled() and not w.manual_home_search.isEnabled()
+        w.manual_stop.click(); assert wire.writes[-1] == 'OFF'
+        packet(p,CONFIGURED=1,HOME_STATE='CANCELLED')
+        p.home_search.setValue(2)
+        assert w.manual_home_search.value() == 2
+
+        packet(p,CONFIGURED=1,READY=1,POS_KNOWN=1,HOME_OFFSET=-14,HOME_STATE='DONE')
+        assert w.target_input.value() == 160.389, 'Manual defaults to referenced current position'
+        w.manual_arm.click(); assert wire.writes[-1] == 'XARM 1'
+        packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-14,HOME_STATE='DONE')
+        w.rel_input.setValue(-0.25); w.manual_jog.click()
+        assert wire.writes[-1] == 'XJOG -1 32'
+        assert not w.manual_jog.isEnabled(), 'Manual cannot queue over the native pending move'
+        packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE',MOVE_ID=2)
+        w.target_input.setValue(159)
+        assert w.manual_go.isEnabled()
+        w.manual_go.click()
+        assert wire.writes[-1] == 'XMOVE 159000', 'Clicked bool must not become target zero'
+        w.manual_stop.click()
+        packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE')
+
+        # Settings use controller RAM, preserve unsent drafts and wait for ACK.
+        ready(p); p.consent.setChecked(True)
+        assert w.norm_speed.value() == 1000 and w.gentle_speed.value() == 150
+        w.tabs.setCurrentWidget(w.speed_tab)
+        w.settings_profile_combo.setCurrentIndex(w.settings_profile_combo.findData('FAST'))
+        before=len(wire.writes)
+        w.fast_speed.setValue(3500); w.fast_accel.setValue(1500)
+        assert len(wire.writes)==before and 'UNAPPLIED' in w.settings_profile_feedback.text()
+        packet(p)
+        assert w.fast_speed.value()==3500, 'Periodic old telemetry cannot erase an unapplied draft'
+        w.apply_profile_btn.click()
+        assert wire.writes[-1]=='XPROFILE 3 3500 1500' and p.profile_pending
+        assert not w.apply_profile_btn.isEnabled() and not w.fast_speed.isEnabled()
+        assert not w.manual_home_button.isEnabled()
+        assert w.active_profile_name=='COMMISSIONING', 'No optimistic profile application'
+        packet(p,PROFILE_ID=3,RATE_PPS=3500,ACCEL_PPS2=1500,PROFILE_RATE3=3500,PROFILE_ACCEL3=1500)
+        assert p.profile_pending is None and w.active_profile_name=='FAST'
+        assert p.rate_input.value()==3500 and not w._teensy_settings_dirty
+        assert '3500 pulses/s' in w.settings_profile_feedback.text()
+        p.profile_combo.setCurrentIndex(p.profile_combo.findData(2))
+        p.rate_input.setValue(1800); p.accel_input.setValue(900); p.profile_apply.click()
+        assert wire.writes[-1]=='XPROFILE 2 1800 900'
+        packet(p,PROFILE_ID=2,RATE_PPS=1800,ACCEL_PPS2=900,PROFILE_RATE2=1800,PROFILE_ACCEL2=900,
+               PROFILE_RATE3=3500,PROFILE_ACCEL3=1500)
+        assert w.norm_speed.value()==1800 and w.norm_accel.value()==900
+        assert w.settings_profile_combo.currentData()=='NORMAL'
+        packet(p,ARMED=1,CONFIGURED=1,PROFILE_ID=2,RATE_PPS=1800,ACCEL_PPS2=900,
+               PROFILE_RATE2=1800,PROFILE_ACCEL2=900)
+        assert not w.norm_speed.isEnabled() and not w.apply_profile_btn.isEnabled()
+        assert not w.home_motor(), 'Manual handler cannot bypass disarmed homing requirement'
+        p.received['X']-=3; p.refresh()
+        assert not w.manual_home_button.isEnabled() and not w.apply_profile_btn.isEnabled()
+        assert w.homed_label.text()=='NOT HOMED'
+        assert not w.apply_current_profile_params(), 'Settings cannot bypass stale feedback'
+        ready(p)
+        w.settings.setValue('fast_speed',4321)
+        w._save_settings()
+        assert int(w.settings.value('fast_speed'))==4321, 'Do not overwrite archived simulator profile settings'
+        assert not w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
 
         # Invalid packets and missing move ACKs fail closed.
         ready(p)

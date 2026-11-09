@@ -43,6 +43,19 @@ the desired settings in the new native controls.
 
 ## Rates, ramp distance and feedback
 
+The **SETTINGS** tab now exposes these same native profile values. Select the
+profile to apply, edit its rate/acceleration and explicitly Apply while disarmed.
+The active profile changes only on controller acknowledgment. Periodic telemetry
+does not erase an unapplied edit; a readback label distinguishes controller values
+from drafts. Changes made on CARRIAGE also appear in SETTINGS. Live Teensy RAM
+values do not overwrite archived simulator profile settings in Windows.
+
+**MANUAL** shares CARRIAGE's isolation/setup, arm, stop/release/ACK and bounded
+Home state. Its Home search limit is synchronized with CARRIAGE; Home runs while
+disarmed. Referenced Go and bounded +/-2-inch jogs reuse the native write guards.
+Retired MEGA power/PID/calibration controls are hidden in live Teensy mode.
+This tab integration changes the Python app only; firmware remains 0.14.0.
+
 `inches/second = pulses/second / 127.12` at the confirmed full-step setting.
 Acceleration is in pulses/s². The carriage ramps up and down within each move;
 a short move may never reach the requested rate. At the recovered Fast settings,

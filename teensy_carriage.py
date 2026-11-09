@@ -40,6 +40,7 @@ JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
 
 
 class TeensyCarriagePanel(QWidget):
+    state_changed = pyqtSignal()
     profile_changed = pyqtSignal(int)
     homed_changed = pyqtSignal(int)
     machine_position_changed = pyqtSignal(float)
@@ -562,6 +563,11 @@ class TeensyCarriagePanel(QWidget):
         profile = self.profile_combo.currentData()
         return self.request_profile(self.profile_command(),profile,int(self.rate_input.value()),int(self.accel_input.value()))
 
+    def edit_profile(self, profile, rate, acceleration):
+        """Shared entry point for the Settings tab; same guards and ACK handling."""
+        return self.request_profile(f"XPROFILE {profile} {int(rate)} {int(acceleration)}",
+                                    profile,int(rate),int(acceleration))
+
     def request_profile(self,command,profile,rate,accel):
         if self.allowed(command) and self.send(command):
             self.profile_pending = (profile,rate,accel,time.monotonic())
@@ -600,16 +606,16 @@ class TeensyCarriagePanel(QWidget):
     def home(self):
         count = int(math.floor(self.home_search.value() * STEPS_PER_INCH + 0.5))
         command = f"XHOME {count}"
-        if self.allowed(command) and self.send(command):
-            self.pending = (int(self.x["MOVE_ID"]), time.monotonic())
-            self.refresh()
+        return self.request_move(command)
 
     def jog(self, direction):
-        count = int(math.floor(self.distance.value() * STEPS_PER_INCH + 0.5))
-        command = f"XJOG {direction} {count}"
-        if self.allowed(command) and self.send(command):
-            self.pending = (int(self.x["MOVE_ID"]), time.monotonic())
-            self.refresh()
+        return self.jog_distance(direction*self.distance.value())
+
+    def jog_distance(self, inches):
+        if not isinstance(inches,(int,float)) or not math.isfinite(inches) or not 0 < abs(inches) <= 2:
+            return False
+        count = int(math.floor(abs(inches)*STEPS_PER_INCH+0.5))
+        return self.request_move(f"XJOG {1 if inches>0 else -1} {count}")
 
     def tick(self):
         if self.connected and self.armed:
@@ -750,3 +756,4 @@ class TeensyCarriagePanel(QWidget):
         self.reset_button.setEnabled(link and not self.armed)
         self.stop_button.setEnabled(self.connected)
         self.release_button.setEnabled(self.connected and self.compatible)
+        self.state_changed.emit()

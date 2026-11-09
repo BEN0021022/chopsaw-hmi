@@ -25,6 +25,9 @@ readback passed without enabling or moving; matching app reopened disarmed.
 - [x] Absolute inch targets, per-pulse firmware soft limits and load presets:
       implemented/tested/flashed in 0.11.0; physical acceptance next.
 - [x] In-app MIGRATION tab displays this master checklist; Refresh reloads it.
+- [x] Enable supported MANUAL carriage controls with shared setup/arm/stop,
+      bounded Home and readback. SETTINGS now edits/applies acknowledged native
+      Teensy profile values; retired MEGA controls remain unavailable.
 - [ ] Rehome after flash, try an absolute target about 0.1 inch toward the saw,
       then return to Home/load position. Confirm travel/direction and STOP.
 - [x] Prepare controlled acceleration and Commissioning/Gentle/Normal/Fast profiles
@@ -111,6 +114,11 @@ remains 40 pulses/s. No machine motion is executed by refreshing this checklist.
 - [x] Create custom controller 0.7.0 with CARRIAGE_V1 / BOUNDED_JOG_V2 contract.
 - [x] Native CARRIAGE screen: live Home, board edge, door, saw endpoints, driver
       alarm, configuration, arm, stop/disarm, fault ACK and explicit motor release.
+- [x] Map the same controller-owned state/guards into MANUAL: Home/search limit,
+      setup/consent, arm/stop/release/ACK, referenced targets and bounded +/-2in jogs.
+- [x] Map SETTINGS profile fields and selected-profile Apply into native XPROFILE
+      requests. Wait for parameter ACK; synchronize readbacks between tabs,
+      preserve unapplied drafts and keep simulator settings separate.
 - [x] Main-app inch jogs rounded at 127.12 pulses/inch, 0.01-2 in per click,
       254 pulses per click, fixed 40 pulses/s. No queued jogs or autorepeat.
 - [x] Replace the old 254-pulse per-arm diagnostic allowance with repeatable

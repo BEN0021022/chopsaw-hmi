@@ -28,10 +28,10 @@ that statement does not independently complete the physical fault matrix.
 | Driver setup / arming | Implicit enabled startup | Home input clear, explicit setup ACK and arm ACK; no sensor-trip ritual | No auto-enable/auto-arm on connect, reset or reconnect |
 | Position display | Encoder POS plus step estimate | POS_STEPS displacement plus POS_KNOWN/HOME_OFFSET after Home | Homed coordinate only after completed Home; fault/release invalidation |
 | Closed-loop error | MEGA encoder/PID fields | CL57T closes loop; ALM on Halt/D14 | Alarm trips motion; real 7-flash fault traced to loose encoder wire and resolved |
-| Home | H, positive seek, home coordinate 160.5 in | XHOME selected search limit; seek/release/backoff/slow latch/pull-off | User confirmed Home success; repeatability/reference acceptance remains |
+| Home | H, positive seek, home coordinate 160.5 in | Shared MANUAL/CARRIAGE XHOME and search limit; seek/release/backoff/slow latch/pull-off | User confirmed Home success; tab integration tested; repeatability/reference acceptance remains |
 | Absolute length / load positions | S inches | XMOVE integer milliinches; known position + explicit arm | Implemented 0.11.0; native inch target and load presets; physical acceptance pending |
 | Soft limits | Legacy target clamping | Firmware target-time and per-pulse bounds | Implemented; physical envelope acceptance pending |
-| Profiles / speed / acceleration | Z, A speed,accel | XPROFILE id [rate accel], native editable controls and acknowledged RAM settings | Active 0.14.0; MEGA defaults, 1-20000 pps / 1-50000 pps² editable ranges; higher-rate physical acceptance pending; see SPEED_TUNING.md |
+| Profiles / speed / acceleration | Z, A speed,accel | XPROFILE id [rate accel], editable CARRIAGE and SETTINGS controls with acknowledged RAM settings | Active 0.14.0; MEGA defaults, 1-20000 pps / 1-50000 pps² editable ranges; higher-rate physical acceptance pending; see SPEED_TUNING.md |
 | Board detection / truing | J / N, board-edge offset | XEDGE pulse bound/offset/overlap; XTRUING capture token | Prepared 0.13.0; detection disarms, separate explicit truing move; Home reference retained; geometry/physical acceptance pending |
 | Door | Ad hoc/old hardware | Door/D29 active LOW, controller interlock | User confirmed input; firmware/app cancellation tested |
 | Saw endpoints | Old SSEN | UP Limit Z/D22; DOWN Fd/Hld/D16 | User-confirmed inputs, controller interlocks |

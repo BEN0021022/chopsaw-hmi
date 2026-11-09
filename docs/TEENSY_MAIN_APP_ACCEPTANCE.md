@@ -168,3 +168,28 @@ or moving, restored Fast 2500/1500, selected Commissioning, then reopened app.
 App telemetry is compatible/fresh, disarmed, no local fault or queued motion.
 Offscreen layout inspected at 1280x900, dark editable controls, fixed STOP.
 Local source/firmware bundle and readbacks: tmp/commissioning/0.14.0.
+
+## MANUAL and SETTINGS tab integration (app only)
+
+Operator confirmed Home/profiles good, reported a seven-flash fault around
+4000 pps and chose to stay below 4000. No software rate cap was silently changed;
+driver-reset investigation is deferred at the operator's request.
+
+MANUAL now reuses native consent/setup, arm, stop/release/ACK, bounded Home/search
+limit, referenced Go and +/-2-inch jog handling. Unsupported MEGA controls are
+hidden. SETTINGS edits/selects/applies native profiles, preserves unapplied
+drafts and shows controller ACK values synchronized with CARRIAGE. No automatic
+or pneumatic features were enabled, and firmware did not change.
+
+Expanded Qt/main-app tests pass for actual tab-button routes, active-Home
+release sequence requests, no automatic tab jump, parameter ACK gating,
+cross-tab updates, unsent draft retention, stale-data blocking and simulator
+settings separation. Backend/boundary/Sensor Bench tests pass. Manual-mode
+and full cut-list simulator regressions pass. Both tabs were rendered/inspected
+at 1280x900 with Windows fonts.
+
+After the operator closed the app, reopened the updated app on MANUAL/COM4:
+compatible/fresh, disarmed, no queued pulses, reference retained. Existing
+profile 2 readback was 3500 pps / 4000 pps² and was not changed by the agent.
+DOOR_OPEN correctly blocked Home. No Home, arm, jog, parameter edit or other
+hardware-output command was sent during this app update; no flash performed.

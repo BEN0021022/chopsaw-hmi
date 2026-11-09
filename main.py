@@ -347,6 +347,16 @@ class MinimalHMI(QMainWindow):
         self.carriage_tab.profile_changed.connect(self.update_teensy_profile)
         self.carriage_tab.homed_changed.connect(self.update_homed_status)
         self.carriage_tab.machine_position_changed.connect(self.update_position_label_from_device)
+        self._teensy_settings_dirty = set()
+        self._teensy_settings_snapshot = None
+        self._teensy_settings_active = None
+        self._teensy_manual_target_initialized = False
+        self.carriage_tab.state_changed.connect(self.refresh_teensy_tabs)
+        for profile, widgets in self.profile_setting_widgets().items():
+            for widget in widgets:
+                widget.valueChanged.connect(lambda _value, p=profile: self.mark_teensy_profile_edit(p))
+        self.target_input.valueChanged.connect(self.refresh_teensy_tabs)
+        self.rel_input.valueChanged.connect(self.refresh_teensy_tabs)
         self.tabs.addTab(self.carriage_tab, "CARRIAGE")
         self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
@@ -399,26 +409,66 @@ class MinimalHMI(QMainWindow):
         left.addWidget(dash)
 
         ctrl = QGroupBox("Controls"); v = QVBoxLayout(ctrl)
+        self.manual_teensy_setup = QGroupBox("Teensy preparation - shared with CARRIAGE")
+        prep = QVBoxLayout(self.manual_teensy_setup)
+        self.manual_teensy_status = QLabel()
+        self.manual_teensy_status.setWordWrap(True)
+        prep.addWidget(self.manual_teensy_status)
+        isolation_note=QLabel("Saw unplugged; valve 12V disconnected; air isolated; driver and carriage clearance checked.")
+        isolation_note.setWordWrap(True); prep.addWidget(isolation_note)
+        self.manual_isolation = QCheckBox("Isolation and driver checks confirmed")
+        self.manual_isolation.toggled.connect(lambda checked: self.carriage_tab.consent.setChecked(checked))
+        prep.addWidget(self.manual_isolation)
+        row = QHBoxLayout()
+        self.manual_configure = QPushButton("Confirm driver setup")
+        self.manual_configure.clicked.connect(lambda: self.send_command("XCONFIG 0 1"))
+        self.manual_arm = QPushButton("ARM MANUAL CONTROL")
+        self.manual_arm.clicked.connect(lambda: self.carriage_tab.toggle_arm())
+        row.addWidget(self.manual_configure); row.addWidget(self.manual_arm)
+        prep.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Home search limit (in):"))
+        self.manual_home_search = QDoubleSpinBox()
+        self.manual_home_search.setRange(0.25,162); self.manual_home_search.setDecimals(2); self.manual_home_search.setValue(2)
+        self.manual_home_search.valueChanged.connect(lambda value: self.carriage_tab.home_search.setValue(value))
+        row.addWidget(self.manual_home_search)
+        prep.addLayout(row)
+        home_hint=QLabel("HOME runs while disarmed. Set the maximum search distance before starting.")
+        home_hint.setWordWrap(True); prep.addWidget(home_hint)
+        v.addWidget(self.manual_teensy_setup)
         self.enable_chk = QCheckBox("Motor Power Enabled"); self.enable_chk.setChecked(True); self.enable_chk.toggled.connect(self.toggle_motor_power); v.addWidget(self.enable_chk)
         self.pid_chk    = QCheckBox("PID Control Enabled"); self.pid_chk.setChecked(True); self.pid_chk.toggled.connect(self.toggle_pid_control); v.addWidget(self.pid_chk)
         home_row = QHBoxLayout()
-        home_btn = QPushButton("Home (H)"); home_btn.clicked.connect(self.home_motor); home_row.addWidget(home_btn)
+        self.manual_home_button = QPushButton("Home (H)"); self.manual_home_button.clicked.connect(self.home_motor); home_row.addWidget(self.manual_home_button)
         self.near_cal_btn = QPushButton("Near Calibration"); self.near_cal_btn.clicked.connect(self.near_calibrate); home_row.addWidget(self.near_cal_btn)
         v.addLayout(home_row)
+        self.manual_teensy_actions = QWidget()
+        actions = QHBoxLayout(self.manual_teensy_actions); actions.setContentsMargins(0,0,0,0)
+        self.manual_stop = QPushButton("STOP / DISARM")
+        self.manual_stop.setStyleSheet("background:#b91c1c; color:white; font-weight:bold")
+        self.manual_stop.clicked.connect(lambda: self.carriage_tab.stop())
+        self.manual_reset = QPushButton("Acknowledge fault")
+        self.manual_reset.clicked.connect(lambda: self.carriage_tab.acknowledge())
+        self.manual_release = QPushButton("Release motor")
+        self.manual_release.clicked.connect(lambda: self.carriage_tab.stop("XDISABLE"))
+        for button in (self.manual_stop,self.manual_reset,self.manual_release): actions.addWidget(button)
+        v.addWidget(self.manual_teensy_actions)
 
         row = QHBoxLayout(); row.addWidget(QLabel("Set Length:"))
         self.target_input = QDoubleSpinBox(); self.target_input.setRange(0.0, self.home_position); self.target_input.setDecimals(4); row.addWidget(self.target_input)
-        set_btn = QPushButton("Go"); set_btn.clicked.connect(self.set_length); row.addWidget(set_btn); v.addLayout(row)
+        self.manual_go = QPushButton("Go"); self.manual_go.clicked.connect(lambda: self.set_length()); row.addWidget(self.manual_go); v.addLayout(row)
 
         row2 = QHBoxLayout(); row2.addWidget(QLabel("Jog By:"))
         self.rel_input = QDoubleSpinBox(); self.rel_input.setRange(-100, 100); self.rel_input.setDecimals(4); row2.addWidget(self.rel_input)
-        jog_btn = QPushButton("Move"); jog_btn.clicked.connect(self.move_relative); row2.addWidget(jog_btn); v.addLayout(row2)
+        self.manual_jog = QPushButton("Move"); self.manual_jog.clicked.connect(self.move_relative); row2.addWidget(self.manual_jog); v.addLayout(row2)
 
         row3 = QHBoxLayout(); row3.addWidget(QLabel("Measured Length (in):"))
         self.calibrate_input = QDoubleSpinBox(); self.calibrate_input.setRange(0.01, 1000); self.calibrate_input.setDecimals(4); row3.addWidget(self.calibrate_input)
         cal_btn = QPushButton("Calibrate"); cal_btn.clicked.connect(self.initiate_calibration); row3.addWidget(cal_btn); v.addLayout(row3)
+        self.manual_calibration_widgets = [row3.itemAt(i).widget() for i in range(row3.count())]
 
         params = QGroupBox("Motor Parameters (Manual Mode)"); pg = QGridLayout(params)
+        self.manual_motor_params = params
         pg.addWidget(QLabel("Max Speed (steps/s):"), 0, 0)
         self.max_speed = QDoubleSpinBox(); self.max_speed.setRange(1, 20000); self.max_speed.setDecimals(0); self.max_speed.setValue(3000); pg.addWidget(self.max_speed, 0, 1)
         pg.addWidget(QLabel("Acceleration (steps/s²):"), 1, 0)
@@ -851,27 +901,39 @@ class MinimalHMI(QMainWindow):
 
     def create_speed_tab(self):
         w = QWidget(); root = QVBoxLayout(w)
-        profiles = QGroupBox("Auto Profiles - Speeds & Accelerations"); pg = QGridLayout(profiles)
+        profiles = QGroupBox("Motion Profiles - Pulse Rates & Accelerations"); pg = QGridLayout(profiles)
 
-        pg.addWidget(QLabel(f"NORMAL (cutting) - Z{PROFILE_MAP['NORMAL']}"), 0, 0, 1, 2)
-        pg.addWidget(QLabel("Max Speed (steps/s)"), 1, 0)
+        pg.addWidget(QLabel("NORMAL - board feed"), 0, 0, 1, 2)
+        pg.addWidget(QLabel("Pulse rate (pulses/s)"), 1, 0)
         self.norm_speed = QDoubleSpinBox(); self.norm_speed.setRange(1, 20000); self.norm_speed.setDecimals(0); self.norm_speed.setValue(2500); pg.addWidget(self.norm_speed, 1, 1)
-        pg.addWidget(QLabel("Acceleration (steps/s^2)"), 2, 0)
+        pg.addWidget(QLabel("Acceleration (pulses/s^2)"), 2, 0)
         self.norm_accel = QDoubleSpinBox(); self.norm_accel.setRange(1, 50000); self.norm_accel.setDecimals(0); self.norm_accel.setValue(900); pg.addWidget(self.norm_accel, 2, 1)
 
-        pg.addWidget(QLabel(f"GENTLE approach - Z{PROFILE_MAP['GENTLE']}"), 0, 2, 1, 2)
-        pg.addWidget(QLabel("Max Speed (steps/s)"), 1, 2)
+        pg.addWidget(QLabel("GENTLE - approach"), 0, 2, 1, 2)
+        pg.addWidget(QLabel("Pulse rate (pulses/s)"), 1, 2)
         self.gentle_speed = QDoubleSpinBox(); self.gentle_speed.setRange(1, 20000); self.gentle_speed.setDecimals(0); self.gentle_speed.setValue(600); pg.addWidget(self.gentle_speed, 1, 3)
-        pg.addWidget(QLabel("Acceleration (steps/s^2)"), 2, 2)
+        pg.addWidget(QLabel("Acceleration (pulses/s^2)"), 2, 2)
         self.gentle_accel = QDoubleSpinBox(); self.gentle_accel.setRange(1, 50000); self.gentle_accel.setDecimals(0); self.gentle_accel.setValue(600); pg.addWidget(self.gentle_accel, 2, 3)
 
-        pg.addWidget(QLabel(f"FAST return - Z{PROFILE_MAP['FAST']}"), 0, 4, 1, 2)
-        pg.addWidget(QLabel("Max Speed (steps/s)"), 1, 4)
+        pg.addWidget(QLabel("FAST - carriage return"), 0, 4, 1, 2)
+        pg.addWidget(QLabel("Pulse rate (pulses/s)"), 1, 4)
         self.fast_speed = QDoubleSpinBox(); self.fast_speed.setRange(1, 20000); self.fast_speed.setDecimals(0); self.fast_speed.setValue(3500); pg.addWidget(self.fast_speed, 1, 5)
-        pg.addWidget(QLabel("Acceleration (steps/s^2)"), 2, 4)
+        pg.addWidget(QLabel("Acceleration (pulses/s^2)"), 2, 4)
         self.fast_accel = QDoubleSpinBox(); self.fast_accel.setRange(1, 50000); self.fast_accel.setDecimals(0); self.fast_accel.setValue(2500); pg.addWidget(self.fast_accel, 2, 5)
 
-        self.apply_profile_btn = QPushButton("Apply Selected Profile Settings Now"); self.apply_profile_btn.clicked.connect(self.apply_current_profile_params); pg.addWidget(self.apply_profile_btn, 3, 0, 1, 6)
+        self.settings_profile_combo = QComboBox()
+        self.settings_profile_combo.setStyleSheet(
+            "QComboBox { background:#0b1222; color:#e2e8f0; border:1px solid #334155; padding:8px; }"
+            "QComboBox QAbstractItemView { background:#0b1222; color:#e2e8f0; selection-background-color:#1e40af; }"
+        )
+        for name in ("NORMAL","GENTLE","FAST"): self.settings_profile_combo.addItem(name,name)
+        self.settings_profile_combo.currentIndexChanged.connect(lambda: self.refresh_teensy_tabs())
+        pg.addWidget(QLabel("Profile to apply:"),3,0)
+        pg.addWidget(self.settings_profile_combo,3,1)
+        self.apply_profile_btn = QPushButton("Apply Selected Profile Settings Now"); self.apply_profile_btn.clicked.connect(self.apply_current_profile_params); pg.addWidget(self.apply_profile_btn, 3, 2, 1, 4)
+        self.settings_profile_feedback = QLabel()
+        self.settings_profile_feedback.setWordWrap(True)
+        pg.addWidget(self.settings_profile_feedback,4,0,1,6)
         root.addWidget(profiles)
 
         # Software updates
@@ -1489,7 +1551,18 @@ class MinimalHMI(QMainWindow):
                 widget.setEnabled(controller.key != TEENSY_CARRIAGE)
         manual_ready = connected and capabilities.manual_motion_ready
         auto_ready = connected and capabilities.automatic_cycle_ready
-        self.legacy_tab.setEnabled(manual_ready)
+        native_manual = controller.key == TEENSY_CARRIAGE
+        self.tabs.setTabText(self.tabs.indexOf(self.legacy_tab),"MANUAL" if native_manual else "MANUAL / SIM")
+        self.legacy_tab.setEnabled(manual_ready or (connected and native_manual))
+        self.manual_teensy_setup.setVisible(native_manual)
+        self.manual_teensy_actions.setVisible(native_manual)
+        for widget in (self.enable_chk,self.pid_chk,self.near_cal_btn,self.manual_motor_params,*self.manual_calibration_widgets):
+            widget.setVisible(not native_manual)
+        self.manual_home_button.setText("HOME CARRIAGE" if native_manual else "Home (H)")
+        self.rel_input.setRange(-2 if native_manual else -100,2 if native_manual else 100)
+        if not native_manual:
+            for widget in (self.manual_home_button,self.manual_go,self.manual_jog,self.target_input,self.rel_input,self.keypad):
+                widget.setEnabled(True)
         self.auto_tab.setEnabled(auto_ready)
         if hasattr(self, "full_auto_tab"):
             self.full_auto_tab.setEnabled(auto_ready)
@@ -1507,6 +1580,7 @@ class MinimalHMI(QMainWindow):
             self._set_cycle_status(
                 f"STATUS: {controller.label} is diagnostics-only until validation is complete."
             )
+        self.refresh_teensy_tabs()
 
     # ---------- Cut list ----------
     def add_cut_to_list(self):
@@ -2075,8 +2149,7 @@ class MinimalHMI(QMainWindow):
 
     def home_motor(self):
         if self.active_controller().key == TEENSY_CARRIAGE:
-            self.carriage_tab.home()
-            return
+            return self.carriage_tab.home()
         self.send_backend_commands(self.active_controller().home(), "home the carriage")
     def near_calibrate(self):
         if self.homed_label.text() != "HOMED":
@@ -2132,6 +2205,8 @@ class MinimalHMI(QMainWindow):
             self.log.append(f"MOVE REJECTED: Target {target:.2f}\" is outside the valid range (0 to {self.home_position:.2f}\").")
     def move_relative(self):
         delta = self.rel_input.value()
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            return self.carriage_tab.jog_distance(delta)
         target = self.current_position + delta
 
         # Instead of sending its own command, it now uses our safe function
@@ -2227,6 +2302,107 @@ class MinimalHMI(QMainWindow):
         )
 
     # ---------- Profiles ----------
+    def profile_setting_widgets(self):
+        return {1:(self.gentle_speed,self.gentle_accel),2:(self.norm_speed,self.norm_accel),
+                3:(self.fast_speed,self.fast_accel)}
+
+    def mark_teensy_profile_edit(self, profile):
+        if (self.active_controller().key == TEENSY_CARRIAGE and self._teensy_settings_snapshot is not None):
+            self._teensy_settings_dirty.add(profile)
+            self.refresh_teensy_tabs()
+
+    def refresh_teensy_tabs(self, *_args):
+        """Mirror one controller-owned state into Manual/Settings; never sends commands."""
+        if not hasattr(self,"carriage_tab") or not hasattr(self,"settings_profile_combo"):
+            return
+        p = self.carriage_tab
+        if self.active_controller().key != TEENSY_CARRIAGE:
+            self.settings_profile_feedback.setText("Simulator profile values; apply the selected profile explicitly.")
+            self.settings_profile_combo.setEnabled(True)
+            self.apply_profile_btn.setEnabled(True)
+            return
+
+        link = p.ready_link()
+        busy = bool(p.pending or p.profile_pending or p.homing or p.edge_searching or int(p.x.get("REMAINING","0")))
+        self.manual_teensy_status.setText(p.status.text())
+        self.manual_isolation.blockSignals(True)
+        self.manual_isolation.setChecked(p.consent.isChecked())
+        self.manual_isolation.blockSignals(False)
+        self.manual_configure.setEnabled(p.allowed("XCONFIG 0 1"))
+        self.manual_arm.setText("DISARM MANUAL CONTROL" if p.armed else "ARM MANUAL CONTROL")
+        self.manual_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
+        self.manual_home_button.setEnabled(p.home_button.isEnabled())
+        self.manual_home_search.blockSignals(True)
+        self.manual_home_search.setValue(p.home_search.value())
+        self.manual_home_search.blockSignals(False)
+        self.manual_home_search.setEnabled(not p.armed and not busy)
+        self.manual_stop.setEnabled(p.connected)
+        self.manual_reset.setEnabled(link and not p.armed)
+        self.manual_release.setEnabled(p.connected and p.compatible)
+        known = link and p.x.get("POS_KNOWN") == "1" and not p.local_fault
+        self.update_homed_status(1 if known else 0)
+        if not known:
+            self.position_label.setText("UNKNOWN")
+            self._teensy_manual_target_initialized = False
+        elif not busy:
+            self.position_label.setText(f"{160.5+int(p.x['HOME_OFFSET'])/127.12:.4f}")
+        if known and not self._teensy_manual_target_initialized:
+            self.target_input.blockSignals(True)
+            self.target_input.setValue(p.target.value())
+            self.target_input.blockSignals(False)
+            self._teensy_manual_target_initialized = True
+        self.state_label.setText("FAULT" if p.local_fault or p.x.get("FAULT","NONE") != "NONE" else
+                                 "HOMING" if p.homing else "MOVING" if busy else "ARMED" if p.armed else "DISARMED")
+        for name,label in (("HOME",self.sensor_label),("BOARD_EDGE",self.board_sensor_label)):
+            raw=p.inputs.get(name) if p.fresh("INPUTS") else None
+            self.set_pill(label,"UNKNOWN" if raw not in ("0","1") else "ON" if raw == "0" else "OFF",
+                          "#334155" if raw not in ("0","1") else "#22c55e" if raw == "0" else "#ef4444")
+        self.target_input.setEnabled(known and not busy)
+        self.keypad.setEnabled(known and not busy)
+        self.manual_go.setEnabled(p.allowed(f"XMOVE {int(self.target_input.value()*1000+0.5)}"))
+        delta=self.rel_input.value()
+        count=int(abs(delta)*127.12+0.5)
+        self.manual_jog.setEnabled(bool(count) and p.allowed(f"XJOG {1 if delta>0 else -1} {count}"))
+        self.rel_input.setEnabled(not busy)
+
+        edit = link and not p.armed and not busy
+        if not link:
+            self._teensy_settings_snapshot = None
+            self._teensy_settings_active = None
+            self._teensy_settings_dirty.clear()
+        else:
+            initial = self._teensy_settings_snapshot is None
+            for profile,widgets in self.profile_setting_widgets().items():
+                actual = p.profile_values[profile]
+                draft = tuple(int(widget.value()) for widget in widgets)
+                if draft == actual:
+                    self._teensy_settings_dirty.discard(profile)
+                if initial or profile not in self._teensy_settings_dirty:
+                    for widget,value in zip(widgets,actual):
+                        widget.blockSignals(True); widget.setValue(value); widget.blockSignals(False)
+            self._teensy_settings_snapshot = dict(p.profile_values)
+            active=int(p.x["PROFILE_ID"])
+            if active != self._teensy_settings_active:
+                self._teensy_settings_active=active
+                if active in (1,2,3):
+                    name={1:"GENTLE",2:"NORMAL",3:"FAST"}[active]
+                    self.settings_profile_combo.blockSignals(True)
+                    self.settings_profile_combo.setCurrentIndex(self.settings_profile_combo.findData(name))
+                    self.settings_profile_combo.blockSignals(False)
+        for widgets in self.profile_setting_widgets().values():
+            for widget in widgets: widget.setEnabled(edit)
+        self.settings_profile_combo.setEnabled(edit)
+        profile={"GENTLE":1,"NORMAL":2,"FAST":3}[self.settings_profile_combo.currentData()]
+        rate,accel=(int(widget.value()) for widget in self.profile_setting_widgets()[profile])
+        self.apply_profile_btn.setEnabled(p.allowed(f"XPROFILE {profile} {rate} {accel}"))
+        selected=p.profile_values[profile]
+        note = ("Waiting for fresh compatible controller feedback" if not link else
+                f"Controller active: {self.active_profile_name}; selected profile readback: {selected[0]} pulses/s, "
+                f"{selected[1]} pulses/s^2. " + ("UNAPPLIED EDITS. " if self._teensy_settings_dirty else "") +
+                ("Waiting for parameter acknowledgment. " if p.profile_pending else ""))
+        self.settings_profile_feedback.setText(note+f"Motion status: {p.status.text()}. "
+                                              "Disarm to apply. Values are controller RAM settings and reset on reboot.")
+
     def update_teensy_profile(self, profile):
         self.active_profile_name = {0:"COMMISSIONING",1:"GENTLE",2:"NORMAL",3:"FAST"}.get(profile,"COMMISSIONING")
 
@@ -2250,7 +2426,13 @@ class MinimalHMI(QMainWindow):
                 "set motion profile parameters",
             )
             self.log.append(f"Applied {name} profile params: speed={spd:.0f}, accel={acc:.0f}")
-    def apply_current_profile_params(self): self.switch_profile(self.active_profile_name, True)
+    def apply_current_profile_params(self):
+        name=self.settings_profile_combo.currentData()
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            profile={"GENTLE":1,"NORMAL":2,"FAST":3}[name]
+            rate,accel=(widget.value() for widget in self.profile_setting_widgets()[profile])
+            return self.carriage_tab.edit_profile(profile,rate,accel)
+        return self.switch_profile(name, True)
 
     # ---------- Position updates ----------
     def update_message_log(self, msg):
@@ -2514,6 +2696,10 @@ class MinimalHMI(QMainWindow):
 
     def _save_settings(self):
         for key, widget in self._settings_widgets().items():
+            if self.active_controller().key == TEENSY_CARRIAGE and key in {
+                "norm_speed","norm_accel","gentle_speed","gentle_accel","fast_speed","fast_accel"
+            }:
+                continue  # live Teensy RAM readbacks must not overwrite archived simulator settings
             self.settings.setValue(key, widget.value())
         self.settings.setValue("current_monitoring", self.current_monitoring_checkbox.isChecked())
         self.settings.setValue("auto_clamp_enabled", self.auto_clamp_checkbox.isChecked())
