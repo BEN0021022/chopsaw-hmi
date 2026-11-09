@@ -113,6 +113,16 @@ readback passed without enabling or moving; matching app reopened disarmed.
 
 ## Next session - remaining work
 
+Read [tonight's unloaded readiness audit](docs/TONIGHT_DRY_RUN.md). On 2026-11-09
+the operator confirmed main clamp ON holds/OFF releases; testing has no stock,
+saw mains unplugged and blade-trigger output disabled. The 0.15.0 baseline
+artifact/source hashes and all seven firmware host suites plus 55 motion-record
+replays were verified. Combined native pneumatic firmware and no-stock cut-list
+stepping are **not yet prepared**; the P0 queue makes those gaps explicit.
+
+- [x] Correct health display so ALREADY_ARMED is not mistaken for a feedback fault;
+      arming remains separate from healthy telemetry.
+
 - [ ] Rehome after the latest flash, then physically test restored AUTO jogs,
       FAST load presets, STOP and live sensor pills. See [Auto plan](docs/AUTO_TAB_COMMISSIONING.md).
 - [ ] Accept board-edge detection, captured offset/truing geometry and stock handling.

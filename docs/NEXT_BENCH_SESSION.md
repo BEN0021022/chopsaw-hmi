@@ -1,9 +1,24 @@
-# Next bench session - after 2026-11-08
+# Next bench session — 2026-11-09 unloaded testing
 
-Active firmware/app: **0.15.0 / CARRIAGE_V9 / LOAD:FAST_V1**, verified on COM4.
-The latest app reopened on AUTO, disarmed, with no queued motion. No Home,
-arm, jog or load was sent by the agent during deployment. A flash clears the
-position reference: Home again before absolute or load moves.
+Read [Tonight's readiness audit and P0 implementation queue](TONIGHT_DRY_RUN.md).
+Confirmed: no stock/cuts, saw mains unplugged, blade-trigger output disabled,
+main clamp ON holds/OFF releases, saw valve OFF returns UP.
+
+**Current baseline is still 0.15.0 / CARRIAGE_V9 / LOAD:FAST_V1.** It supports
+carriage and separate single-output tests, not a held-clamp/saw cycle. Today's
+Manual actuator/timing sequence is Simulator-only. Native cut-list stepping and
+combined dry-run firmware/app work remain in the queue; a new combined build is
+not yet prepared. Do not unlock Simulator handlers or fake board-edge detection.
+
+All seven host firmware suites and 55 actual-sketch Qt motion records passed
+again on 2026-11-09. Archived HEX checksum/source tree match the 0.15.0 manifest.
+No flash has been performed during this offline preparation.
+
+## Historical 2026-11-08 deployment record
+
+Firmware 0.15.0 was verified on COM4. The app reopened on AUTO, disarmed, with no
+queued motion. No Home, arm, jog or load was sent by the agent during deployment.
+A flash clears the position reference: Home again before absolute or load moves.
 
 At deployment, saved RAM profiles were restored: Gentle 150/200, Normal
 3500/4000, Fast 2500/1500 (pulse rate/acceleration). Commissioning was selected.

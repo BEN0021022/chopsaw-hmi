@@ -22,6 +22,9 @@ def policy_tests():
     received = {'X':100, 'SAFETY':100, 'INPUTS':100}
     args = dict(connected=True, compatible=True, records=records, received=received, started=100, now=100)
     assert native_health(**args).level == 'healthy', 'Inactive Home/Board and deferred clamp are healthy'
+    records['SAFETY']['BLOCKER'] = 'ALREADY_ARMED'
+    assert native_health(**args).level == 'healthy', 'Already armed is not a feedback fault'
+    records['SAFETY']['BLOCKER'] = 'NONE'
     assert native_health(**dict(args, connected=False)).level == 'neutral'
     assert native_health(**dict(args, compatible=False, received={})).level == 'neutral'
     assert native_health(**dict(args, compatible=False, received={'HELLO':100})).level == 'fault'

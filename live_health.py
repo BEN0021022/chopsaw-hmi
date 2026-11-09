@@ -92,7 +92,7 @@ def native_health(*, connected, compatible, records, received, started, now,
     if safety.get("SAW_POSITION") != "UP":
         issues.append("Saw safety position: " + safety.get("SAW_POSITION", "UNKNOWN"))
     blocker = safety.get("BLOCKER")
-    if blocker != "NONE":
+    if blocker not in ("NONE", "ALREADY_ARMED"):
         issues.append("Interlock: " + (blocker or "UNKNOWN"))
     issues = list(dict.fromkeys(issues))
     return fault(issues) if issues else HealthState("healthy", "System healthy")
