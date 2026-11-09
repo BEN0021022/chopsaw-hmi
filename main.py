@@ -26,7 +26,7 @@ from PyQt6.QtGui import QTextCursor, QIcon
 # Import from our other modules
 from config import SERIAL_PORT, BAUD_RATE, PROFILE_MAP
 from serial_handler import SignalBridge, listen_for_data
-from ui_components import KeypadWidget, CurrentGraphWidget
+from ui_components import KeypadWidget, CutLengthKeypad, CurrentGraphWidget
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
@@ -360,6 +360,9 @@ class MinimalHMI(QMainWindow):
         self.tabs.addTab(self.carriage_tab, "CARRIAGE")
         self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
+        self.tabs.currentChanged.connect(
+            lambda _index: self.cut_length_keypad.hide() if self.tabs.currentWidget() is not self.auto_tab else None
+        )
         self.tabs.addTab(self.full_auto_tab, "FULL AUTO")
         self.tabs.addTab(self.speed_tab, "SETTINGS")
         self.tabs.addTab(self.preset_tab, "CUT LISTS")
@@ -716,10 +719,20 @@ class MinimalHMI(QMainWindow):
         g2.addWidget(QLabel("Board Sensor Location (in):"), 0, 0)
         self.board_sensor_location_input = QDoubleSpinBox(); self.board_sensor_location_input.setRange(0, 2000); self.board_sensor_location_input.setDecimals(4); self.board_sensor_location_input.setValue(10.80); g2.addWidget(self.board_sensor_location_input, 0, 1)
         g2.addWidget(QLabel("Cut Length (in):"), 1, 0)
-        self.cut_length_input = QDoubleSpinBox(); self.cut_length_input.setRange(0.1, 2000); self.cut_length_input.setDecimals(4); self.cut_length_input.setValue(18.0); g2.addWidget(self.cut_length_input, 1, 1)
+        self.cut_length_input = QDoubleSpinBox(); self.cut_length_input.setRange(0.1, 2000); self.cut_length_input.setDecimals(4); self.cut_length_input.setValue(18.0)
+        length_row = QHBoxLayout()
+        length_row.setSpacing(8)
+        length_row.addWidget(self.cut_length_input, 1)
+        self.cut_length_keypad_checkbox = QCheckBox("Keypad")
+        self.cut_length_keypad_checkbox.setToolTip("Show the on-screen keypad when Cut Length is tapped. Physical keyboard entry stays available.")
+        length_row.addWidget(self.cut_length_keypad_checkbox)
+        g2.addLayout(length_row, 1, 1)
+        self.cut_length_keypad = CutLengthKeypad(self.cut_length_input, left_wrap)
+        self.cut_length_keypad_checkbox.toggled.connect(self.cut_length_keypad.set_active)
         g2.addWidget(QLabel("Blade Kerf (in):"), 2, 0)
         self.kerf_input = QDoubleSpinBox(); self.kerf_input.setRange(0.0, 0.5); self.kerf_input.setDecimals(4); self.kerf_input.setValue(0.100); g2.addWidget(self.kerf_input, 2, 1)
         self.add_cut_button = QPushButton("Add Cut to List"); self.add_cut_button.clicked.connect(self.add_cut_to_list); g2.addWidget(self.add_cut_button, 3, 0, 1, 2)
+        self.add_cut_button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         center_col.addWidget(setup)
 
         cut_list_group = QGroupBox("Cut List"); vcl = QVBoxLayout(cut_list_group)
@@ -1583,6 +1596,8 @@ class MinimalHMI(QMainWindow):
 
     # ---------- Cut list ----------
     def add_cut_to_list(self):
+        if not self.cut_length_keypad.valid_length():
+            return
         L = self.cut_length_input.value()
         if L > 0:
             self.cut_list.append((self.next_cut_number, L, ""))
@@ -2696,6 +2711,7 @@ class MinimalHMI(QMainWindow):
         }
 
     def _load_settings(self):
+        self.cut_length_keypad_checkbox.setChecked(self.settings.value("cut_length_keypad", False, type=bool))
         for key, widget in self._settings_widgets().items():
             value = self.settings.value(key)
             if value is not None:
@@ -2721,6 +2737,7 @@ class MinimalHMI(QMainWindow):
             self.settings.setValue(key, widget.value())
         self.settings.setValue("current_monitoring", self.current_monitoring_checkbox.isChecked())
         self.settings.setValue("auto_clamp_enabled", self.auto_clamp_checkbox.isChecked())
+        self.settings.setValue("cut_length_keypad", self.cut_length_keypad_checkbox.isChecked())
         self.settings.setValue("serial_port", self.selected_serial_port)
         self.settings.setValue("controller_mode", self.selected_controller_mode)
 

@@ -55,7 +55,15 @@ readback passed without enabling or moving; matching app reopened disarmed.
 - [x] Offline native integration/boundary and complete simulator cycle tests
       pass. Manual layouts inspected with simulated data. No controller accessed
       or firmware flashed; driver-managed closed loop is unchanged.
-- [ ] Later UI step: Auto-tab pop-out numeric keypad for touch-first operation.
+- [x] AUTO Cut Length has an optional left-side keypad overlay. Tapping the
+      field selects its existing value; digits/decimal/Back/Clear edit that same
+      field. Add Cut to List remains accessible and keeps the keypad open for
+      repeated entries. Close keypad hides it; the checkbox preference persists.
+      Physical typing remains available with the keypad on or off. Invalid/empty
+      entries cannot add a stale value. Tab changes hide the overlay.
+- [x] Exercise repeated touch/keyboard entries, validation, close/toggle, resize,
+      preference restore and zero serial writes using fake serial while armed.
+      Inspect native and simulator layouts; full simulator cycle regressions pass.
 
 ## Next session - remaining work
 

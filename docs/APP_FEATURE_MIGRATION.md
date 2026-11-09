@@ -55,7 +55,15 @@ uses the existing guarded arm request; unchecking uses XDISABLE and invalidates
 Home. The checkbox reflects fresh ENA readback, not measured supply or torque.
 Connect and telemetry refresh never enable or move the motor. Simulator enable/
 release now stops its motion model and does not replay the cancelled target.
-An Auto-tab pop-out keypad is planned separately; this pass does not add it.
+AUTO now also offers a **Keypad** checkbox beside Cut Length. With it enabled,
+tapping the length selects the current value and opens a nonmodal keypad over
+the left status column. It edits the same spin box; Add Cut to List appends the
+length and leaves the keypad open. Back/Clear and Close keypad support touch
+entry; closing leaves the preference enabled for the next tap. Disabling the
+checkbox or leaving AUTO hides it. The preference persists, but the overlay
+starts hidden after reopening. Physical keyboard entry works either way.
+Invalid or empty input cannot append the previous length. Entry/list edits do
+not send serial commands, even when the native carriage is armed.
 
 The previous 0.7.0 firmware stopped after 254 total pulses per arm. That was a
 commissioning allowance, not a timer. Version 0.9.0 removes that cumulative

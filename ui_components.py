@@ -2,8 +2,8 @@
 
 from collections import deque
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLineEdit, QPushButton
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLineEdit, QPushButton, QFrame, QLabel, QHBoxLayout
+from PyQt6.QtCore import pyqtSignal, Qt, QEvent
 from PyQt6.QtGui import QColor, QPainter, QPen, QPainterPath
 
 class KeypadWidget(QWidget):
@@ -49,6 +49,116 @@ class KeypadWidget(QWidget):
             self.current_input = ""; self.display.clear()
         except ValueError:
             self.display.setText("Error"); self.current_input = ""
+
+
+class CutLengthKeypad(QFrame):
+    """Nonmodal touch overlay: edits one spin box, never submits a cut or motion."""
+
+    def __init__(self, target, parent):
+        super().__init__(parent)
+        self.target = target
+        self.active = False
+        self.setObjectName("cutLengthKeypad")
+        self.setStyleSheet("""
+            QFrame#cutLengthKeypad {
+                background: #111827; border: 2px solid #38bdf8; border-radius: 12px;
+            }
+            QFrame#cutLengthKeypad QLabel { background: transparent; border: none; }
+            QFrame#cutLengthKeypad QPushButton {
+                min-width: 0; min-height: 52px; padding: 6px;
+                font-size: 25px; font-weight: 700;
+            }
+            QFrame#cutLengthKeypad QPushButton[role="keypadAction"] {
+                min-height: 40px; font-size: 16px;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+        title = QLabel("Cut length keypad")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #e2e8f0;")
+        layout.addWidget(title)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.setMinimumHeight(36)
+        layout.addWidget(self.hint)
+        self.reset_hint()
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        self.keys = {}
+        for index, text in enumerate(('7','8','9','4','5','6','1','2','3','.','0','Back')):
+            button = QPushButton(text)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.clicked.connect(lambda _checked=False, key=text: self.edit(key))
+            grid.addWidget(button, index // 3, index % 3)
+            self.keys[text] = button
+        layout.addLayout(grid)
+        actions = QHBoxLayout()
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.clicked.connect(lambda: self.edit('Clear'))
+        self.close_button = QPushButton("Close keypad")
+        self.close_button.clicked.connect(self.hide)
+        for button in (self.clear_button, self.close_button):
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setProperty("role", "keypadAction")
+            actions.addWidget(button)
+        layout.addLayout(actions)
+        self.target.lineEdit().installEventFilter(self)
+        parent.installEventFilter(self)
+        self.hide()
+
+    def reset_hint(self):
+        self.hint.setText("Enter a length, then tap Add Cut to List.")
+        self.hint.setStyleSheet("color: #94a3b8; font-size: 14px;")
+
+    def set_active(self, active):
+        self.active = active
+        if not active:
+            self.hide()
+
+    def eventFilter(self, watched, event):
+        if (watched is self.target.lineEdit() and self.active
+                and event.type() == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.LeftButton):
+            self.open()
+            return True
+        if watched is self.parentWidget() and event.type() == QEvent.Type.Resize and self.isVisible():
+            self.position_overlay()
+        return super().eventFilter(watched, event)
+
+    def position_overlay(self):
+        self.setFixedWidth(max(1, self.parentWidget().width() - 18))
+        self.adjustSize()
+        self.move(9, 9)
+
+    def open(self):
+        if not self.active or not self.target.isEnabled():
+            return
+        self.reset_hint()
+        self.target.setFocus(Qt.FocusReason.MouseFocusReason)
+        self.target.selectAll()
+        self.position_overlay()
+        self.show()
+        self.raise_()
+
+    def edit(self, key):
+        editor = self.target.lineEdit()
+        if key == 'Back':
+            editor.backspace()
+        elif key == 'Clear':
+            editor.clear()
+        else:
+            editor.insert(self.target.locale().decimalPoint() if key == '.' else key)
+        self.reset_hint()
+
+    def valid_length(self):
+        if not self.target.hasAcceptableInput():
+            self.hint.setText(f"Enter a length from {self.target.minimum():g} to {self.target.maximum():g} in.")
+            self.hint.setStyleSheet("color: #fbbf24; font-size: 14px;")
+            return False
+        self.target.interpretText()
+        self.reset_hint()
+        return True
 
 
 class CurrentGraphWidget(QWidget):
