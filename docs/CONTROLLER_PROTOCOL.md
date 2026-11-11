@@ -1,8 +1,8 @@
 # Controller protocol
 
-Updated 2026-11-10. Prepared controller firmware **0.19.0** uses the
+Updated 2026-11-10. Flashed/read-back controller firmware **0.19.0** uses the
 existing LF-terminated ASCII BENCH records plus CARRIAGE_V13. Integrated
-saw-unplugged clamp/trigger/travel cycles; not yet flashed, acceptance pending. 115200 baud,
+saw-unplugged clamp/trigger/travel cycles; physical acceptance pending. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 

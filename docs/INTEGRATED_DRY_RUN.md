@@ -1,6 +1,8 @@
 # Integrated saw-unplugged commissioning - 0.19.0
 
-Prepared 2026-11-10. Individual trigger, clamp and saw mechanisms were confirmed
+Flashed/read back on COM4 on 2026-11-10 with isolation confirmed: all outputs OFF,
+disarmed/unconfigured, no faults/queued motion, Home unknown. Matching Manual app
+reopened; connection/verification were reads only. Individual mechanisms were confirmed
 working by the operator on 0.18. Combined-cycle and new Home/Auto acceptance are
 still pending. No powered cutting in this build's approved test scope.
 

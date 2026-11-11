@@ -1,7 +1,7 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-10. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Prepared source/build: custom **0.19.0 / CARRIAGE_V13**, integrated saw-unplugged
+Current source/build: custom **0.19.0 / CARRIAGE_V13**, integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
 0.18.0 was flashed/read back on 2026-11-10; individual mechanisms passed.
 Prior 0.16.0 was flashed/read back on COM4 on 2026-11-09 after isolation confirmation;
@@ -33,7 +33,10 @@ entries below. [Current procedure](docs/INTEGRATED_DRY_RUN.md).
 - [x] Stop/fault retains engaged clamp, releases trigger; explicit UP/brake-delayed
       recovery release. Cancel during preparation cannot restart the sequence.
 - [x] Actual firmware/Qt/one-click Home/combined Manual and two-cut Auto tests.
-- [ ] Flash/read back 0.19 and physically accept integrated sequence.
+- [x] Flash/read back 0.19 on COM4, 2026-11-10, isolation confirmed. Startup
+      disarmed, outputs OFF, Home unknown, no faults/queued motion. Matching
+      Manual app reopened; agent sent no setup, arm or actuation.
+- [ ] Physically accept integrated sequence, new Home/Auto and recovery behavior.
 - [ ] Independent safeguarding and powered-cut/grip/brake acceptance remain open.
 
 0.18 simplifies the earlier 0.17 controls below:

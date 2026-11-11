@@ -5,7 +5,7 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-10)
 
-Latest prepared **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** removes Manual's Controls
+Current **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** removes Manual's Controls
 frame, leaving Home. One Home gesture confirms the established driver setup and
 searches the full supported range (20594 pulses, approximately 162 inches), with
 finite failed-sensor/watchdog/guard stops retained. Individual pneumatic controls
@@ -16,7 +16,10 @@ not an independent shutdown path; this is integrated commissioning, not powered
 production authorization. Stop/fault retains clamp and releases trigger; recover
 clamp explicitly only after UP/brake interval. See [integrated procedure](docs/INTEGRATED_DRY_RUN.md).
 0.18.0 was flashed/read back and individual mechanisms were operator-confirmed
-working. 0.19 physical combined-cycle acceptance remains pending.
+working. 0.19 flashed/read back on COM4 on 2026-11-10 with isolation confirmed:
+no faults, outputs OFF, disarmed/unconfigured, Home unknown, zero queued motion.
+Matching Manual app reopened connected, without setup/arming. Physical combined
+acceptance remains pending.
 
 Prior build **0.18.0 / CARRIAGE_V12 / UNLOADED_V3** simplified Manual
 to one session-enable button (loads/acknowledges settings automatically), then
