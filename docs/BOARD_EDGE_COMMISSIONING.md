@@ -1,5 +1,9 @@
 # Board-edge search and truing - prepared 0.13.0
 
+**Historical formula below is superseded by 0.20.0.** Positive forward trim now
+means `captured position - sensor distance - trim`; Auto uses one kerf as trim.
+See [current truing correction](MULTIBOARD_TRUING_020.md).
+
 Prepared and tested offline on 2026-11-08, then flashed/read back as 0.13.0 on
 COM4. The matching app is reopened; physical acceptance is pending. The app
 requires CARRIAGE_V7 and the matching controller before it permits motion.

@@ -3,12 +3,13 @@ import math
 import re
 import secrets
 import time
+from dataclasses import replace
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QCheckBox, QPushButton
 from sensor_bench.protocol import parse_line
 from simulator import VirtualController
 from supervision_ui import SupervisionAdapter
-from automation_supervision import Outcome
+from automation_supervision import Outcome, plan_board_feed
 from cycle_diagnostics import CycleDiagnostics
 
 TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.release_delay',
@@ -55,7 +56,7 @@ class NativeDryRun(QObject):
         self.auto_start_at = 0
         self.trigger_held = False
         self.last_trigger_hold = 0
-        self.message = 'Connect matching 0.19.0 saw-unplugged firmware.'
+        self.message = 'Connect matching 0.20.0 saw-unplugged firmware.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
 
     def controls(self):
@@ -260,9 +261,9 @@ class NativeDryRun(QObject):
                 mode='auto' if s else 'manual',
                 cut_type='truing' if index == -1 else 'cut',
                 cut_number=index+1 if index is not None and index >= 0 else None,
-                length=(self.owner.carriage_tab.trim_overlap.value() if index == -1 else
+                length=(s['kerf'] if index == -1 else
                         s['cuts'][index] if s else None),
-                length_source='truing_setting' if index == -1 else 'cut_list_target' if s else 'unknown_manual_length',
+                length_source='truing_kerf' if index == -1 else 'cut_list_target' if s else 'unknown_manual_length',
                 board_preset=self.owner.get_active_board_length(),
                 kerf=s['kerf'] if s else self.owner.kerf_input.value())
         self.pending={'kind':'action','req':expected,'at':time.monotonic()}
@@ -275,7 +276,7 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.19.0'
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.20.0'
                         and f.get('DRY_RUN')=='UNLOADED_V4' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
                         and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
@@ -425,10 +426,17 @@ class NativeDryRun(QObject):
             self.owner.carriage_tab.acknowledge(); self.local_fault=''; self.consent.setChecked(False)
             self.trigger_consent.setChecked(False)
 
+    def waiting_for_board(self):
+        return bool(self.sequence and self.sequence['stage'] in ('WAIT_NEW_BOARD','BOARD_TOO_SHORT'))
+
+    def batch_unchanged(self):
+        return (not self.sequence or (tuple(self.owner.cut_list)==self.sequence['list_snapshot'] and
+                self.owner.kerf_input.value()==self.sequence['kerf']))
+
     def can_begin_auto(self):
         p=self.owner.carriage_tab
         return (self.supervision.coordinator.geometry.verified and self.safe_link(False) and not self.pending and not self.manual_start and not self.auto_start
-                and not self.awaiting_stop and not self.sequence and not p.armed and not p.pending
+                and not self.awaiting_stop and (not self.sequence or self.waiting_for_board()) and self.batch_unchanged() and not p.armed and not p.pending
                 and not p.profile_pending and not p.stopping and p.x.get('CONFIGURED')=='1'
                 and p.x.get('POS_KNOWN')=='1' and p.x.get('REMAINING')=='0'
                 and self.data.get('STATE') in ('OFF','READY') and self.data.get('CLAMP')=='0'
@@ -449,15 +457,19 @@ class NativeDryRun(QObject):
     def start_sequence(self):
         p=self.owner.carriage_tab
         if not self.can_start(): return False
-        cuts=[float(length) for _,length,_ in self.owner.cut_list]
+        previous=self.sequence if self.waiting_for_board() else None
+        cuts=previous['cuts'] if previous else [float(length) for _,length,_ in self.owner.cut_list]
         if any(not math.isfinite(x) or x<=0 for x in cuts): return False
         self.supervision.coordinator.invalidate('New board acquisition requested.')
         self.owner.cut_history.clear_board()
         self.sequence={'stage':'SEARCH_ARM','at':time.monotonic(),'cuts':cuts,'kerf':self.owner.kerf_input.value(),
-                       'index':-1,'move_id':int(p.x['MOVE_ID']),
+                       'index':-1,'next_index':previous['next_index'] if previous else 0,
+                       'board':previous['board']+1 if previous else 1,
+                       'list_snapshot':previous['list_snapshot'] if previous else tuple(self.owner.cut_list),
+                       'move_id':int(p.x['MOVE_ID']),
                        'edge_command':f'XEDGE {int(math.floor(p.edge_search.value()*127.12+.5))} '
                                       f'{int(math.floor(self.owner.board_sensor_location_input.value()*1000+.5))} '
-                                      f'{int(math.floor(p.trim_overlap.value()*1000+.5))}'}
+                                      f'{int(math.floor(self.owner.kerf_input.value()*1000+.5))}'}
         # The explicit Run Dry List gesture authorizes this sequence's arming.
         self.issuing_sequence=True
         try: sent=self.owner.send_command('XARM 1')
@@ -469,7 +481,8 @@ class NativeDryRun(QObject):
 
     def can_start(self):
         p=self.owner.carriage_tab
-        return not (not self.supervision.coordinator.geometry.verified or not self.safe_link() or self.awaiting_stop or self.pending or self.sequence or self.auto_start or self.manual_start or not self.settings_match() or
+        return not (not self.supervision.coordinator.geometry.verified or not self.safe_link() or self.awaiting_stop or self.pending or
+                (self.sequence and not self.waiting_for_board()) or not self.batch_unchanged() or self.auto_start or self.manual_start or not self.settings_match() or
                 self.data.get('CFG')!=str(self.token) or not self.token or p.pending or p.profile_pending or p.stopping or
                 self.data.get('STATE')!='OFF' or p.armed or p.x.get('POS_KNOWN')!='1'
                 or not p.consent.isChecked() or p.x.get('CONFIGURED')!='1'
@@ -488,9 +501,19 @@ class NativeDryRun(QObject):
             if not p.request_move(s['edge_command']): self.stop('Board detector must be clear before acquisition'); return
             next_stage('SEARCH')
         elif stage=='SEARCH' and p.x.get('EDGE_VALID')=='1' and p.x.get('EDGE_STATE')=='FOUND' and not p.armed:
-            minimum=(sum(s['cuts'])+len(s['cuts'])*s['kerf'])*1000
-            if int(p.x['TRUING_MILLI'])<minimum:
-                self.stop('Cut list exceeds available referenced travel'); return
+            # Preview ONE next cut on the captured board. Future boards in the
+            # queue do not have to fit this board's available carriage travel.
+            c=self.supervision.context()
+            proposed=int(p.x['TRUING_MILLI'])/1000
+            material=c.material
+            if material.located:
+                material=replace(material,stock=material.stock.shifted(proposed-c.position))
+            decision=plan_board_feed(replace(c,position=proposed,material=material),s['cuts'][s['next_index']],s['kerf'])
+            if not decision.proceeds or decision.code=='NEXT_BOARD_REQUIRED':
+                self.supervision.coordinator.paused=decision
+                next_stage('BOARD_TOO_SHORT')
+                self.message=decision.reason+' Load suitable stock and start acquisition again; no truing stroke was sent.'
+                return
             if not p.select_profile(2): self.stop('Cannot select stored Normal profile'); return
             next_stage('TRUE_PROFILE')
         elif stage=='TRUE_PROFILE' and p.x.get('PROFILE_ID')=='2':
@@ -505,14 +528,8 @@ class NativeDryRun(QObject):
         elif stage=='MOVE' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
             self.owner.send_command('XARM 0'); next_stage('DISARM')
         elif stage=='DISARM' and not p.armed and not p.stopping:
-            if (s['index']==-1 and self.supervision.coordinator.material.located and
-                    self.supervision.coordinator.material.contact):
-                # The measured/commissioned native truing datum establishes the
-                # remaining infeed interval. This is estimated material geometry,
-                # never a grip measurement or an invented encoder position.
-                c=self.supervision.context()
-                from automation_supervision import Span
-                self.supervision.coordinator.locate_stock(Span(0,c.geometry.pusher(c.position).near),'commissioned truing datum')
+            # Captured stock was translated by the real sensor+kerf advance.
+            # Do not fabricate a new material origin to hide a truing mismatch.
             decision=self.supervision.review()
             if not decision.proceeds:
                 next_stage('OPERATOR_REQUIRED')
@@ -531,22 +548,18 @@ class NativeDryRun(QObject):
         elif stage=='SAW_WAIT' and self.data.get('STATE')=='READY' and int(self.data['DONE'])!=s['done']:
             self.owner.send_command('DOFF'); next_stage('PNEU_OFF')
         elif stage=='PNEU_OFF' and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0':
-            s['index']+=1
+            s['index']=s['next_index'] if s['index']==-1 else s['index']+1
+            s['next_index']=s['index']
             if s['index']>=len(s['cuts']):
-                decision=self.supervision.review('clear_sensor')
-                if not decision.proceeds:
-                    next_stage('CLEARANCE_REQUIRED'); self.message=decision.reason; return
-                if decision.outcome==Outcome.ADAPT:
-                    s['clear_target']=decision.target; s['clear_plan']=decision
-                    if not p.select_profile(1): self.stop('Cannot select cleanup Gentle profile'); return
-                    next_stage('CLEAR_PROFILE')
-                else:
-                    if not self.owner.send_command('XARM 1'): self.stop('Cannot arm carriage return'); return
-                    next_stage('LOAD_ARM')
+                self.finish_board(next_stage); return
             else:
-                s['target']=160.5+int(p.x['HOME_OFFSET'])/127.12-s['cuts'][s['index']]-s['kerf']
-                if s['target']<0 or not self.owner.send_command('XARM 1'):
-                    self.stop('Dry-list feed target outside travel'); return
+                decision=self.supervision.review('feed',length=s['cuts'][s['index']],kerf=s['kerf'])
+                if decision.code=='NEXT_BOARD_REQUIRED':
+                    self.finish_board(next_stage); return
+                if not decision.proceeds:
+                    self.stop(decision.reason); return
+                s['target']=decision.target
+                if not self.owner.send_command('XARM 1'): self.stop('Cannot arm dry-list feed'); return
                 next_stage('FEED_ARM')
         elif stage=='CLEAR_PROFILE' and not p.profile_pending and p.x.get('PROFILE_ID')=='1':
             decision=self.supervision.review('clear_sensor')
@@ -577,13 +590,37 @@ class NativeDryRun(QObject):
         elif stage=='LOAD_WAIT' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
             self.owner.send_command('XARM 0'); next_stage('DONE')
         elif stage=='DONE' and not p.armed:
-            self.sequence=None; self.message='Unloaded dry list complete; production cut-list progress unchanged.'; return
+            if s['next_index']<len(s['cuts']):
+                next_stage('WAIT_NEW_BOARD')
+                self.message=f"Board {s['board']} complete. Load the next board; next cut is {s['next_index']+1}. Press Start next board when ready."
+            else:
+                self.sequence=None; self.message='Unloaded dry list complete; production cut-list progress unchanged.'
+            return
+        elif stage in ('WAIT_NEW_BOARD','BOARD_TOO_SHORT'):
+            self.message=(f"Board {s['board']}: waiting for suitable stock for cut {s['next_index']+1}. "
+                          'Detector must be clear; press Start next board to acquire. '+
+                          ('Cut list/kerf changed; restore them or Stop to begin a new batch.' if not self.batch_unchanged() else ''))
+            return
         elif stage in ('OPERATOR_REQUIRED','CLEARANCE_REQUIRED'):
             decision=self.supervision.coordinator.paused
             self.message='OPERATOR REQUIRED — '+(decision.reason if decision else 'Reconcile material/holding and restart.')
             return  # Unenergized human pause has no arbitrary 180-second expiry.
         if self.sequence:
             label = ('SEARCH — trip and hold the real board detector until truing starts' if s['stage']=='SEARCH' else s['stage'])
-            self.message=f"Dry list: {label} — {'truing' if s['index']<0 else 'cut '+str(s['index']+1)}; saw mains MUST stay unplugged."
+            self.message=f"Dry list board {s['board']}: {label} — {'truing' if s['index']<0 else 'cut '+str(s['index']+1)}; saw mains MUST stay unplugged."
             if time.monotonic()-s['at']>180:
                 self.stop('Dry-list phase exceeded 180 seconds')
+
+    def finish_board(self, next_stage):
+        """Same bounded cleanup/verified return at end of EACH board."""
+        s=self.sequence; p=self.owner.carriage_tab
+        decision=self.supervision.review('clear_sensor')
+        if not decision.proceeds:
+            next_stage('CLEARANCE_REQUIRED'); self.message=decision.reason; return
+        if decision.outcome==Outcome.ADAPT:
+            s['clear_target']=decision.target; s['clear_plan']=decision
+            if not p.select_profile(1): self.stop('Cannot select cleanup Gentle profile'); return
+            next_stage('CLEAR_PROFILE')
+        else:
+            if not self.owner.send_command('XARM 1'): self.stop('Cannot arm carriage return'); return
+            next_stage('LOAD_ARM')

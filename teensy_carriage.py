@@ -19,7 +19,7 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V13", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V14", "X_TEST": "MANUAL_JOG_V1", "TRUING":"SENSOR_PLUS_TRIM_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "UNLOADED_DRY_RUN", "CAL_SPI": "127.12",
@@ -269,7 +269,7 @@ class TeensyCarriagePanel(QWidget):
         self.trim_overlap.setValue(0.25)
         for text, control in (("Search limit (in)",self.edge_search),
                               ("Sensor offset (in)",self.sensor_offset),
-                              ("Trim overlap (in)",self.trim_overlap)):
+                              ("Extra forward trim (in; Auto uses kerf)",self.trim_overlap)):
             row.addWidget(QLabel(text)); row.addWidget(control)
         edge_layout.addLayout(row)
         self.edge_button = QPushButton("FIND BOARD EDGE")
@@ -475,7 +475,7 @@ class TeensyCarriagePanel(QWidget):
                     or (f["EDGE_STATE"] == "SEEK" and f["MOVE_KIND"] != "EDGE")
                     or (f["EDGE_VALID"] == "1" and (f["EDGE_STATE"] != "FOUND" or f["POS_KNOWN"] != "1"
                         or not 0 <= int(f["TRUING_MILLI"]) <= int(f["SOFT_MAX_MILLI"])
-                        or int(f["TRUING_MILLI"]) != int(f["EDGE_MILLI"])-int(f["SENSOR_OFFSET_MILLI"])+int(f["TRIM_MILLI"])))):
+                        or int(f["TRUING_MILLI"]) != int(f["EDGE_MILLI"])-int(f["SENSOR_OFFSET_MILLI"])-int(f["TRIM_MILLI"])))):
                 self.trip_local("Invalid board-edge telemetry")
                 return
             self.x = f
@@ -682,7 +682,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible firmware 0.19.0 and verified machine pin map"
+            text = "Waiting for compatible firmware 0.20.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":

@@ -7,7 +7,7 @@ bool valve = false;
 uint32_t valveAt = 0;
 unsigned strokes = 0;
 bool automaticSensor=false, materialContact=false;
-double materialRear=0;
+double materialRear=0, detectorPosition=10.8;
 
 void physics() {
   fakePins[20] = world >= 0 ? LOW : HIGH;
@@ -16,7 +16,7 @@ void physics() {
   const uint32_t elapsed = fakeTime - valveAt;
   fakePins[22] = !valve && elapsed >= 200 ? LOW : HIGH;
   fakePins[16] = valve && elapsed >= 200 ? LOW : HIGH;
-  if (automaticSensor) fakePins[21]=materialRear>=10.8 ? LOW:HIGH;
+  if (automaticSensor) fakePins[21]=materialRear>=detectorPosition ? LOW:HIGH;
 }
 
 void step() {
@@ -47,6 +47,8 @@ int main() {
     if (line.rfind("@TICK ",0)==0) {
       unsigned count=static_cast<unsigned>(std::stoul(line.substr(6)));
       for (unsigned i=0;i<count;++i) step();
+    } else if (line.rfind("@SENSOR_ZONE ",0)==0) {
+      detectorPosition=std::stod(line.substr(13)); physics(); publishStatus();
     } else if (line=="@AUTO_SENSOR 1") {
       automaticSensor=materialContact=true;
       materialRear=carriage::Positioning::milliForOffset(xHomeOffset)/1000.0;

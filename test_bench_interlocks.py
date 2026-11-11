@@ -47,6 +47,7 @@ def main():
                    str(root / "tests" / "firmware" / "dry_run_server.cpp"),
                    "-o", str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_native_dry_run.py"), str(server)], check=True, cwd=root)
+    subprocess.run([sys.executable, str(root / "test_native_multiboard.py"), str(server)], check=True, cwd=root)
 
 
 if __name__ == "__main__":

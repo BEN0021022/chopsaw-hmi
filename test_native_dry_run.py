@@ -149,6 +149,8 @@ def run(exe):
             # One truing stroke plus one stroke per list item, then stored FAST Load.
             w.load_cut_list_lines(['2 A','3 B'])
             w.board_sensor_location_input.setValue(10.5)
+            sup.fields['sensor_near'].setValue(10.5); sup.fields['sensor_far'].setValue(10.5)
+            records(wire.exchange('@SENSOR_ZONE 10.5'))
             sup.verified.setChecked(True); assert sup.save()  # explicitly verify changed test-fixture truing datum
             before=(list(w.cut_list),w.current_cut_index,w.sim_next_piece_index)
             before_trigger_commands=sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)
@@ -167,6 +169,8 @@ def run(exe):
             assert p.edge_searching and wire.strokes==1
             records(wire.exchange('@PIN 21 0'))  # operator trips real detector
             until(lambda:d.sequence and d.sequence['stage']=='MOVE')
+            assert int(p.x['SENSOR_OFFSET_MILLI'])==10500 and int(p.x['TRIM_MILLI'])==100
+            assert int(p.x['TRUING_MILLI'])==int(p.x['EDGE_MILLI'])-10600, 'Sensor + kerf, not sensor minus trim'
             records(wire.exchange('@PIN 21 1'))  # release after truing accepted
             records(wire.exchange('@AUTO_SENSOR 1'))  # independent push-only remnant physics
             until(lambda:d.sequence is None)
@@ -193,8 +197,8 @@ def run(exe):
             assert 'XPROFILE 2' in wire.writes and any(c.startswith('XLOAD ') for c in wire.writes)
             assert sum(c=='DCUT' for c in wire.writes)==4
             assert any(c=='XPROFILE 1' for c in wire.writes), 'Clearance uses Gentle, not return speed'
-            assert any(c.startswith('XMOVE 10550') for c in wire.writes), 'Minimum sensor-zone clearing, not zero/full ejection'
-            assert d.supervision.coordinator.material.stock.far<10.8
+            assert any(c.startswith('XMOVE 10250') for c in wire.writes), 'Minimum sensor-zone clearing, not zero/full ejection'
+            assert d.supervision.coordinator.material.stock.far<10.5
             assert sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)==before_trigger_commands
             assert any(c.startswith('XEDGE ') and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'
             # Diagnostics observe the actual sketch; they never insert commands.

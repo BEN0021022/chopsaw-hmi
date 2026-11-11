@@ -50,6 +50,7 @@ class SupervisionAdapter:
         for (key,value),label in zip(values.items(),labels):
             spin=QDoubleSpinBox(); spin.setRange(0,162); spin.setDecimals(4); spin.setValue(value); spin.setSuffix(' in')
             spin.setMinimumHeight(36); self.fields[key]=spin; form.addRow(label,spin)
+            if key=='rear_extent': spin.setToolTip('Physical moving assembly length behind the pushing face toward Home. This is NOT carriage travel or cleanup distance.')
         layout.addLayout(form)
         self.verified=QCheckBox('Measured footprints, pusher envelope, blade keepout and native truing datum verified for unplugged tests')
         self.verified.setChecked(g.verified); layout.addWidget(self.verified)
@@ -77,7 +78,7 @@ class SupervisionAdapter:
 
     def current_reference_signature(self):
         if not hasattr(self.owner,'board_sensor_location_input') or not hasattr(self.owner,'carriage_tab'): return ()
-        return (self.owner.board_sensor_location_input.value(),self.owner.carriage_tab.trim_overlap.value())
+        return (self.owner.board_sensor_location_input.value(),self.owner.kerf_input.value(),'sensor_plus_kerf_v1')
 
     def context(self):
         p=self.owner.carriage_tab; d=self.owner.dry_run
@@ -85,6 +86,7 @@ class SupervisionAdapter:
         if current and self.coordinator.geometry.verified and current!=self.reference_signature:
             self.coordinator.configure(replace(self.coordinator.geometry,verified=False,automatic_clearance=False))
             if hasattr(self,'verified'): self.verified.setChecked(False)
+            if hasattr(self,'automatic_clear'): self.automatic_clear.setChecked(False)
             if hasattr(self,'feedback'): self.feedback.setText('Native sensor-offset/trim reference changed. Verify datum and recommission; material/plans invalidated.')
         try: pos=160.5+int(p.x['HOME_OFFSET'])/127.12 if p.x.get('POS_KNOWN')=='1' else None
         except (KeyError,ValueError): pos=None
@@ -98,8 +100,8 @@ class SupervisionAdapter:
             fault_free=p.x.get('FAULT')=='NONE' and d.data.get('FAULT')=='NONE' and not p.local_fault and not d.local_fault,
             config_revision=self.coordinator.config_revision)
 
-    def review(self, action='cut'):
-        self.last_decision=self.coordinator.decide(self.context(),action)
+    def review(self, action='cut', **parameters):
+        self.last_decision=self.coordinator.decide(self.context(),action,**parameters)
         event=(self.last_decision.code,self.last_decision.reason)
         if event!=self.last_event:
             self.owner.log.append('SUPERVISION: '+': '.join(event)); self.last_event=event

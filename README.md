@@ -3,7 +3,14 @@
 PyQt6 operator interface for the chop-saw carriage, cut-list workflow, machine
 I/O, simulation, current monitoring, and packaged Windows releases.
 
-## Current Teensy build (2026-11-10)
+## Current Teensy build (2026-11-11)
+
+Prepared **0.20.0 / CARRIAGE_V14** fixes multi-board cut-list rejection and
+corrects truing to advance sensor distance **plus** forward trim (Auto uses
+kerf). One next-cut capacity check replaces the whole-list fit check. At each
+board boundary the runner clears the detector when commissioned, returns to
+Load and waits for **Start next board** without losing the next cut. Old 0.19
+truing signatures must be reconfirmed. See [0.20 commissioning](docs/MULTIBOARD_TRUING_020.md).
 
 Prepared app-side update (2026-11-11): small geometry/material policies and one
 automation coordinator, measured-geometry settings, operator-required pause/review

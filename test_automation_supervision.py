@@ -93,5 +93,24 @@ class Policies(unittest.TestCase):
         self.assertEqual(a.material.stock,Span(0,40))
         a.invalidate('guard opened'); a.cut_completed(); self.assertFalse(a.material.located)
 
+    def test_feed_checks_next_cut_not_entire_queue(self):
+        c=context(material=Material(Span(0,40),'estimated',True))
+        d=plan_board_feed(c,20,.12)
+        self.assertEqual(d.code,'FEED_TARGET_AVAILABLE')
+        self.assertAlmostEqual(d.target,19.88)
+        self.assertEqual(plan_board_feed(c,50,.12).code,'NEXT_BOARD_REQUIRED')
+        # A future cut may need another board, but that cannot invalidate this one.
+        a=AutomationCoordinator(c.geometry); a.material=c.material
+        self.assertEqual(a.decide(c,'feed',length=20,kerf=.12).target,19.88)
+
+    def test_feed_unknowns_and_quantized_keepout(self):
+        c=context(material=Material(Span(0,40),'estimated',True))
+        for changes in ({'fresh':False},{'clamps_off':False},{'reference_known':False},
+                        {'material':Material()},{'material':replace(c.material,contact=False)}):
+            self.assertFalse(plan_board_feed(replace(c,**changes),10,.12).proceeds)
+        for length,kerf in ((None,.12),(float('nan'),.12),(10,-1)):
+            self.assertEqual(plan_board_feed(c,length,kerf).code,'INVALID_LENGTH')
+        self.assertEqual(plan_board_feed(c,38.88,.12).code,'NEXT_BOARD_REQUIRED')
+
 
 if __name__=='__main__': unittest.main()

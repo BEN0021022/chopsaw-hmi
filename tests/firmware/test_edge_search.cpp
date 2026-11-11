@@ -49,7 +49,7 @@ int main() {
   CHECK(xEdge.stage==EdgeSearch::Stage::Found && xEdgeValid && !outputsArmed && !xRemaining);
   CHECK(xPositionKnown && xHomeOffset==capturedOffset && fakePins[40]==LOW);
   CHECK(xEdgeMilli==carriage::Positioning::milliForOffset(capturedOffset));
-  CHECK(xTruingMilli==xEdgeMilli-10800+250 && xTruingMilli>0);
+  CHECK(xTruingMilli==xEdgeMilli-10800-250 && xTruingMilli>0);
   CHECK(Serial.outgoing.find("EDGE_VALID:1")!=std::string::npos);
   for(unsigned t=0;t<1000;++t) edgeTick();
   CHECK(fakePulses==paused+1 && !outputsArmed); // never auto-advance or operate valves

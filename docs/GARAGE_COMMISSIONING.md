@@ -1,5 +1,10 @@
 # Garage commissioning - 2026-11-11
 
+The reported cut-list rejection exposed two defects, corrected in prepared
+0.20.0: [multi-board and forward truing](MULTIBOARD_TRUING_020.md). That procedure
+supersedes the 0.19 truing sign/whole-list behavior described below. It requires
+the matching 0.20 app/firmware pair and a reconfirmed sensor-plus-kerf datum.
+
 Current board baseline is **0.19.0 / CARRIAGE_V13 / UNLOADED_V4**, flashed and
 read back on 2026-11-10. Individual mechanisms passed; combined physical
 acceptance is still unrecorded. The prepared geometry coordinator and Full Auto

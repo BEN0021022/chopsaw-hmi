@@ -962,7 +962,7 @@ class MinimalHMI(QMainWindow):
         self.auto_dry_run.clicked.connect(self.dry_run.start_sequence)
         self.auto_dry_stop=QPushButton('Stop dry run / release clamp')
         self.auto_dry_stop.clicked.connect(lambda: self.dry_run.stop())
-        self.auto_dry_status=QLabel('Requires matching 0.19.0 firmware.'); self.auto_dry_status.setWordWrap(True)
+        self.auto_dry_status=QLabel('Requires matching 0.20.0 firmware.'); self.auto_dry_status.setWordWrap(True)
         for widget in (self.auto_dry_configure,self.auto_dry_run,self.auto_dry_stop,self.auto_dry_status): dry_layout.addWidget(widget)
         right_col.insertWidget(0, self.auto_dry_group)
 
@@ -2555,6 +2555,7 @@ class MinimalHMI(QMainWindow):
         self.auto_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto())
+        self.start_cycle_button.setText('Start next board — dry run' if self.dry_run.waiting_for_board() else 'Start Auto — dry run')
         self.fa_start_cycle_button.setEnabled(False)
         self.auto_status_label.setText(self.dry_run.supervision.summary()+' '+self.dry_run.message)
         self.load_button.setEnabled(p.allowed(f"XLOAD {int(self.native_load_target()*1000+0.5)}"))

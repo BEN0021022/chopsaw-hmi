@@ -88,7 +88,11 @@ def preview_cut_list(context, lengths, kerf):
             result.append(PreviewStep(f'Cut {index+1}', None, Decision(Outcome.BLOCK,
                           'INVALID_LENGTH', 'Cut lengths must be finite and positive.')))
             return tuple(result)
-        position -= length + kerf
+        feed = coordinator.decide(replace(context,position=position), 'feed', length=length, kerf=kerf)
+        if not feed.proceeds or feed.code == 'NEXT_BOARD_REQUIRED':
+            result.append(PreviewStep(f'Cut {index+1} / {length:g} in', position, feed))
+            return tuple(result)
+        position = feed.target
         coordinator.push(-(length + kerf))
         current = replace(context, position=position)
         decision = coordinator.decide(current)

@@ -30,7 +30,8 @@ load this feature. Keep the CSV when replacing the executable during updates.
 
 All dimensions are inches. `cut_length_in` for Auto is the frozen cut-list
 target, labeled `cut_list_target`, not a measured finished-piece length. Truing
-uses the configured trim and is labeled `truing_setting`. Manual positioning has
+uses the configured forward trim (`truing_setting` in 0.19); 0.20 Auto uses the
+batch kerf and labels it `truing_kerf`. Manual positioning has
 no known finished length, so that field remains blank (`unknown_manual_length`).
 
 `board_length_in` is the starting stock length estimated at native edge capture,

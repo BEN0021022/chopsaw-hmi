@@ -159,7 +159,7 @@ def assess_cut_holding(ctx):
 
 
 def validate_next_action(ctx, action):
-    if action not in ('cut','clear_sensor'):
+    if action not in ('cut','clear_sensor','feed'):
         return Decision(Outcome.BLOCK,'UNKNOWN_ACTION','No commissioned policy exists for this action.')
     if not (ctx.fresh and ctx.reference_known and ctx.position is not None and math.isfinite(ctx.position) and ctx.fault_free):
         return Decision(Outcome.BLOCK,'STATE_UNKNOWN','Fresh, homed, fault-free machine state is required.')
@@ -173,9 +173,34 @@ def validate_next_action(ctx, action):
         if ctx.material.located and not ctx.material.stock.near<=0<=ctx.material.stock.far:
             return Decision(Outcome.OPERATOR_REQUIRED,'NO_STOCK_AT_CUT','Tracked material does not span the blade plane; reconcile geometry/material.')
         return assess_cut_holding(ctx)
-    if action=='clear_sensor' and not ctx.clamps_off:
+    if action in ('clear_sensor','feed') and not ctx.clamps_off:
         return Decision(Outcome.BLOCK,'CLAMP_HELD','Release clamps before pushing a remnant.')
     return Decision(Outcome.PROCEED,'STATE_VALID','Machine state permits planning this action.')
+
+
+def plan_board_feed(ctx, length, kerf):
+    """Fit ONE next cut to the current referenced board, never the whole queue."""
+    state=validate_next_action(ctx,'feed')
+    if not state.proceeds: return state
+    if not ctx.geometry.verified:
+        return Decision(Outcome.OPERATOR_REQUIRED,'GEOMETRY_REQUIRED','Measured geometry is required before feeding.')
+    if length is None or kerf is None or not math.isfinite(length) or length<=0 or not math.isfinite(kerf) or kerf<0:
+        return Decision(Outcome.BLOCK,'INVALID_LENGTH','Cut length and kerf must be finite and valid.')
+    if not ctx.material.located or not ctx.material.contact:
+        return Decision(Outcome.OPERATOR_REQUIRED,'MATERIAL_UNKNOWN','A located, contacting board is required before feeding.')
+    if not ctx.material.stock.near<=0<=ctx.material.stock.far:
+        return Decision(Outcome.OPERATOR_REQUIRED,'NO_STOCK_AT_CUT','Tracked stock does not span the blade plane.')
+    distance=length+kerf
+    target=ctx.position-distance
+    # Reserve a full calibrated pulse at the blade boundary so target rounding
+    # cannot turn a nominally fitting cut into a keepout crossing.
+    boundary=max(ctx.geometry.physical_min,ctx.geometry.cut_keepout)+1/127.12
+    usable=min(ctx.geometry.pusher(ctx.position).near,ctx.material.stock.far)-boundary
+    if target<0 or ctx.geometry.pusher(target).near<=boundary or ctx.material.stock.far-distance<=boundary:
+        return Decision(Outcome.ADAPT,'NEXT_BOARD_REQUIRED',
+                        f'Next cut {length:g} in plus {kerf:g} in kerf needs another board; '
+                        f'current usable remainder is {max(0,usable):.3f} in.')
+    return Decision(Outcome.PROCEED,'FEED_TARGET_AVAILABLE','Next cut fits this referenced board; holding is reviewed after positioning.',target=target)
 
 
 def plan_sensor_clearance(ctx):
@@ -234,11 +259,12 @@ class AutomationCoordinator:
             self.invalidate('Completed stroke cannot be reconciled with tracked stock.'); return
         self.material=replace(m,stock=Span(0,m.stock.far),revision=m.revision+1)
 
-    def decide(self, ctx, action='cut'):
+    def decide(self, ctx, action='cut', *, length=None, kerf=None):
         # New rules join here; a blocking result cannot be overridden by an
         # optimization. No individual function can write GPIO/serial.
         ctx=replace(ctx,geometry=self.geometry,material=self.material,config_revision=self.config_revision)
-        d=plan_sensor_clearance(ctx) if action=='clear_sensor' else validate_next_action(ctx,action)
+        d=(plan_sensor_clearance(ctx) if action=='clear_sensor' else
+           plan_board_feed(ctx,length,kerf) if action=='feed' else validate_next_action(ctx,action))
         d=replace(d,material_revision=self.material.revision,config_revision=self.config_revision)
         event=(d.code,d.reason)
         if not self.events or self.events[-1]!=event: self.events.append(event); self.events=self.events[-100:]

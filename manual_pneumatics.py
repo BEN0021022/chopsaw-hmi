@@ -238,7 +238,7 @@ class ManualPneumatics(QGroupBox):
             self.buttons['press'].setText('HOLD to press trigger')
             self.labels['trigger'].setText(('PRESSED commanded' if native.data.get('TRIGGER')=='1' else
                                            'RELEASED / manual ready' if native.data.get('MANUAL')=='1' else 'LOCKED OFF') if fresh else 'UNKNOWN')
-            self.status.setText((native.message+(' | SUPERVISION SETUP REQUIRED' if not native.supervision.coordinator.geometry.verified else '')) if native.compatible else 'Requires matching saw-unplugged firmware 0.19.0. No hardware outputs are enabled here.')
+            self.status.setText((native.message+(' | SUPERVISION SETUP REQUIRED' if not native.supervision.coordinator.geometry.verified else '')) if native.compatible else 'Requires matching saw-unplugged firmware 0.20.0. No hardware outputs are enabled here.')
             self.note.setText('Saw mains unplugged. Manual Cycle clamps → trigger → DOWN/UP → trigger release → brake wait → clamp release. Individual buttons remain independent. Stop/fault retains an engaged clamp; recover explicitly.')
             self.recover_release.setVisible(True); self.recover_ack.setVisible(True)
             self.recover_release.setEnabled(native.allowed('DRELEASE'))

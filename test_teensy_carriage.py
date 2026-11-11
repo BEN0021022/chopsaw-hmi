@@ -293,24 +293,24 @@ def run():
         assert wire.writes[-1] == "KEEPALIVE"
         edge_fields = dict(CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-27, HOME_STATE="DONE",
                            MOVE_ID=1, EDGE_STATE="FOUND", EDGE_VALID=1, EDGE_MILLI=160287,
-                           TRUING_MILLI=149737)
+                           TRUING_MILLI=149237)
         packet(p, **edge_fields)
         assert not p.armed and p.pending is None
-        assert "149.737" in p.edge_result.text() and not p.truing_button.isEnabled()
+        assert "149.237" in p.edge_result.text() and not p.truing_button.isEnabled()
         assert not p.move_to_truing(), "Detection must not arm or advance automatically"
         packet(p, ARMED=1, **edge_fields)
         assert p.truing_button.isEnabled()
         assert not w.send_command("XTRUING 0"), "Capture token must match the last acquisition"
         assert p.move_to_truing() and wire.writes[-1] == "XTRUING 1"
         packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-30, HOME_STATE="DONE",
-               REMAINING=1300, MOVE_KIND="ABSOLUTE", TARGET_OFFSET=-1368, MOVE_ID=2)
+               REMAINING=1300, MOVE_KIND="ABSOLUTE", TARGET_OFFSET=-1432, MOVE_ID=2)
         assert not p.truing_button.isEnabled() and "No valid" in p.edge_result.text()
         p.stop()
         packet(p, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-30, HOME_STATE="DONE")
         assert not p.allowed("XEDGE 20595 10800 250") and not p.allowed("XEDGE 13 160501 250")
         assert not p.allowed("XEDGE 13 10800 -1") and not p.allowed("XTRUING 1 EXTRA")
         ready(p); p.consent.setChecked(True)
-        packet(p, **dict(edge_fields,TRUING_MILLI=149738))
+        packet(p, **dict(edge_fields,TRUING_MILLI=149238))
         assert p.local_fault == "Invalid board-edge telemetry"
 
         # Manual shows Home only; one Home gesture performs setup and full search.
