@@ -34,6 +34,7 @@ from dry_run_control import NativeDryRun, COMMAND as DRY_COMMAND, TRAVEL as DRY_
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
+from machine_workbench import MachineWorkbench
 from _version import __version__ as APP_VERSION
 from controller_backends import (
     CONTROLLER_MODES,
@@ -389,6 +390,7 @@ class MinimalHMI(QMainWindow):
         self.log.document().setMaximumBlockCount(500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
         self.dry_run.changed.connect(self.manual_pneumatics.refresh)
+        self.dry_run.changed.connect(self.machine_workbench.refresh)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
 
@@ -1070,6 +1072,11 @@ class MinimalHMI(QMainWindow):
         )
 
     def create_full_auto_tab(self):
+        self.full_auto_legacy = self.create_legacy_full_auto_tab()
+        self.machine_workbench = MachineWorkbench(self, self.full_auto_legacy)
+        return self.machine_workbench
+
+    def create_legacy_full_auto_tab(self):
         w = QWidget()
         root_layout = QVBoxLayout(w)
         root_layout.setSpacing(6)
@@ -1656,7 +1663,10 @@ class MinimalHMI(QMainWindow):
                            self.qjog_left_01,self.qjog_right_01,self.qjog_left_025,self.qjog_right_025,
                            self.qjog_left_1,self.qjog_right_1,self.qjog_left_2,self.qjog_right_2): widget.setEnabled(True)
         if hasattr(self, "full_auto_tab"):
-            self.full_auto_tab.setEnabled(auto_ready)
+            # The workbench is read-only and available offline. Legacy actuation
+            # remains subject to the existing backend capability gate.
+            self.full_auto_tab.setEnabled(True)
+            self.full_auto_legacy.setEnabled(auto_ready)
 
         if hasattr(self, "auto_clamp_checkbox"):
             cutting_ready = auto_ready and capabilities.automatic_cutting_ready

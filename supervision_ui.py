@@ -95,13 +95,22 @@ class SupervisionAdapter:
             trigger_off=d.data.get('TRIGGER')=='0',clamps_off=d.data.get('CLAMP')=='0',
             sensor_clear=None if sensor not in ('0','1') else sensor=='1',
             carriage_idle=p.x.get('REMAINING')=='0' and not p.pending and not p.homing and not p.edge_searching,
-            fault_free=p.x.get('FAULT')=='NONE' and d.data.get('FAULT')=='NONE' and not p.local_fault and not d.local_fault)
+            fault_free=p.x.get('FAULT')=='NONE' and d.data.get('FAULT')=='NONE' and not p.local_fault and not d.local_fault,
+            config_revision=self.coordinator.config_revision)
 
     def review(self, action='cut'):
         self.last_decision=self.coordinator.decide(self.context(),action)
         event=(self.last_decision.code,self.last_decision.reason)
         if event!=self.last_event:
             self.owner.log.append('SUPERVISION: '+': '.join(event)); self.last_event=event
+            import time
+            self.owner.dry_run.diagnostics.note(self.last_decision.code, self.last_decision.reason, time.monotonic(), {
+                'geometry_revision': self.last_decision.config_revision,
+                'material_revision': self.last_decision.material_revision,
+                'permitted_clamps': self.last_decision.permitted_clamps,
+                'inhibited_clamps': self.last_decision.inhibited_clamps,
+                'target_in': self.last_decision.target,
+            })
         return self.last_decision
 
     def register_stock(self):

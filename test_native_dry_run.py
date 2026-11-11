@@ -179,6 +179,19 @@ def run(exe):
             assert d.supervision.coordinator.material.stock.far<10.8
             assert sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)==before_trigger_commands
             assert any(c.startswith('XEDGE ') and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'
+            # Diagnostics observe the actual sketch; they never insert commands.
+            observed=d.diagnostics.report(wire.now)
+            assert any(r['controller']=='DESCEND' and r['timing_kind']=='travel limit' for r in observed['phases'])
+            assert any(r['controller']=='SPINUP' and r['timing_source']=='controller hash acknowledged' for r in observed['phases'])
+            assert any(e['event']=='CLEAR_ACQUISITION_ZONE' for e in observed['events'])
+            assert any(e['event']=='PHASE' and e.get('snapshot',{}).get('controller_readback',{}).get('TRIGGER')=='1'
+                       for e in observed['events']), 'Per-phase export retains actual output readback'
+            assert observed['latest']['controller_readback']['STATE']=='OFF'
+            assert observed['latest']['acknowledged_timings_ms'] == dict(zip(TIMING_KEYS,d.loaded))
+            w.machine_workbench.pages.setCurrentIndex(1); app.processEvents()
+            w.tabs.setCurrentWidget(w.full_auto_tab); app.processEvents()
+            w.grab().save('tmp/ui-dry-run/diagnostics.png')
+            assert w.machine_workbench.export_report(path=Path(folder)/'actual-sketch-report.json')
             # Stop during the acknowledged preparation cannot later start motion.
             records(wire.exchange('@AUTO_SENSOR 0'))
             # Geometric interference pauses Auto before DARM/clamp/trigger.

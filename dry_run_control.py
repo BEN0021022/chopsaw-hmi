@@ -9,6 +9,7 @@ from sensor_bench.protocol import parse_line
 from simulator import VirtualController
 from supervision_ui import SupervisionAdapter
 from automation_supervision import Outcome
+from cycle_diagnostics import CycleDiagnostics
 
 TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.release_delay',
                'main.release_clearance','saw.down_delay','saw.down_timeout','saw.bottom_dwell',
@@ -36,6 +37,7 @@ class NativeDryRun(QObject):
         super().__init__(owner)
         self.owner = owner
         self.supervision = SupervisionAdapter(owner)
+        self.diagnostics = CycleDiagnostics()
         self.session = None
         self.compatible = False
         self.data = {}
@@ -91,6 +93,8 @@ class NativeDryRun(QObject):
     def sync(self):
         session = (self.owner.ser, self.native())
         if session != self.session:
+            self.diagnostics.note('SESSION_CHANGED', 'Connection/session changed; no previous phase or material reference is reused.', time.monotonic())
+            self.diagnostics.observe({'fresh':False,'message':'Connection/session changed'}, {}, time.monotonic())
             self.session = session; self.compatible=False; self.data={}; self.received=None
             self.token=0; self.loaded=None; self.pending=None; self.awaiting_stop=False; self.local_fault=''; self.sequence=None
             self.manual_start=None; self.auto_start=None; self.trigger_held=False
@@ -307,7 +311,32 @@ class NativeDryRun(QObject):
         elif message.kind=='BENCH_ERROR' and f.get('CODE','').startswith(('DRY_','BLADE_')):
             self.stop('Controller rejected dry-run request: '+f.get('CODE','UNKNOWN'))
         if message.kind in ('BENCH_X','BENCH_DRY'): self.supervision.observe(message.kind)
+        self.capture_diagnostics()
         self.changed.emit()
+
+    def capture_diagnostics(self):
+        """Record accepted readback only; diagnostics never requests an action."""
+        p = self.owner.carriage_tab
+        c = self.supervision.context()
+        acknowledged = (self.fresh() and self.loaded is not None and self.token and
+                        self.data.get('CFG') == str(self.token) and
+                        self.data.get('HASH') == str(timing_hash(self.loaded)))
+        timings = dict(zip(TIMING_KEYS, self.loaded)) if acknowledged else {}
+        decision = self.supervision.last_decision
+        snapshot = {
+            'fresh': self.fresh() and p.ready_link() and p.fresh('INPUTS'),
+            'sequence': self.sequence.get('stage','IDLE') if self.sequence else 'IDLE',
+            'controller': self.data.get('STATE','UNKNOWN'), 'message': self.message,
+            'timing_source': 'controller hash acknowledged' if acknowledged else 'not acknowledged',
+            'acknowledged_timings_ms': timings,
+            'position_in': c.position, 'material_revision': c.material.revision,
+            'geometry_revision': self.supervision.coordinator.config_revision,
+            'inputs_raw': dict(p.inputs), 'controller_readback': dict(self.data),
+            'carriage_readback': dict(p.x),
+            'decision': decision.code if decision else None,
+            'local_fault': self.local_fault or p.local_fault,
+        }
+        self.diagnostics.observe(snapshot, timings, time.monotonic())
 
     def stop(self, reason='Stopped; trigger released, engaged clamp retained.'):
         if self.native() and self.owner.ser and self.owner.ser.is_open:
@@ -316,6 +345,8 @@ class NativeDryRun(QObject):
         self.sequence=None; self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message=reason
         self.supervision.coordinator.invalidate('Stopped; reconcile material before another automatic cycle.')
         if reason!='Stopped; trigger released, engaged clamp retained.': self.local_fault=reason
+        self.diagnostics.note('STOP', reason, time.monotonic())
+        self.capture_diagnostics()
         self.changed.emit()
 
     def tick(self):
@@ -372,6 +403,7 @@ class NativeDryRun(QObject):
             self.owner.auto_dry_configure.setEnabled(self.configure_button.isEnabled() and not self.sequence)
             self.owner.auto_dry_stop.setEnabled(self.native() and self.compatible)
             if self.native(): self.owner.start_cycle_button.setEnabled(self.can_begin_auto())
+        self.capture_diagnostics()
         self.changed.emit()
 
     def acknowledge(self):

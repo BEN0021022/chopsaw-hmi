@@ -1,5 +1,12 @@
 # Integrated saw-unplugged commissioning - 0.19.0
 
+For the prepared 2026-11-11 geometry supervisor/workbench, use the
+[current garage procedure](GARAGE_COMMISSIONING.md) alongside the controller
+sequence below. Geometry commissioning is now required for automatic combined
+cycles. Full Auto's read-only workbench is available offline; its native cycle
+execution remains unavailable. Simulated detector states must agree with modeled
+material during the new remnant-clearance check.
+
 Flashed/read back on COM4 on 2026-11-10 with isolation confirmed: all outputs OFF,
 disarmed/unconfigured, no faults/queued motion, Home unknown. Matching Manual app
 reopened; connection/verification were reads only. Individual mechanisms were confirmed

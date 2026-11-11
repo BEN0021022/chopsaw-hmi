@@ -1,4 +1,16 @@
-# Next bench session - unloaded cut-list commissioning
+# Next bench session - current procedure
+
+Use [Garage commissioning - 2026-11-11](GARAGE_COMMISSIONING.md). It covers the
+prepared geometry supervisor, Full Auto layout/scenarios, real measurements,
+combined-cycle/cleanup tests and diagnostic report. The board is already on
+0.19.0; this workbench requires an app restart, not a firmware flash.
+
+The older notes below are retained as history. Their trigger-lock,
+release-on-fault and repeated-arming descriptions do not describe the current
+0.19 build. Do not use them as today's test instructions.
+
+<details>
+<summary>Historical bench notes (superseded)</summary>
 
 Current prepared **0.19.0 / CARRIAGE_V13 / UNLOADED_V4**: single Manual Home,
 full supported search bound, combined clamp/trigger/travel/brake/release cycle,
@@ -50,3 +62,5 @@ to overwrite later operator settings. Smooth 3000/1500 was reported; around
 Artifacts/source manifests: `tmp/commissioning/0.16.0`; deployed rollback
 `tmp/commissioning/0.15.0`. Local commits/artifacts are not remote backup.
 Update the [master checklist](../TEENSY_APP_MIGRATION_CHECKLIST.md) after tests.
+
+</details>

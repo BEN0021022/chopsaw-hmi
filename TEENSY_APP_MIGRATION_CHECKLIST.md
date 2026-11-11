@@ -70,6 +70,24 @@ Record outstanding physical responses in the [fault acceptance matrix](docs/TEEN
 
 ## Automation supervision foundation - 2026-11-11 (not deployed)
 
+- [x] Full Auto read-only layout/scenario workbench available disconnected; retain
+      legacy virtual-fixture animation with its existing capability gates.
+- [x] Spatial main-pad/pusher/keepout/detector visualization, separate live unknown
+      states and 11 isolated scenarios evaluated through the actual coordinator.
+- [x] Whole-list lookahead from an explicitly already-trued stock state; stop at
+      first unsupported cut and predict minimum detector-zone cleanup.
+- [x] Passive native phase/decision diagnostics, acknowledged wait vs travel-limit
+      labels, interrupted feedback handling and bounded JSON session export.
+- [x] Session checklist, measured geometry worksheet and current garage procedure;
+      alternative-holding recovery design documents the remaining executor gap.
+- [x] Pure scenario/diagnostic tests, no-write Qt workbench tests and actual-sketch
+      phase/readback/export assertions; existing app regressions passed.
+- [ ] Monitor one intermittent offscreen Qt6Core process termination; four
+      diagnostic reruns passed, cause unconfirmed. See garage verification record.
+- [ ] Restart source app to inspect the prepared workbench; no firmware update required.
+- [ ] Record actual geometry and physical acceptance; checklist marks never grant
+      permission or imply that a modeled clamp has confirmed grip.
+
 - [x] Pure main-clamp eligibility, cut holding, sensor clearance and next-action
       functions under one geometry/material coordinator. No hardware writes in policies.
 - [x] Explicit measured/unknown material and geometry, projected pusher envelope,
@@ -84,10 +102,14 @@ Record outstanding physical responses in the [fault acceptance matrix](docs/TEEN
       sensor/truing datum; physically accept coordinator behavior with saw unplugged.
 - [ ] Define approved alternative securing method and implement selected-clamp /
       approved-fixture firmware execution before no-main-clamp Manual recovery.
+      Operator decision: keep recovery paused until the second clamp is installed
+      and mapped; no interim no-clamp bypass.
 - [ ] Install/map/commission outfeed device and its holding role (not assumed from cylinder delivery).
 - [ ] Independent safeguarding / grip / blade-stop and powered-production acceptance.
 
 See [architecture and limitations](docs/AUTOMATION_SUPERVISION.md).
+Use [current garage commissioning](docs/GARAGE_COMMISSIONING.md) for today's
+test order; earlier deployment sections below are historical checkpoints.
 Deployed baseline **0.15.0** has editable pulse rate/acceleration and recovered
 MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Actual board rate-edit
 readback passed without enabling or moving; matching app reopened disarmed.

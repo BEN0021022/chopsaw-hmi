@@ -106,6 +106,15 @@ The existing native soft limits, watchdog and per-stage deadlines remain.
 
 ## Verification / remaining commissioning
 
+Full Auto now provides a read-only measured layout and isolated scenario lab,
+whole-list lookahead from already-trued stock, passive phase diagnostics and a
+session report. These all use the same coordinator; previewing does not advance
+live material, change settings, alter a live pause or send commands. Offline
+fixtures are labeled separately from real readback. The former line animation
+is retained as a legacy virtual fixture and is not real measured geometry.
+See [garage commissioning](GARAGE_COMMISSIONING.md) and
+[pending holding recovery](HOLDING_RECOVERY_DESIGN.md).
+
 - Pure policy tests cover footprint/keepout boundaries, stale/unknown state,
   future/unavailable devices, minimum cleanup, mismatches, revisions and push-only
   material tracking.

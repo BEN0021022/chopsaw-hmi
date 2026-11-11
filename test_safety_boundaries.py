@@ -43,7 +43,8 @@ def main_test():
         window.apply_controller_capabilities()
         assert not window.legacy_tab.isEnabled()
         assert not window.auto_tab.isEnabled()
-        assert not window.full_auto_tab.isEnabled()
+        assert window.full_auto_tab.isEnabled()  # Read-only layout/scenarios stay accessible.
+        assert not window.full_auto_legacy.isEnabled()
         assert not window.controller_combo.isEnabled()
 
         window.clamp_left_engaged = False

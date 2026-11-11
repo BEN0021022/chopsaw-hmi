@@ -12,6 +12,13 @@ automatic cycles require geometry commissioning. No generic no-clamp override:
 0.19 cannot execute an inhibited-main-clamp cycle. See
 [automation supervision](docs/AUTOMATION_SUPERVISION.md) for scope and next steps.
 
+Full Auto now opens an offline-capable **Machine layout & commissioning**
+workbench: measured/live layout, isolated coordinator scenarios, next-cut-list
+lookahead, passive cycle diagnostics and an exportable session checklist. The
+older virtual-fixture animation is retained on its own page; native actuation
+is not enabled there. See [garage preparation](docs/GARAGE_COMMISSIONING.md).
+This is an app-only update; deployed firmware remains 0.19.0.
+
 Current **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** removes Manual's Controls
 frame, leaving Home. One Home gesture confirms the established driver setup and
 searches the full supported range (20594 pulses, approximately 162 inches), with
