@@ -26,7 +26,9 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Block saw travel, clamp changes and carriage motion during trigger test;
       keep Auto dry-list trigger OFF. Validate acknowledged lock/output state.
 - [x] Actual-sketch and Qt tests plus Teensy compile. Preserve 0.16.0 rollback.
-- [ ] Flash/read back 0.17.0 with operator isolation confirmed.
+- [x] Flash/read back 0.17.0 on COM4 with operator isolation confirmed on
+      2026-11-10. Outputs OFF, trigger locked, no queued motion, no faults;
+      only identity/status reads sent. Matching Manual app reopened disarmed.
 - [ ] Physical unpowered trigger/release/guard/timeout acceptance, including
       mechanical return of printed trigger assembly. See [procedure](docs/TRIGGER_TEST.md).
 

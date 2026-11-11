@@ -11,6 +11,8 @@ guard/UP/alarm/heartbeat checks, no simultaneous travel or carriage motion.
 Saw mains MUST remain physically unplugged. Auto dry lists never press the
 trigger. See [trigger procedure](docs/TRIGGER_TEST.md). Physical acceptance pending;
 prior 0.16.0 hard-trigger-locked source/HEX are preserved for rollback.
+0.17.0 flashed/read back on COM4 on 2026-11-10 with isolation confirmed; outputs
+OFF, no faults, disarmed, no queued motion. Matching Manual app reopened.
 
 The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only

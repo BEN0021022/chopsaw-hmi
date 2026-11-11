@@ -4,6 +4,10 @@ Firmware 0.17.0 / CARRIAGE_V11 / UNLOADED_V2 adds a separate bounded Manual
 test for the tiny trigger-cylinder valve on **Flood TTL / D19**. This does not
 enable powered cutting or add a blade trigger to the Auto dry-list sequence.
 0.16.0 remains the hard-trigger-locked rollback. Physical acceptance is pending.
+Flashed/read back on COM4 on 2026-11-10 after operator isolation confirmation:
+no faults, disarmed/unconfigured, all outputs OFF, trigger locked, position
+unknown and zero queued motion. The matching Manual app was reopened with no
+consent checked; no arm/press/motion commands were sent by the agent.
 
 ## Procedure
 
