@@ -2,7 +2,8 @@
 #include <stdint.h>
 #include "bench_interlocks.h"
 
-// Unloaded commissioning only. Blade trigger is never an output of this policy.
+// Unloaded commissioning only. Trigger testing is separately armed, bounded,
+// and mutually exclusive with clamp changes and saw travel. Never for live cuts.
 namespace unloaded {
 class DryRun {
  public:
@@ -12,6 +13,7 @@ class DryRun {
                Returning, UpSettle, StopReturn, Failed };
   Phase phase = Off;
   bool armed = false, clamp = false, saw = false;
+  bool triggerArmed = false, trigger = false;
   uint32_t configId = 0, requestId = 0, timingHash = 0;
   const char *fault = "NONE";
   bench::StableAssertion door, up, down;
@@ -40,12 +42,12 @@ class DryRun {
     armed = true; heartbeat = now; enter(Ready, now); ++requestId; return true;
   }
   bool commandClamp(bool on, uint32_t now) {
-    if (!armed || failed() || !up.stable || rawDown || saw) return false;
+    if (!armed || failed() || !up.stable || rawDown || saw || triggerArmed) return false;
     if (on ? phase != Ready : phase != Clamped) return false;
     enter(on ? ClampDelay : ReleaseDelay, now); ++requestId; return true;
   }
   bool stroke(bool cycle, uint32_t now) {
-    if (!armed || phase != Clamped || !clamp || !up.stable || rawDown) return false;
+    if (!armed || phase != Clamped || !clamp || !up.stable || rawDown || triggerArmed) return false;
     automaticReturn = cycle; enter(DownDelay, now); ++requestId; return true;
   }
   bool returnUp(uint32_t now) {
@@ -54,22 +56,39 @@ class DryRun {
     saw = false; enter(Returning, now); ++requestId; return true;
   }
   void keepalive(uint32_t now) { if (armed) heartbeat = now; }
+  bool armTrigger(uint32_t now) {
+    if (!armed || triggerArmed || trigger || failed() || saw ||
+        !(phase == Ready || phase == Clamped) || !door.stable || !rawDoor ||
+        !up.stable || !rawUp || rawDown || !alarm) return false;
+    triggerArmed = true; triggerArmAt = now; ++requestId; return true;
+  }
+  bool pressTrigger(uint32_t now) {
+    if (!armed || !triggerArmed || trigger || failed() || saw ||
+        !(phase == Ready || phase == Clamped) || !rawDoor || !rawUp || rawDown || !alarm) return false;
+    trigger = true; triggerAt = now; ++requestId; return true;
+  }
+  void releaseTrigger() { trigger = triggerArmed = false; ++requestId; }
   void stop(uint32_t now) {
-    armed = clamp = saw = false; automaticReturn = false;
+    armed = clamp = saw = trigger = triggerArmed = false; automaticReturn = false;
     if (!failed()) enter(up.stable && !rawDown ? Off : StopReturn, now);
     ++requestId;
   }
   bool reset(uint32_t now) {
     if (active() || !door.stable || !up.stable || rawDown || !alarm) return false;
-    fault = "NONE"; enter(Off,now); return true;
+    trigger = triggerArmed = false; fault = "NONE"; enter(Off,now); return true;
   }
   void trip(const char *reason, uint32_t now) {
     if (!failed()) fault = reason;
-    armed = clamp = saw = false; automaticReturn = false; enter(Failed,now);
+    armed = clamp = saw = trigger = triggerArmed = false; automaticReturn = false; enter(Failed,now);
   }
   void tick(bool d, bool u, bool n, bool a, uint32_t now) {
     rawDoor=d; rawUp=u; rawDown=n; alarm=a;
     door.update(d,now); up.update(u,now); down.update(n,now);
+    // One press per explicit trigger arm. Neither keepalive nor repeated press
+    // commands extend these deadlines. Expiry releases and locks the output.
+    if (triggerArmed && ((trigger && static_cast<uint32_t>(now-triggerAt) >= 2000) ||
+                        (!trigger && static_cast<uint32_t>(now-triggerArmAt) >= 10000)))
+      trigger = triggerArmed = false;
     if (armed) {
       if (!d) trip("DRY_DOOR_OPEN",now);
       else if (!a) trip("DRY_DRIVER_ALARM",now);
@@ -126,6 +145,7 @@ class DryRun {
   uint32_t draft[Count] = {}, timing[Count] = {};
   uint16_t staged = 0;
   uint32_t at=0, heartbeat=0, clampAt=0, sawAt=0;
+  uint32_t triggerArmAt=0, triggerAt=0;
   bool automaticReturn=false;
   void enter(Phase value, uint32_t now) { phase=value; at=now; }
 };

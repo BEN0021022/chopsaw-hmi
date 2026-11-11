@@ -14,7 +14,7 @@ TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.rel
 STATES = {'OFF','READY','CLAMP_DELAY','CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','RELEASE_CLEAR',
           'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN','FAULT'}
 TRAVEL = {'DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN'}
-COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF)')
+COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DTARM|DTPRESS|DTRELEASE)')
 
 
 def timing_hash(values):
@@ -43,7 +43,7 @@ class NativeDryRun(QObject):
         self.sequence = None
         self.issuing_sequence = False
         self.last_keepalive = 0
-        self.message = 'Connect matching 0.16.0 unloaded-test firmware.'
+        self.message = 'Connect matching 0.17.0 unloaded-test firmware.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
 
     def controls(self):
@@ -60,6 +60,13 @@ class NativeDryRun(QObject):
         self.arm_button.setEnabled(False)
         self.arm_button.clicked.connect(lambda: self.request('arm'))
         row.addWidget(self.configure_button); row.addWidget(self.arm_button); layout.addLayout(row)
+        self.trigger_consent = QCheckBox('Trigger test ONLY: saw mains physically unplugged; no stock; keep saw UP')
+        self.trigger_consent.toggled.connect(self.trigger_consent_changed)
+        layout.addWidget(self.trigger_consent)
+        self.trigger_arm_button = QPushButton('Arm ONE trigger press (2-second maximum)')
+        self.trigger_arm_button.setEnabled(False)
+        self.trigger_arm_button.clicked.connect(lambda: self.request('trigger_arm'))
+        layout.addWidget(self.trigger_arm_button)
         self.label = QLabel(self.message); self.label.setWordWrap(True)
         self.label.setStyleSheet('color:#fbbf24;font-size:13px;'); layout.addWidget(self.label)
         return self.widget
@@ -73,6 +80,7 @@ class NativeDryRun(QObject):
             self.session = session; self.compatible=False; self.data={}; self.received=None
             self.token=0; self.loaded=None; self.pending=None; self.awaiting_stop=False; self.local_fault=''; self.sequence=None
             if hasattr(self,'consent'): self.consent.setChecked(False)
+            if hasattr(self,'trigger_consent'): self.trigger_consent.setChecked(False)
 
     def fresh(self):
         return self.native() and self.compatible and self.received is not None and time.monotonic()-self.received <= 2
@@ -101,8 +109,14 @@ class NativeDryRun(QObject):
             self.stop('Dry-run consent removed')
         self.changed.emit()
 
+    def trigger_consent_changed(self, checked):
+        if not checked and self.native() and self.compatible:
+            self.request('unpress')
+        self.changed.emit()
+
     def allowed(self, command):
         if command=='DOFF': return self.native() and self.compatible
+        if command=='DTRELEASE': return self.native() and self.compatible and not self.sequence
         if self.awaiting_stop: return False
         if command=='KEEPALIVE': return self.safe_link() and self.data.get('ARMED')=='1'
         if self.sequence and not self.issuing_sequence: return False
@@ -122,6 +136,12 @@ class NativeDryRun(QObject):
             return (command==f'DARM {self.token}' and not self.pending and not p.armed and not p.pending and p.x.get('REMAINING')=='0'
                     and state=='OFF' and self.data.get('CFG')==str(self.token) and self.settings_match())
         if self.pending or self.data.get('ARMED')!='1' or self.data.get('CFG')!=str(self.token): return False
+        if command in ('DTARM','DTPRESS'):
+            return (not self.sequence and self.trigger_consent.isChecked() and self.settings_match()
+                    and state in ('READY','CLAMPED') and p.inputs.get('SAW_UP')=='0'
+                    and p.inputs.get('SAW_DOWN')=='1' and self.data.get('TRIGGER')=='0'
+                    and self.data.get('LOCK')==('1' if command=='DTARM' else '0'))
+        if self.data.get('LOCK')!='1': return False
         if command=='DCLAMP 0': return state=='CLAMPED'
         if command=='DUP': return state in {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY'}
         if not self.settings_match(): return False
@@ -146,10 +166,11 @@ class NativeDryRun(QObject):
 
     def request(self, action):
         commands={'arm':f'DARM {self.token}','engage':'DCLAMP 1','release':'DCLAMP 0',
-                  'lower':'DDOWN','up':'DUP','cycle':'DCYCLE'}
+                  'lower':'DDOWN','up':'DUP','cycle':'DCYCLE','trigger_arm':'DTARM',
+                  'press':'DTPRESS','unpress':'DTRELEASE'}
         command=commands.get(action,'')
         if not self.allowed(command): return False
-        expected=(int(self.data['REQ'])+1)&0xffffffff
+        expected=(int(self.data.get('REQ','0'))+1)&0xffffffff
         if not self.owner.send_command(command): return False
         self.pending={'kind':'action','req':expected,'at':time.monotonic()}
         self.message='Waiting for controller acknowledgment.'; self.changed.emit(); return True
@@ -161,13 +182,14 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.16.0'
-                        and f.get('DRY_RUN')=='UNLOADED_V1' and f.get('BLADE_LOCK')=='1')
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.17.0'
+                        and f.get('DRY_RUN')=='UNLOADED_V2' and f.get('BLADE_LOCK')=='TEST_ONLY'
+                        and f.get('TRIGGER_TEST')=='BOUNDED_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
         elif message.kind=='BENCH_DRY':
             try:
-                valid=(f.get('PROTO')=='1' and f.get('LOCK')=='1' and f.get('TRIGGER')=='0'
+                valid=(f.get('PROTO')=='2' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
                        and f.get('STATE') in STATES and f.get('ARMED') in ('0','1')
                        and f.get('CLAMP') in ('0','1') and f.get('SAW') in ('0','1') and bool(f.get('FAULT'))
                        and all(0<=int(f[k])<=0xffffffff for k in ('CFG','HASH','REQ','UP_MS')))
@@ -178,7 +200,9 @@ class NativeDryRun(QObject):
                 lowered=phase in {'DESCEND','DOWN','DWELL','UP_DELAY'}
                 valid=(f['ARMED']==('0' if phase in {'OFF','STOP_RETURN','FAULT'} else '1')
                        and f['CLAMP']==str(int(clamped)) and f['SAW']==str(int(lowered))
-                       and (f['FAULT']!='NONE')==(phase=='FAULT'))
+                       and (f['FAULT']!='NONE')==(phase=='FAULT')
+                       and (f['LOCK']=='1' or (f['ARMED']=='1' and phase in ('READY','CLAMPED') and f['SAW']=='0'))
+                       and (f['TRIGGER']=='0' or f['LOCK']=='0'))
             if not valid:
                 self.stop('Invalid dry-run readback'); return
             if self.data and int(f['UP_MS'])<int(self.data['UP_MS']):
@@ -194,7 +218,9 @@ class NativeDryRun(QObject):
             if f['FAULT']!='NONE':
                 self.sequence=None; self.pending=None; self.message='Controller fault: '+f['FAULT']
             elif not self.local_fault and not self.sequence and not self.message.startswith('Unloaded dry list complete'):
-                self.message='Unloaded dry run: '+f['STATE']+'; blade-trigger output locked OFF.'
+                trigger=('PRESSED (commanded); automatic release within 2 seconds' if f['TRIGGER']=='1' else
+                         'ARMED for one press; expires after 10 seconds' if f['LOCK']=='0' else 'locked OFF')
+                self.message='Unloaded dry run: '+f['STATE']+'; trigger '+trigger+'.'
         elif message.kind=='BENCH_ERROR' and f.get('CODE','').startswith(('DRY_','BLADE_')):
             self.stop('Controller rejected dry-run request: '+f.get('CODE','UNKNOWN'))
         self.changed.emit()
@@ -224,6 +250,7 @@ class NativeDryRun(QObject):
             self.label.setText(self.message)
             self.configure_button.setEnabled(self.safe_link() and not self.pending and not self.owner.carriage_tab.armed and self.data.get('STATE')=='OFF')
             self.arm_button.setEnabled(self.allowed(f'DARM {self.token}'))
+            self.trigger_arm_button.setEnabled(self.allowed('DTARM'))
         if hasattr(self.owner,'auto_dry_run'):
             self.owner.auto_dry_status.setText(self.message)
             self.owner.auto_dry_run.setEnabled(self.can_start())
@@ -234,6 +261,7 @@ class NativeDryRun(QObject):
     def acknowledge(self):
         if self.native() and self.owner.carriage_tab.ready_link() and self.owner.carriage_tab.safety.get('RESET_READY')=='1':
             self.owner.carriage_tab.acknowledge(); self.local_fault=''; self.consent.setChecked(False)
+            self.trigger_consent.setChecked(False)
 
     def start_sequence(self):
         p=self.owner.carriage_tab

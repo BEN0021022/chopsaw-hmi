@@ -19,7 +19,7 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V10", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V11", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "UNLOADED_DRY_RUN", "CAL_SPI": "127.12",
@@ -651,7 +651,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible firmware 0.16.0 and verified machine pin map"
+            text = "Waiting for compatible firmware 0.17.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":

@@ -1,8 +1,9 @@
 # Teensy app and firmware migration checklist
 
-Updated 2026-11-09. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Prepared source/build: custom **0.16.0 / CARRIAGE_V10**, unloaded cut-list mode.
-Flashed/read back on COM4 on 2026-11-09 after operator isolation confirmation;
+Updated 2026-11-10. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
+Current source/build: custom **0.17.0 / CARRIAGE_V11**, unloaded cut-list mode
+plus a separate explicitly armed unpowered Manual trigger test. Saw unplugged.
+Prior 0.16.0 was flashed/read back on COM4 on 2026-11-09 after isolation confirmation;
 startup disarmed, unconfigured, outputs OFF, position unknown, no queued motion.
 Physical unloaded acceptance pending. Deployed 0.15.0 rollback preserved.
 Homing and motion profiles are operator-confirmed working. Restored AUTO controls
@@ -16,6 +17,21 @@ the currently flashed firmware is custom, not stock grblHAL.
 not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
+
+## Unpowered trigger addition - 2026-11-10
+
+- [x] Add separate Manual consent and explicit one-press trigger arm on Flood/D19.
+- [x] Firmware maximum 2 s press, unused-arm expiry 10 s, watchdog/interlock
+      release, no auto-rearm; raw OUT 2 ON still rejected.
+- [x] Block saw travel, clamp changes and carriage motion during trigger test;
+      keep Auto dry-list trigger OFF. Validate acknowledged lock/output state.
+- [x] Actual-sketch and Qt tests plus Teensy compile. Preserve 0.16.0 rollback.
+- [ ] Flash/read back 0.17.0 with operator isolation confirmed.
+- [ ] Physical unpowered trigger/release/guard/timeout acceptance, including
+      mechanical return of printed trigger assembly. See [procedure](docs/TRIGGER_TEST.md).
+
+The earlier 0.16 trigger-lock entries below document that prior checkpoint;
+0.17 changes only the separate Manual test, not Auto or powered-cut permissions.
 Record outstanding physical responses in the [fault acceptance matrix](docs/TEENSY_FAULT_ACCEPTANCE_MATRIX.md).
 Deployed baseline **0.15.0** has editable pulse rate/acceleration and recovered
 MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Actual board rate-edit

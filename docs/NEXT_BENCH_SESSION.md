@@ -1,5 +1,10 @@
 # Next bench session - unloaded cut-list commissioning
 
+2026-11-10 update: matching **0.17.0 / CARRIAGE_V11 / UNLOADED_V2** adds a
+separate [Manual unpowered trigger test](TRIGGER_TEST.md). Auto still never
+presses the blade trigger. Follow that procedure first; saw mains stay unplugged.
+The prior 0.16 deployment below is historical. New physical acceptance pending.
+
 Read the [prepared dry-run procedure](TONIGHT_DRY_RUN.md).
 
 Matching app and **0.16.0 / CARRIAGE_V10 / UNLOADED_V1** firmware are prepared,
@@ -23,7 +28,8 @@ outputs OFF, position unknown, no queued motion; matching app required.
 
 No board or blade power tonight. Unloaded stop/fault **releases** the clamp and
 requests UP. Clamp readback is commanded, not verified grip. Production Start
-Cycle/Resume and blade-trigger controls remain unavailable.
+Cycle/Resume remain unavailable. Trigger controls are only the separately armed
+unpowered test described above, not part of Auto.
 
 RAM profiles reset at reboot. Historically restored values: Gentle 150/200,
 Normal 3500/4000, Fast 2500/1500 (pps / pps squared); records, not instructions

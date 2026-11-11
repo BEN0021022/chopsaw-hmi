@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.16.0";
+constexpr char FIRMWARE_VERSION[] = "0.17.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -127,7 +127,8 @@ bool xReady() {
 
 void applyOutputs() {
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
-    const bool on = index == 2 ? false : dry.active() ? (index == 0 ? dry.saw : dry.clamp) : outputStates[index];
+    const bool on = index == 2 ? (dry.armed && dry.triggerArmed && dry.trigger && !dry.failed()) :
+        dry.active() ? (index == 0 ? dry.saw : dry.clamp) : outputStates[index];
     digitalWrite(OUTPUT_PINS[index], on ? HIGH : LOW);
   }
 }
@@ -243,7 +244,7 @@ void publishHello() {
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
-  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V10,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,DRY_RUN:UNLOADED_V1,BLADE_LOCK:1");
+  Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V11,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,DRY_RUN:UNLOADED_V2,BLADE_LOCK:TEST_ONLY,TRIGGER_TEST:BOUNDED_V1");
 }
 
 void publishPinMap() {
@@ -272,14 +273,16 @@ void publishOutputs() {
 
 void publishDry() {
   if (!telemetryRoom(256)) return;
-  Serial.print("BENCH_DRY,PROTO:1,CFG:"); Serial.print(dry.configId);
+  Serial.print("BENCH_DRY,PROTO:2,CFG:"); Serial.print(dry.configId);
   Serial.print(",HASH:"); Serial.print(dry.timingHash);
   Serial.print(",REQ:"); Serial.print(dry.requestId);
   Serial.print(",ARMED:"); Serial.print(dry.armed ? 1 : 0);
   Serial.print(",STATE:"); Serial.print(dry.name());
   Serial.print(",CLAMP:"); Serial.print(dry.clamp ? 1 : 0);
   Serial.print(",SAW:"); Serial.print(dry.saw ? 1 : 0);
-  Serial.print(",TRIGGER:0,LOCK:1,FAULT:"); Serial.print(dry.fault);
+  Serial.print(",TRIGGER:"); Serial.print(digitalRead(OUTPUT_PINS[2]) == HIGH ? 1 : 0);
+  Serial.print(",LOCK:"); Serial.print(dry.triggerArmed ? 0 : 1);
+  Serial.print(",FAULT:"); Serial.print(dry.fault);
   Serial.print(",UP_MS:"); Serial.println(millis());
 }
 
@@ -477,14 +480,16 @@ bool unsignedArgs(const char *text, const char *prefix, unsigned count, uint32_t
   return *p=='\0';
 }
 
-bool handleDryCommand(const char *command) {
+bool __attribute__((noinline)) handleDryCommand(const char *command) {
   const bool dryCommand = startsWith(command,"DSET ") || startsWith(command,"DCOMMIT ") ||
       startsWith(command,"DARM ") || startsWith(command,"DCLAMP ") || strcmp(command,"DCYCLE")==0 ||
-      strcmp(command,"DDOWN")==0 || strcmp(command,"DUP")==0 || strcmp(command,"DOFF")==0;
+      strcmp(command,"DDOWN")==0 || strcmp(command,"DUP")==0 || strcmp(command,"DOFF")==0 ||
+      strcmp(command,"DTARM")==0 || strcmp(command,"DTPRESS")==0 || strcmp(command,"DTRELEASE")==0;
   if (!dryCommand) return false;
   bool accepted=false;
   uint32_t args[2]={0,0};
   if (strcmp(command,"DOFF")==0) { stopTests(); accepted=true; }
+  else if (strcmp(command,"DTRELEASE")==0) { dry.releaseTrigger(); accepted=true; }
   else if (outputsArmed || xRemaining || interlocks.travel != bench::Travel::Idle || interlocks.fault != bench::Fault::None) {}
   else if (startsWith(command,"DSET ")) accepted=unsignedArgs(command,"DSET ",2,args) && dry.configure(args[0],args[1]);
   else if (startsWith(command,"DCOMMIT ")) accepted=unsignedArgs(command,"DCOMMIT ",1,args) && dry.commit(args[0]);
@@ -492,6 +497,8 @@ bool handleDryCommand(const char *command) {
   else if (startsWith(command,"DCLAMP ")) accepted=unsignedArgs(command,"DCLAMP ",1,args) && args[0]<=1 && dry.commandClamp(args[0]==1,millis());
   else if (strcmp(command,"DCYCLE")==0 || strcmp(command,"DDOWN")==0) accepted=dry.stroke(strcmp(command,"DCYCLE")==0,millis());
   else if (strcmp(command,"DUP")==0) accepted=dry.returnUp(millis());
+  else if (strcmp(command,"DTARM")==0) accepted=dry.armTrigger(millis());
+  else if (strcmp(command,"DTPRESS")==0) accepted=dry.pressTrigger(millis());
   if (!accepted) Serial.println("BENCH_ERROR,CODE:DRY_REQUEST_REJECTED");
   applyOutputs(); publishDry(); publishSafety(); publishX();
   return true;

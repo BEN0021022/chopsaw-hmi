@@ -1,8 +1,8 @@
 # Controller protocol
 
-Updated 2026-11-09. Prepared main-app controller firmware **0.16.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V10. Flashed/read back
-on COM4 with operator isolation confirmed; physical acceptance pending. 115200 baud,
+Updated 2026-11-10. Main-app controller firmware **0.17.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V11. Adds an explicitly
+armed unpowered-only trigger test; physical acceptance pending. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
@@ -31,16 +31,16 @@ Main-app motion requires all of:
 
 ```
 PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
-X_APP:CARRIAGE_V10,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
+X_APP:CARRIAGE_V11,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
 INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
 INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,CAL_SPI:127.12
 MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY
 HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
 ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1
-DRY_RUN:UNLOADED_V1,BLADE_LOCK:1
+DRY_RUN:UNLOADED_V2,BLADE_LOCK:TEST_ONLY,TRIGGER_TEST:BOUNDED_V1
 ```
 
-Prepared firmware version is 0.16.0. Reads HELLO, PINMAP and STATUS are sent on
+Firmware version is 0.17.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.
@@ -136,12 +136,15 @@ Legacy ARM/OUT pneumatic testing enforces one output at a time, 5s maximum ON,
 and down/return timeouts. RESET never clears an unsafe condition or arms.
 Suppression, fusing, guarding and independent hazardous-energy controls remain
 hardware requirements. New unloaded Manual/Auto controls use the separate
-acknowledged protocol below; blade ON remains unavailable in every mode.
+acknowledged protocol below; powered cutting remains unavailable. The separate
+Manual trigger test requires the saw mains physically unplugged.
 
-## Unloaded pneumatic extension (prepared 0.16.0)
+## Unloaded pneumatic extension (0.17.0)
 
-Exact FW 0.16.0, DRY_RUN:UNLOADED_V1 and BLADE_LOCK:1 are also required by the
-app. OUT 0=D33 saw, OUT 1=D32 main clamp; D19 is always driven LOW. These are
+Exact FW 0.17.0, DRY_RUN:UNLOADED_V2, BLADE_LOCK:TEST_ONLY and
+TRIGGER_TEST:BOUNDED_V1 are also required by the
+app. OUT 0=D33 saw, OUT 1=D32 main clamp; D19 defaults LOW and remains locked
+except the explicitly armed bounded Manual trigger test. Raw OUT 2 1 is rejected. These are
 physical channel indices, not virtual clamp IDs. Production cutting is excluded.
 
 | Command | Meaning |
@@ -152,6 +155,9 @@ physical channel indices, not virtual clamp IDs. Production cutting is excluded.
 | DCLAMP 1 / DCLAMP 0 | Engage/settle or release/clearance; release requires settled UP |
 | DCYCLE / DDOWN | One automatic DOWN/UP stroke or lower-and-hold; settled commanded clamp required |
 | DUP | Return UP during a stroke; cannot queue/repeat strokes |
+| DTARM | Arm one isolated trigger press; unloaded engine armed in READY/CLAMPED, stable UP/door and healthy alarm; expires unused after 10 s |
+| DTPRESS | Press Flood/D19 once, maximum 2 s from acceptance; repeated requests cannot extend; no saw/clamp changes while trigger armed |
+| DTRELEASE | Release and lock trigger immediately, including while faulted; increments REQ; does not release clamp |
 | DOFF / OFF | Cancel, disarm, release clamp, request saw UP; retain carriage holding torque |
 | KEEPALIVE | 1500 ms firmware watchdog while armed |
 
@@ -161,11 +167,17 @@ saw.bottom_dwell, saw.up_delay, saw.up_timeout, saw.up_settle. All 0..5000 ms;
 travel timeouts minimum 100 ms. Additional clamp/trigger fields are not loaded.
 
 ```
-BENCH_DRY,PROTO:1,CFG:123,HASH:456,REQ:7,ARMED:1,STATE:CLAMPED,CLAMP:1,SAW:0,TRIGGER:0,LOCK:1,FAULT:NONE,UP_MS:12000
+BENCH_DRY,PROTO:2,CFG:123,HASH:456,REQ:7,ARMED:1,STATE:CLAMPED,CLAMP:1,SAW:0,TRIGGER:0,LOCK:1,FAULT:NONE,UP_MS:12000
 ```
 
 REQ increments on accepted arm/action/stop; configuration is acknowledged by
-CFG and HASH. App never substitutes elapsed PC time for completion. States:
+CFG and HASH. LOCK 0 means trigger test permission; TRIGGER is effective D19 GPIO.
+TRIGGER 1 requires LOCK 0, ARMED 1 and stationary READY/CLAMPED. Expiry clears
+trigger/permission without incrementing REQ; telemetry reports the result.
+All faults/stops clear trigger permission and output. No automatic trigger use.
+See [unpowered trigger procedure](TRIGGER_TEST.md).
+
+App never substitutes elapsed PC time for completion. States:
 OFF, READY, CLAMP_DELAY, CLAMP_SETTLE, CLAMPED, RELEASE_DELAY, RELEASE_CLEAR,
 DOWN_DELAY, DESCEND, DOWN, DWELL, UP_DELAY, RETURN, UP_SETTLE, STOP_RETURN, FAULT.
 BENCH_OUTPUTS now reports effective GPIO states, including unloaded outputs.

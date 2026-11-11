@@ -1,4 +1,9 @@
-# Unloaded cut-list test - 2026-11-09
+# Unloaded cut-list test - updated 2026-11-10
+
+**Current matching build: 0.17.0 / CARRIAGE_V11 / UNLOADED_V2.** It preserves
+the Auto trigger-OFF sequence below and adds only a separate explicitly armed
+[unpowered Manual trigger test](TRIGGER_TEST.md). The 0.16 deployment record below
+is historical; physical unloaded acceptance remains pending.
 
 **Software prepared: firmware 0.16.0 / CARRIAGE_V10 and matching main app.**
 Compiled/tested offline, then flashed/read back on COM4 on 2026-11-09 with
@@ -9,7 +14,8 @@ by the agent. Physical acceptance pending; 0.15.0 source/HEX rollback preserved.
 ## Confirmed scope
 
 - No stock and no cutting. Saw mains physically unplugged throughout.
-- Blade-trigger Flood/D19 is hard locked OFF, including legacy raw commands.
+- Blade-trigger Flood/D19 stays OFF throughout this Auto test. Only the separate
+  explicitly armed Manual test can actuate it; legacy raw commands stay blocked.
 - Main clamp AUX1/D32: ON clamps, OFF releases (operator-confirmed).
 - Saw travel AUX2/D33: OFF returns UP (operator-confirmed).
 - Operator manually trips the **real Limit Y board detector** during acquisition.
@@ -45,7 +51,7 @@ automatic retry, early carriage return or resumption after a fault.
 ## At the machine
 
 1. App closed, driver power OFF, valve power disconnected, air isolated and
-   saw unplugged: load prepared 0.16.0 and open the matching app. Verify identity,
+   saw unplugged: load prepared 0.17.0 and open the matching app. Verify identity,
    pin map, outputs OFF and no queued pulses.
 2. Check door, Home, board detector and both saw endpoint pills. Verify valve
    suppression/polarity and fuses. Check unloaded OFF/UP and clamp behavior with

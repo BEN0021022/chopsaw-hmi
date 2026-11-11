@@ -104,6 +104,24 @@ def run(exe):
             assert d.data['HASH']==str(timing_hash(d.loaded))
             # Combined Manual actions and source guards.
             assert d.request('arm'); assert not d.request('engage'); flush(); tick()
+            # New manual trigger feature is opt-in, one shot, and never Auto.
+            assert not d.request('trigger_arm') and not d.request('press')
+            d.trigger_consent.setChecked(True)
+            assert d.request('trigger_arm'); flush(); tick()
+            assert d.data['LOCK']=='0' and d.data['TRIGGER']=='0'
+            assert not d.request('engage') and not d.request('cycle')
+            assert not w.send_command('XARM 1')
+            assert w.manual_pneumatics.request('press'); flush(); tick()
+            assert d.data['TRIGGER']=='1' and not d.request('press')
+            until(lambda:d.data['LOCK']=='1')
+            assert d.data['TRIGGER']=='0' and not d.request('press')
+            assert d.request('trigger_arm'); flush(); tick()
+            assert d.request('press'); flush(); tick()
+            assert d.request('unpress'); flush(); tick()
+            assert d.data['TRIGGER']=='0' and d.data['LOCK']=='1'
+            assert d.request('trigger_arm'); flush(); tick()
+            d.trigger_consent.setChecked(False); flush(); tick()
+            assert d.data['LOCK']=='1' and not d.request('trigger_arm')
             assert d.request('engage'); flush(); until(lambda:d.data['STATE']=='CLAMPED')
             assert not w.send_command('XARM 1') and not w.send_command('XDISABLE')
             assert d.request('cycle'); flush(); until(lambda:d.data['STATE']=='DESCEND')
@@ -117,6 +135,7 @@ def run(exe):
             w.load_cut_list_lines(['2 A','3 B'])
             w.board_sensor_location_input.setValue(10.5)
             before=(list(w.cut_list),w.current_cut_index,w.sim_next_piece_index)
+            before_trigger_commands=sum(c in ('DTARM','DTPRESS') for c in wire.writes)
             assert d.can_start(), (d.message,p.x)
             w.status_label.setText('OFFLINE TEST FIXTURE')
             w.resize(1280,900); w.tabs.setCurrentWidget(w.auto_tab); w.show(); app.processEvents()
@@ -124,6 +143,7 @@ def run(exe):
             w.grab().save('tmp/ui-dry-run/native-auto.png')
             w.tabs.setCurrentWidget(w.legacy_tab); app.processEvents()
             w.grab().save('tmp/ui-dry-run/native-manual.png')
+            w.manual_pneumatics.grab().save('tmp/ui-dry-run/trigger-controls.png')
             w.tabs.setCurrentWidget(w.auto_tab)
             assert d.start_sequence(); flush()
             until(lambda:d.sequence and d.sequence['stage']=='SEARCH')
@@ -138,6 +158,7 @@ def run(exe):
             assert (w.cut_list,w.current_cut_index,w.sim_next_piece_index)==before
             assert 'XPROFILE 2' in wire.writes and any(c.startswith('XLOAD ') for c in wire.writes)
             assert sum(c=='DCYCLE' for c in wire.writes)==4
+            assert sum(c in ('DTARM','DTPRESS') for c in wire.writes)==before_trigger_commands
             assert any(c.startswith('XEDGE ') and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'
             # No silent timing changes; a fresh acknowledged snapshot is required.
             w.cylinder_timing.fields['main.engage_settle'].setValue(200)
@@ -152,9 +173,14 @@ def run(exe):
             assert not any(c.startswith(('XARM 1','DARM','DCLAMP','DCYCLE','XMOVE','XEDGE')) for c in wire.writes[count:])
             # Lost feedback cancels pending actuation and never restores consent/arm.
             assert d.request('arm'); flush(); tick()
+            d.trigger_consent.setChecked(True)
+            assert d.request('trigger_arm'); flush(); tick()
+            assert d.request('press'); flush(); tick()
+            assert d.data['TRIGGER']=='1'
             d.received=wire.now-3; d.tick(); assert d.local_fault
             assert not d.allowed('DCLAMP 1'); flush(); tick()
             assert d.data['STATE']=='OFF' and not d.can_start()
+            assert d.data['TRIGGER']=='0' and d.data['LOCK']=='1'
             d.acknowledge(); flush(); tick()
             assert not d.local_fault and not d.consent.isChecked()
             # Contradictory outputs/phase must be rejected before enabling a control.

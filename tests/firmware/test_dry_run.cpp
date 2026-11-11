@@ -17,7 +17,7 @@ void descendDry() {
   fakePins[22]=HIGH; advanceDry(30); CHECK(!dry.failed());
 }
 int main() {
-  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V1,BLADE_LOCK:1")!=std::string::npos);
+  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V2,BLADE_LOCK:TEST_ONLY,TRIGGER_TEST:BOUNDED_V1")!=std::string::npos);
   command("DARM 23"); CHECK(!dry.armed);
   command("DSET 0 10"); command("DCOMMIT 23"); CHECK(!dry.configId);
   command("DSET 42949672960 0"); CHECK(!dry.configId);
@@ -64,5 +64,40 @@ int main() {
   restart(); configDry(); fakeTime=UINT32_MAX-30;
   command("DARM 23"); command("DCLAMP 1"); advanceDry(80);
   CHECK(dry.clamp && dry.phase==unloaded::DryRun::Clamped && !dry.failed());
+  // Independent unpowered trigger test: one explicit arm per bounded press.
+  restart(); command("DTARM"); command("DTPRESS"); CHECK(!dry.triggerArmed && fakePins[19]==LOW);
+  configDry(); command("DARM 23"); command("DTPRESS"); CHECK(fakePins[19]==LOW);
+  command("DTARM"); CHECK(dry.triggerArmed && !dry.trigger && fakePins[19]==LOW);
+  command("DCLAMP 1"); CHECK(!dry.clamp && dry.phase==unloaded::DryRun::Ready);
+  command("DTPRESS"); CHECK(dry.trigger && fakePins[19]==HIGH && fakePins[33]==LOW && fakePins[32]==LOW);
+  command("XARM 1"); command("XJOG 1 13"); CHECK(xRemaining==0 && fakePulses==0);
+  advanceDry(1000); command("DTPRESS"); advanceDry(1010);
+  CHECK(!dry.trigger && !dry.triggerArmed && fakePins[19]==LOW && !dry.failed());
+  command("DTPRESS"); CHECK(fakePins[19]==LOW);
+  command("DTARM"); advanceDry(10010); CHECK(!dry.triggerArmed && !dry.trigger && !dry.failed());
+  command("DTARM"); command("DTPRESS"); command("DTRELEASE");
+  CHECK(fakePins[19]==LOW && !dry.triggerArmed && dry.armed);
+  command("DTARM"); command("DTPRESS"); command("OFF");
+  CHECK(fakePins[19]==LOW && !dry.triggerArmed && !dry.armed);
+  restart(); clampDry(); command("DTARM"); CHECK(dry.triggerArmed);
+  command("DCYCLE"); command("DDOWN"); command("DCLAMP 0");
+  CHECK(dry.phase==unloaded::DryRun::Clamped && !dry.saw && dry.clamp);
+  command("DTRELEASE"); command("DCYCLE"); advanceDry(15); CHECK(dry.saw);
+  command("DTARM"); command("DTPRESS"); CHECK(!dry.triggerArmed && fakePins[19]==LOW);
+  for (unsigned event=0;event<5;++event) {
+    restart(); configDry(); command("DARM 23"); command("DTARM"); command("DTPRESS");
+    if (event==0) fakePins[29]=HIGH;
+    if (event==1) fakePins[14]=LOW;
+    if (event==2) fakePins[22]=HIGH;
+    if (event==3) fakePins[16]=LOW;
+    if (event==4) { Serial.txRoom=0; advanceDry(1510,false); }
+    loop(); CHECK(dry.failed() && !dry.trigger && !dry.triggerArmed && fakePins[19]==LOW);
+    command("KEEPALIVE"); command("DTPRESS"); CHECK(fakePins[19]==LOW && !dry.armed);
+    command("DTRELEASE"); CHECK(fakePins[19]==LOW);
+  }
+  restart(); configDry(); fakeTime=UINT32_MAX-30;
+  command("DARM 23"); command("DTARM"); command("DTPRESS"); advanceDry(2010);
+  CHECK(!dry.trigger && !dry.triggerArmed && !dry.failed() && fakePins[19]==LOW);
+  restart(); CHECK(!dry.triggerArmed && fakePins[19]==LOW);
   printf("Unloaded dry-run sketch: %u checks passed\n",checks);
 }

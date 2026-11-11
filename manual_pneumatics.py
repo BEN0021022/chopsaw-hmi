@@ -99,7 +99,7 @@ class ManualPneumatics(QGroupBox):
     def request(self, action):
         self.refresh()
         if not self.simulator():
-            return self.owner.dry_run.request(action) if action not in ('press','unpress') else False
+            return self.owner.dry_run.request(action)
         if not self.available() or self.phase:
             return False
         sim = self.simulator()
@@ -196,7 +196,8 @@ class ManualPneumatics(QGroupBox):
             if self.session is not None or self.phase:
                 self.token += 1; self.session = None; self.phase = ''; self.clamp_settled = False
             native=self.owner.dry_run
-            commands={'engage':'DCLAMP 1','release':'DCLAMP 0','lower':'DDOWN','up':'DUP'}
+            commands={'engage':'DCLAMP 1','release':'DCLAMP 0','lower':'DDOWN','up':'DUP',
+                      'press':'DTPRESS','unpress':'DTRELEASE'}
             for action,button in self.buttons.items(): button.setEnabled(native.allowed(commands.get(action,'')))
             self.cycle_button.setText('Unloaded Saw Cycle')
             self.cycle_button.setEnabled(native.allowed('DCYCLE'))
@@ -205,12 +206,15 @@ class ManualPneumatics(QGroupBox):
             fresh=native.fresh()
             self.labels['clamp'].setText(('ON commanded' if native.data.get('CLAMP')=='1' else 'OFF commanded') if fresh else 'UNKNOWN')
             self.labels['travel'].setText(self.owner.carriage_tab.safety.get('SAW_POSITION','UNKNOWN') if fresh else 'UNKNOWN')
-            self.labels['trigger'].setText('LOCKED OFF' if native.compatible else 'UNKNOWN')
-            self.status.setText(native.message if native.compatible else 'Requires matching unloaded-test firmware 0.16.0. No hardware outputs are enabled here.')
-            self.note.setText('Unloaded tests only: saw mains unplugged, no stock. Trigger output stays OFF. Stop/fault releases the clamp; a normal stroke retains it.')
+            self.buttons['press'].setText('Press trigger (max 2 s)')
+            self.labels['trigger'].setText(('PRESSED commanded' if native.data.get('TRIGGER')=='1' else
+                                           'ARMED / OFF' if native.data.get('LOCK')=='0' else 'LOCKED OFF') if fresh else 'UNKNOWN')
+            self.status.setText(native.message if native.compatible else 'Requires matching unloaded-test firmware 0.17.0. No hardware outputs are enabled here.')
+            self.note.setText('Saw mains MUST remain unplugged; no stock. Trigger test is separate from saw travel and Auto. Each press releases/disarms within 2 s. Stop/fault releases the clamp.')
             self.state_changed.emit()
             return
         self.cycle_button.setText('Manual Saw Cycle'); self.stop_button.setText('STOP')
+        self.buttons['press'].setText('Press trigger')
         self.note.setText('Normal saw cycle keeps the main clamp engaged. Release it explicitly after the cut.')
         session = (self.owner.ser, self.owner.cycle_generation)
         if session != self.session:

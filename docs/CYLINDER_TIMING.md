@@ -81,13 +81,15 @@ trigger and retains the clamp. Freshness loss or disconnect cannot automatically
 resume a pending action. The virtual stop resets the simulated saw UP; this is
 not proof of the mechanical result of a real fault.
 
-## Native unloaded controls (prepared 0.16.0)
+## Native unloaded controls (0.17.0)
 
 Explicit preparation, matching identity, fresh feedback and loaded timings are
 required. Arm enables no valve. Clamp must settle before Lower or Unloaded Saw
 Cycle; real DOWN then UP switches govern completion and travel timeouts. Normal
-stroke keeps the main clamp commanded ON. Release requires UP. Trigger buttons
-are disabled and D19 is hard locked OFF in firmware, including raw commands.
+stroke keeps the main clamp commanded ON. Release requires UP. The separate
+Manual trigger test requires explicit additional consent/arm and is fixed at
+2 s maximum, not driven by the trigger timing fields. It cannot overlap saw
+travel or Auto; raw output ON remains blocked. See [trigger test](TRIGGER_TEST.md).
 
 Unloaded Stop/fault cancels the sequence, requests saw UP and **releases** the
 clamp. This differs from simulator manual Stop and is only for no-stock testing.

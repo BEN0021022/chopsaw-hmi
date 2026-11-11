@@ -3,13 +3,20 @@
 PyQt6 operator interface for the chop-saw carriage, cut-list workflow, machine
 I/O, simulation, current monitoring, and packaged Windows releases.
 
-## Current Teensy build (2026-11-09)
+## Current Teensy build (2026-11-10)
+
+Matching build **0.17.0 / CARRIAGE_V11 / UNLOADED_V2** adds a separate explicitly
+armed Manual trigger-cylinder test on Flood/D19: one press per arm, maximum 2 s,
+guard/UP/alarm/heartbeat checks, no simultaneous travel or carriage motion.
+Saw mains MUST remain physically unplugged. Auto dry lists never press the
+trigger. See [trigger procedure](docs/TRIGGER_TEST.md). Physical acceptance pending;
+prior 0.16.0 hard-trigger-locked source/HEX are preserved for rollback.
 
 The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
 tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
 identity/status requests; it never configures, arms or moves the driver.
 
-Active app/firmware is **0.16.0 / CARRIAGE_V10**, compiled/tested offline, then
+Previous app/firmware was **0.16.0 / CARRIAGE_V10**, compiled/tested offline, then
 flashed/read back on COM4 on 2026-11-09 with operator isolation confirmed.
 Startup disarmed, outputs OFF, position unknown, no queued motion. Physical
 unloaded acceptance remains pending; **0.15.0** rollback is preserved.
