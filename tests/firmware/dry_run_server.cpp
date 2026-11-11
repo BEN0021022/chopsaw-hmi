@@ -6,6 +6,8 @@ int world = -50;
 bool valve = false;
 uint32_t valveAt = 0;
 unsigned strokes = 0;
+bool automaticSensor=false, materialContact=false;
+double materialRear=0;
 
 void physics() {
   fakePins[20] = world >= 0 ? LOW : HIGH;
@@ -14,12 +16,18 @@ void physics() {
   const uint32_t elapsed = fakeTime - valveAt;
   fakePins[22] = !valve && elapsed >= 200 ? LOW : HIGH;
   fakePins[16] = valve && elapsed >= 200 ? LOW : HIGH;
+  if (automaticSensor) fakePins[21]=materialRear>=10.8 ? LOW:HIGH;
 }
 
 void step() {
   const int32_t before = xCommandedSteps;
   ++fakeTime; physics(); loop();
   world += xCommandedSteps - before;
+  if (automaticSensor && materialContact) {
+    const int delta=xCommandedSteps-before;
+    if (delta>0) materialContact=false;
+    else materialRear+=delta/127.12;
+  }
   CHECK(!fakePins[19] || (dry.armed && dry.trigger && (dry.cycleRunning || dry.manualMode) &&
                         fakePins[29]==LOW && fakePins[14]==HIGH));
   CHECK(!dry.cycleRunning || !fakePins[19] || fakePins[32]);
@@ -39,6 +47,12 @@ int main() {
     if (line.rfind("@TICK ",0)==0) {
       unsigned count=static_cast<unsigned>(std::stoul(line.substr(6)));
       for (unsigned i=0;i<count;++i) step();
+    } else if (line=="@AUTO_SENSOR 1") {
+      automaticSensor=materialContact=true;
+      materialRear=carriage::Positioning::milliForOffset(xHomeOffset)/1000.0;
+      physics(); publishStatus();
+    } else if (line=="@AUTO_SENSOR 0") {
+      automaticSensor=materialContact=false; fakePins[21]=HIGH; publishStatus();
     } else if (line.rfind("@PIN ",0)==0) {
       int pin=0,value=0;
       if (sscanf(line.c_str(),"@PIN %d %d",&pin,&value)==2 && pin>=0 && pin<64) fakePins[pin]=value;

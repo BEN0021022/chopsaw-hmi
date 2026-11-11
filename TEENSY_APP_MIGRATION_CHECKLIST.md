@@ -1,6 +1,6 @@
 # Teensy app and firmware migration checklist
 
-Updated 2026-11-10. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
+Updated 2026-11-11. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Current source/build: custom **0.19.0 / CARRIAGE_V13**, integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
 0.18.0 was flashed/read back on 2026-11-10; individual mechanisms passed.
@@ -67,6 +67,27 @@ entries below. [Current procedure](docs/INTEGRATED_DRY_RUN.md).
 The earlier 0.16 trigger-lock entries below document that prior checkpoint;
 0.17 changes only the separate Manual test, not Auto or powered-cut permissions.
 Record outstanding physical responses in the [fault acceptance matrix](docs/TEENSY_FAULT_ACCEPTANCE_MATRIX.md).
+
+## Automation supervision foundation - 2026-11-11 (not deployed)
+
+- [x] Pure main-clamp eligibility, cut holding, sensor clearance and next-action
+      functions under one geometry/material coordinator. No hardware writes in policies.
+- [x] Explicit measured/unknown material and geometry, projected pusher envelope,
+      blade keepout, push-only remnant tracking and stale-plan revisions.
+- [x] App source guards, pre-arm Auto pause, amber Manual Cycle review with no
+      generic bypass, one-time geometry settings and material registration.
+- [x] Commissioned bounded Gentle sensor-clearance move/clear verification before
+      FAST return; no blind zero push, extra retries or assumed empty outfeed.
+- [x] Pure policies and actual-sketch/Qt coordinator/pause/cleanup integration tests;
+      existing firmware/UI/simulator regressions. No board access or flash.
+- [ ] Measure/commission actual footprints, pusher envelope, keepout and native
+      sensor/truing datum; physically accept coordinator behavior with saw unplugged.
+- [ ] Define approved alternative securing method and implement selected-clamp /
+      approved-fixture firmware execution before no-main-clamp Manual recovery.
+- [ ] Install/map/commission outfeed device and its holding role (not assumed from cylinder delivery).
+- [ ] Independent safeguarding / grip / blade-stop and powered-production acceptance.
+
+See [architecture and limitations](docs/AUTOMATION_SUPERVISION.md).
 Deployed baseline **0.15.0** has editable pulse rate/acceleration and recovered
 MEGA defaults; see [speed tuning](docs/SPEED_TUNING.md). Actual board rate-edit
 readback passed without enabling or moving; matching app reopened disarmed.

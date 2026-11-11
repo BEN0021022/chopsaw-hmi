@@ -70,6 +70,10 @@ class ManualPneumatics(QGroupBox):
         self.recover_ack = QPushButton('Acknowledge fault')
         self.recover_ack.clicked.connect(lambda: self.owner.dry_run.acknowledge())
         layout.addWidget(self.recover_release,7,0,1,2); layout.addWidget(self.recover_ack,7,2,1,2)
+        self.register_stock=QPushButton('Register stock across blade plane / against pusher')
+        self.register_stock.setToolTip('Operator registers material extent, not verified grip. No actuator command is sent.')
+        self.register_stock.clicked.connect(lambda: self.owner.dry_run.supervision.register_stock())
+        layout.addWidget(self.register_stock,8,0,1,4)
         self.timer = QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self.refresh)
@@ -214,6 +218,18 @@ class ManualPneumatics(QGroupBox):
                                             (native.trigger_held and native.safe_link() and not native.sequence))
             self.cycle_button.setText('Manual Cycle — saw unplugged')
             self.cycle_button.setEnabled(native.allowed('DCUT'))
+            decision=native.supervision.last_decision
+            waiting=bool(decision and not decision.proceeds)
+            if waiting:
+                self.cycle_button.setText('Manual Cycle — operator review required')
+                self.cycle_button.setToolTip(decision.reason+' No generic bypass or presumed hand-held stock.')
+                self.cycle_button.setStyleSheet('QPushButton { background:#92400e; color:#fef3c7; font-size:15px; }')
+                self.cycle_button.setEnabled(native.safe_link() and native.data.get('STATE') in ('OFF','READY','CLAMPED') and
+                                             (native.sequence is None or native.sequence.get('stage')=='OPERATOR_REQUIRED'))
+            else:
+                self.cycle_button.setStyleSheet('QPushButton { background:#166534; color:#e2e8f0; font-size:17px; }')
+            self.register_stock.setVisible(True)
+            self.register_stock.setEnabled(native.safe_link(False) and not native.sequence and native.data.get('CYCLE')=='0')
             self.stop_button.setText('STOP / retain clamp')
             self.stop_button.setEnabled(native.native() and native.compatible)
             fresh=native.fresh()
@@ -222,7 +238,7 @@ class ManualPneumatics(QGroupBox):
             self.buttons['press'].setText('HOLD to press trigger')
             self.labels['trigger'].setText(('PRESSED commanded' if native.data.get('TRIGGER')=='1' else
                                            'RELEASED / manual ready' if native.data.get('MANUAL')=='1' else 'LOCKED OFF') if fresh else 'UNKNOWN')
-            self.status.setText(native.message if native.compatible else 'Requires matching saw-unplugged firmware 0.19.0. No hardware outputs are enabled here.')
+            self.status.setText((native.message+(' | SUPERVISION SETUP REQUIRED' if not native.supervision.coordinator.geometry.verified else '')) if native.compatible else 'Requires matching saw-unplugged firmware 0.19.0. No hardware outputs are enabled here.')
             self.note.setText('Saw mains unplugged. Manual Cycle clamps → trigger → DOWN/UP → trigger release → brake wait → clamp release. Individual buttons remain independent. Stop/fault retains an engaged clamp; recover explicitly.')
             self.recover_release.setVisible(True); self.recover_ack.setVisible(True)
             self.recover_release.setEnabled(native.allowed('DRELEASE'))
@@ -231,6 +247,7 @@ class ManualPneumatics(QGroupBox):
             return
         self.cycle_button.setText('Manual Saw Cycle'); self.stop_button.setText('STOP')
         self.recover_release.hide(); self.recover_ack.hide()
+        self.register_stock.hide()
         self.buttons['press'].setText('Press trigger')
         self.note.setText('Normal saw cycle keeps the main clamp engaged. Release it explicitly after the cut.')
         session = (self.owner.ser, self.owner.cycle_generation)

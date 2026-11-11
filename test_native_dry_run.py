@@ -96,6 +96,16 @@ def run(exe):
             # Keep short test movements; engine still uses the actual saved profiles.
             assert p.edit_profile(2,1000,1000); flush(); tick()
             assert p.edit_profile(3,1500,1500); flush(); tick()
+            assert p.edit_profile(1,1200,1500); flush(); tick()
+            # Measured geometry in this test fixture; live defaults remain
+            # uncommissioned and cannot authorize automatic cuts.
+            sup=d.supervision
+            for key,value in dict(main_near=9,main_far=10,front_offset=0,rear_extent=6,
+                                  keepout=1,margin=.25,sensor_near=10.8,sensor_far=10.8,max_clear_push=162).items():
+                sup.fields[key].setValue(value)
+            sup.verified.setChecked(True); sup.automatic_clear.setChecked(True)
+            assert sup.save()
+            assert sup.register_stock(), 'Explicit operator material registration, no actuator write'
             for key in TIMING_KEYS:
                 if 'timeout' not in key: w.cylinder_timing.fields[key].setValue(100)
             d.consent.setChecked(True)
@@ -138,6 +148,7 @@ def run(exe):
             # One truing stroke plus one stroke per list item, then stored FAST Load.
             w.load_cut_list_lines(['2 A','3 B'])
             w.board_sensor_location_input.setValue(10.5)
+            sup.verified.setChecked(True); assert sup.save()  # explicitly verify changed test-fixture truing datum
             before=(list(w.cut_list),w.current_cut_index,w.sim_next_piece_index)
             before_trigger_commands=sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)
             assert d.can_begin_auto(), (d.message,p.x)
@@ -156,15 +167,40 @@ def run(exe):
             records(wire.exchange('@PIN 21 0'))  # operator trips real detector
             until(lambda:d.sequence and d.sequence['stage']=='MOVE')
             records(wire.exchange('@PIN 21 1'))  # release after truing accepted
+            records(wire.exchange('@AUTO_SENSOR 1'))  # independent push-only remnant physics
             until(lambda:d.sequence is None)
             assert d.message.startswith('Unloaded dry list complete'), d.message
             assert wire.strokes==4 and d.data['STATE']=='OFF' and not p.armed
             assert (w.cut_list,w.current_cut_index,w.sim_next_piece_index)==before
             assert 'XPROFILE 2' in wire.writes and any(c.startswith('XLOAD ') for c in wire.writes)
             assert sum(c=='DCUT' for c in wire.writes)==4
+            assert any(c=='XPROFILE 1' for c in wire.writes), 'Clearance uses Gentle, not return speed'
+            assert any(c.startswith('XMOVE 10550') for c in wire.writes), 'Minimum sensor-zone clearing, not zero/full ejection'
+            assert d.supervision.coordinator.material.stock.far<10.8
             assert sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)==before_trigger_commands
             assert any(c.startswith('XEDGE ') and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'
             # Stop during the acknowledged preparation cannot later start motion.
+            records(wire.exchange('@AUTO_SENSOR 0'))
+            # Geometric interference pauses Auto before DARM/clamp/trigger.
+            sup.fields['main_near'].setValue(149); sup.fields['main_far'].setValue(151)
+            assert sup.save()
+            before_cycles=sum(c=='DCUT' for c in wire.writes)
+            assert w.start_auto_cycle(); flush(); until(lambda:d.sequence and d.sequence['stage']=='SEARCH')
+            records(wire.exchange('@PIN 21 0'))
+            until(lambda:d.sequence and d.sequence['stage']=='OPERATOR_REQUIRED')
+            assert d.data['ARMED']=='0' and d.data['CLAMP']=='0' and d.data['TRIGGER']=='0'
+            assert not w.send_command('DCUT') and not w.send_command('DCLAMP 1')
+            panel.refresh(); assert panel.cycle_button.isEnabled() and 'review' in panel.cycle_button.text()
+            w.tabs.setCurrentWidget(w.legacy_tab); app.processEvents()
+            w.grab().save('tmp/ui-dry-run/operator-required.png')
+            panel.cycle_button.click(); flush(); tick()
+            assert sum(c=='DCUT' for c in wire.writes)==before_cycles
+            assert d.sequence['stage']=='OPERATOR_REQUIRED', 'A button click cannot invent holding or bypass main-clamp interference'
+            assert not p.armed and d.data['CLAMP']=='0' and d.data['TRIGGER']=='0'
+            assert not sup.save(), 'Geometry cannot change under a paused live plan'
+            d.stop(); flush(); tick()
+            records(wire.exchange('@PIN 21 1'))
+            sup.fields['main_near'].setValue(9); sup.fields['main_far'].setValue(10); assert sup.save()
             assert w.start_auto_cycle()
             w.cancel_auto_cycle(); flush(); tick()
             assert d.auto_start is None and d.sequence is None and d.data['STATE']=='OFF'
@@ -184,6 +220,7 @@ def run(exe):
             assert not any(c.startswith(('XARM 1','DARM','DCLAMP','DCYCLE','XMOVE','XEDGE')) for c in wire.writes[count:])
             # Manual combined Stop retains clamp until UP/brake wait + explicit release.
             assert d.enable_manual(); flush(); until(lambda:d.data.get('MANUAL')=='1' and not d.manual_start)
+            assert sup.register_stock()
             assert d.request('cycle'); flush(); until(lambda:d.data['STATE']=='DESCEND')
             d.stop(); flush(); until(lambda:d.data['STATE']=='STOPPED' and d.data['RELEASE_READY']=='1')
             assert d.data['CLAMP']=='1' and d.data['TRIGGER']=='0' and not d.can_begin_auto()

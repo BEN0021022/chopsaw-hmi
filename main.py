@@ -994,6 +994,8 @@ class MinimalHMI(QMainWindow):
             field.setStyleSheet("font-size: 18px;")
         root.addWidget(cutting)
         self.cylinder_timing = CylinderTimingPanel(self.settings)
+        self.supervision_settings = self.dry_run.supervision.controls()
+        root.addWidget(self.supervision_settings)
         root.addWidget(self.cylinder_timing)
         self.auto_clamp_checkbox = QCheckBox('Automatic clamp/saw simulation')
         self.auto_clamp_checkbox.setToolTip('Simulator only. Live automatic clamp/saw operation remains unavailable until controller sequencing is commissioned.')
@@ -2526,7 +2528,7 @@ class MinimalHMI(QMainWindow):
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto())
         self.fa_start_cycle_button.setEnabled(False)
-        self.auto_status_label.setText('Saw-unplugged integrated dry run. ' + self.dry_run.message)
+        self.auto_status_label.setText(self.dry_run.supervision.summary()+' '+self.dry_run.message)
         self.load_button.setEnabled(p.allowed(f"XLOAD {int(self.native_load_target()*1000+0.5)}"))
         self.load_button.setToolTip("Uses stored FAST profile. Requires Home, explicit arm and a clear path.")
         jogs=((self.auto_jog_left_btn,self.auto_jog_input.value()),(self.auto_jog_right_btn,-self.auto_jog_input.value()),

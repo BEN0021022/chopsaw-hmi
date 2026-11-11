@@ -5,6 +5,13 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-10)
 
+Prepared app-side update (2026-11-11): small geometry/material policies and one
+automation coordinator, measured-geometry settings, operator-required pause/review
+UI and bounded detector-zone cleanup. Not deployed; firmware remains 0.19. New
+automatic cycles require geometry commissioning. No generic no-clamp override:
+0.19 cannot execute an inhibited-main-clamp cycle. See
+[automation supervision](docs/AUTOMATION_SUPERVISION.md) for scope and next steps.
+
 Current **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** removes Manual's Controls
 frame, leaving Home. One Home gesture confirms the established driver setup and
 searches the full supported range (20594 pulses, approximately 162 inches), with

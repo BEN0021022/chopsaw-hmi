@@ -7,6 +7,8 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QCheckBox, QPushButton
 from sensor_bench.protocol import parse_line
 from simulator import VirtualController
+from supervision_ui import SupervisionAdapter
+from automation_supervision import Outcome
 
 TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.release_delay',
                'main.release_clearance','saw.down_delay','saw.down_timeout','saw.bottom_dwell',
@@ -33,6 +35,7 @@ class NativeDryRun(QObject):
     def __init__(self, owner):
         super().__init__(owner)
         self.owner = owner
+        self.supervision = SupervisionAdapter(owner)
         self.session = None
         self.compatible = False
         self.data = {}
@@ -78,7 +81,8 @@ class NativeDryRun(QObject):
         self.enable_manual_button.clicked.connect(self.enable_manual)
         layout.addWidget(self.enable_manual_button)
         self.label = QLabel(self.message); self.label.setWordWrap(True)
-        self.label.setStyleSheet('color:#fbbf24;font-size:13px;'); layout.addWidget(self.label)
+        self.label.setStyleSheet('color:#fbbf24;font-size:13px;')
+        self.label.setParent(self.widget); self.label.hide()  # Manual status above already displays this message.
         return self.widget
 
     def native(self):
@@ -90,6 +94,7 @@ class NativeDryRun(QObject):
             self.session = session; self.compatible=False; self.data={}; self.received=None
             self.token=0; self.loaded=None; self.pending=None; self.awaiting_stop=False; self.local_fault=''; self.sequence=None
             self.manual_start=None; self.auto_start=None; self.trigger_held=False
+            self.supervision.reset_session()
             if hasattr(self,'consent'): self.consent.setChecked(False)
             if hasattr(self,'trigger_consent'): self.trigger_consent.setChecked(False)
 
@@ -193,14 +198,16 @@ class NativeDryRun(QObject):
         if self.pending or self.data.get('ARMED')!='1' or self.data.get('CFG')!=str(self.token): return False
         if command=='DTPRESS':
             return self.can_hold_trigger() and self.operator_holding_trigger()
-        if command=='DCUT': return self.settings_match() and state in ('READY','CLAMPED') and self.data.get('CYCLE')=='0' and self.data.get('TRIGGER')=='0'
+        if command=='DCUT':
+            return (self.settings_match() and state in ('READY','CLAMPED') and self.data.get('CYCLE')=='0'
+                    and self.data.get('TRIGGER')=='0' and self.supervision.review().proceeds)
         if self.data.get('CYCLE')=='1': return command=='DUP'
         if self.data.get('TRIGGER')!='0': return False
         if command=='DCLAMP 0': return state=='CLAMPED'
         if command=='DUP': return state in {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY'}
         if not self.settings_match(): return False
-        if command=='DCLAMP 1': return state=='READY'
-        return command in ('DCYCLE','DDOWN') and state=='CLAMPED'
+        if command=='DCLAMP 1': return state=='READY' and self.supervision.individual_clamp_allowed()
+        return command in ('DCYCLE','DDOWN') and state=='CLAMPED' and self.supervision.individual_clamp_allowed()
 
     def configure(self):
         self.sync()
@@ -219,11 +226,25 @@ class NativeDryRun(QObject):
         self.message='Waiting for controller timing acknowledgment.'; self.changed.emit(); return True
 
     def request(self, action):
+        if action=='cycle' and self.sequence and self.sequence.get('stage')=='OPERATOR_REQUIRED':
+            decision=self.supervision.review()
+            if not decision.proceeds:
+                self.message='Operator recovery required: '+decision.reason+' No clamp-free stroke is authorized.'
+                self.changed.emit(); return False
+            # An explicit gesture may resume only a newly valid holding plan;
+            # geometry/material changes never resume automation by themselves.
+            self.sequence['stage']='DISARM'; self.sequence['at']=time.monotonic()
+            self.supervision.coordinator.paused=None
+            return True
         commands={'arm':f'DARM {self.token}','engage':'DCLAMP 1','release':'DCLAMP 0',
                   'lower':'DDOWN','up':'DUP','cycle':'DCUT','manual_arm':f'DMANUAL {self.token}',
                   'press':'DTPRESS','unpress':'DTRELEASE','recover_release':'DRELEASE'}
         command=commands.get(action,'')
-        if not self.allowed(command): return False
+        if not self.allowed(command):
+            if action=='cycle' and self.supervision.last_decision:
+                self.message=self.supervision.last_decision.reason
+                self.changed.emit()
+            return False
         expected=(int(self.data.get('REQ','0'))+1)&0xffffffff
         if not self.owner.send_command(command): return False
         self.pending={'kind':'action','req':expected,'at':time.monotonic()}
@@ -285,6 +306,7 @@ class NativeDryRun(QObject):
                 self.message='Unloaded dry run: '+f['STATE']+'; trigger '+trigger+'.'
         elif message.kind=='BENCH_ERROR' and f.get('CODE','').startswith(('DRY_','BLADE_')):
             self.stop('Controller rejected dry-run request: '+f.get('CODE','UNKNOWN'))
+        if message.kind in ('BENCH_X','BENCH_DRY'): self.supervision.observe(message.kind)
         self.changed.emit()
 
     def stop(self, reason='Stopped; trigger released, engaged clamp retained.'):
@@ -292,6 +314,7 @@ class NativeDryRun(QObject):
             self.awaiting_stop=True
             self.owner.send_command('OFF')
         self.sequence=None; self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message=reason
+        self.supervision.coordinator.invalidate('Stopped; reconcile material before another automatic cycle.')
         if reason!='Stopped; trigger released, engaged clamp retained.': self.local_fault=reason
         self.changed.emit()
 
@@ -330,6 +353,9 @@ class NativeDryRun(QObject):
                 # An expired/lost hold never presses itself again.
                 self.trigger_held=False
         if self.sequence:
+            if not self.supervision.coordinator.geometry.verified:
+                self.stop('Supervision geometry/reference changed during sequence; no automatic restart')
+                return
             self.issuing_sequence=True
             try: self.advance_sequence()
             finally: self.issuing_sequence=False
@@ -355,7 +381,7 @@ class NativeDryRun(QObject):
 
     def can_begin_auto(self):
         p=self.owner.carriage_tab
-        return (self.safe_link(False) and not self.pending and not self.manual_start and not self.auto_start
+        return (self.supervision.coordinator.geometry.verified and self.safe_link(False) and not self.pending and not self.manual_start and not self.auto_start
                 and not self.awaiting_stop and not self.sequence and not p.armed and not p.pending
                 and not p.profile_pending and not p.stopping and p.x.get('CONFIGURED')=='1'
                 and p.x.get('POS_KNOWN')=='1' and p.x.get('REMAINING')=='0'
@@ -379,6 +405,7 @@ class NativeDryRun(QObject):
         if not self.can_start(): return False
         cuts=[float(length) for _,length,_ in self.owner.cut_list]
         if any(not math.isfinite(x) or x<=0 for x in cuts): return False
+        self.supervision.coordinator.invalidate('New board acquisition requested.')
         self.sequence={'stage':'SEARCH_ARM','at':time.monotonic(),'cuts':cuts,'kerf':self.owner.kerf_input.value(),
                        'index':-1,'move_id':int(p.x['MOVE_ID']),
                        'edge_command':f'XEDGE {int(math.floor(p.edge_search.value()*127.12+.5))} '
@@ -395,7 +422,7 @@ class NativeDryRun(QObject):
 
     def can_start(self):
         p=self.owner.carriage_tab
-        return not (not self.safe_link() or self.awaiting_stop or self.pending or self.sequence or self.auto_start or self.manual_start or not self.settings_match() or
+        return not (not self.supervision.coordinator.geometry.verified or not self.safe_link() or self.awaiting_stop or self.pending or self.sequence or self.auto_start or self.manual_start or not self.settings_match() or
                 self.data.get('CFG')!=str(self.token) or not self.token or p.pending or p.profile_pending or p.stopping or
                 self.data.get('STATE')!='OFF' or p.armed or p.x.get('POS_KNOWN')!='1'
                 or not p.consent.isChecked() or p.x.get('CONFIGURED')!='1'
@@ -431,6 +458,19 @@ class NativeDryRun(QObject):
         elif stage=='MOVE' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
             self.owner.send_command('XARM 0'); next_stage('DISARM')
         elif stage=='DISARM' and not p.armed and not p.stopping:
+            if (s['index']==-1 and self.supervision.coordinator.material.located and
+                    self.supervision.coordinator.material.contact):
+                # The measured/commissioned native truing datum establishes the
+                # remaining infeed interval. This is estimated material geometry,
+                # never a grip measurement or an invented encoder position.
+                c=self.supervision.context()
+                from automation_supervision import Span
+                self.supervision.coordinator.locate_stock(Span(0,c.geometry.pusher(c.position).near),'commissioned truing datum')
+            decision=self.supervision.review()
+            if not decision.proceeds:
+                next_stage('OPERATOR_REQUIRED')
+                self.message='Operator intervention required: '+decision.reason
+                self.changed.emit(); return
             if not self.request('arm'): self.stop('Cannot arm unloaded pneumatics'); return
             next_stage('CLAMP')
         elif stage=='CLAMP' and self.data.get('STATE')=='READY':
@@ -446,13 +486,44 @@ class NativeDryRun(QObject):
         elif stage=='PNEU_OFF' and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0':
             s['index']+=1
             if s['index']>=len(s['cuts']):
-                if not self.owner.send_command('XARM 1'): self.stop('Cannot arm carriage return'); return
-                next_stage('LOAD_ARM')
+                decision=self.supervision.review('clear_sensor')
+                if not decision.proceeds:
+                    next_stage('CLEARANCE_REQUIRED'); self.message=decision.reason; return
+                if decision.outcome==Outcome.ADAPT:
+                    s['clear_target']=decision.target; s['clear_plan']=decision
+                    if not p.select_profile(1): self.stop('Cannot select cleanup Gentle profile'); return
+                    next_stage('CLEAR_PROFILE')
+                else:
+                    if not self.owner.send_command('XARM 1'): self.stop('Cannot arm carriage return'); return
+                    next_stage('LOAD_ARM')
             else:
                 s['target']=160.5+int(p.x['HOME_OFFSET'])/127.12-s['cuts'][s['index']]-s['kerf']
                 if s['target']<0 or not self.owner.send_command('XARM 1'):
                     self.stop('Dry-list feed target outside travel'); return
                 next_stage('FEED_ARM')
+        elif stage=='CLEAR_PROFILE' and not p.profile_pending and p.x.get('PROFILE_ID')=='1':
+            decision=self.supervision.review('clear_sensor')
+            if (not decision.proceeds or decision.target!=s['clear_target'] or
+                    not self.supervision.coordinator.still_valid(s['clear_plan'])):
+                self.stop('Cleanup plan changed; operator reconciliation required'); return
+            if not self.owner.send_command('XARM 1'): self.stop('Cannot arm bounded cleanup'); return
+            next_stage('CLEAR_ARM')
+        elif stage=='CLEAR_ARM' and p.armed and p.x.get('JOG_READY')=='1':
+            decision=self.supervision.review('clear_sensor')
+            if not decision.proceeds or not self.supervision.coordinator.still_valid(s['clear_plan']):
+                self.stop('Cleanup eligibility changed before movement; no retry'); return
+            if not p.move_to(s['clear_target']): self.stop('Cleanup target rejected'); return
+            s['move_id']=int(p.x['MOVE_ID']); next_stage('CLEAR_MOVE')
+        elif stage=='CLEAR_MOVE' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
+            self.owner.send_command('XARM 0'); next_stage('CLEAR_VERIFY')
+        elif stage=='CLEAR_VERIFY' and not p.armed:
+            if p.fresh('INPUTS') and p.inputs.get('BOARD_EDGE')=='1':
+                if 'clear_since' not in s: s['clear_since']=time.monotonic()
+                if time.monotonic()-s['clear_since']>=.25:
+                    if not self.owner.send_command('XARM 1'): self.stop('Cannot arm return after clearance'); return
+                    next_stage('LOAD_ARM')
+            else: s.pop('clear_since',None)
+            if time.monotonic()-s['at']>2: self.stop('Detector did not clear after bounded push; no retry'); return
         elif stage=='LOAD_ARM' and p.armed and p.x.get('JOG_READY')=='1':
             if not p.move_load_to(self.owner.native_load_target()): self.stop('Return-to-load rejected'); return
             s['move_id']=int(p.x['MOVE_ID']); next_stage('LOAD_WAIT')
@@ -460,6 +531,10 @@ class NativeDryRun(QObject):
             self.owner.send_command('XARM 0'); next_stage('DONE')
         elif stage=='DONE' and not p.armed:
             self.sequence=None; self.message='Unloaded dry list complete; production cut-list progress unchanged.'; return
+        elif stage in ('OPERATOR_REQUIRED','CLEARANCE_REQUIRED'):
+            decision=self.supervision.coordinator.paused
+            self.message='OPERATOR REQUIRED — '+(decision.reason if decision else 'Reconcile material/holding and restart.')
+            return  # Unenergized human pause has no arbitrary 180-second expiry.
         if self.sequence:
             label = ('SEARCH — trip and hold the real board detector until truing starts' if s['stage']=='SEARCH' else s['stage'])
             self.message=f"Dry list: {label} — {'truing' if s['index']<0 else 'cut '+str(s['index']+1)}; saw mains MUST stay unplugged."
