@@ -20,7 +20,7 @@ void step() {
   const int32_t before = xCommandedSteps;
   ++fakeTime; physics(); loop();
   world += xCommandedSteps - before;
-  CHECK(!fakePins[19] || (dry.armed && dry.triggerArmed && dry.trigger && !dry.saw &&
+  CHECK(!fakePins[19] || (dry.armed && dry.manualMode && dry.trigger && !dry.saw &&
                         fakePins[22]==LOW && fakePins[16]==HIGH && fakePins[29]==LOW && fakePins[14]==HIGH));
   CHECK(!fakePins[19] || xCommandedSteps == before);
   CHECK(!fakePins[33] || fakePins[32]);

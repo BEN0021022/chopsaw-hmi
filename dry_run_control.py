@@ -4,7 +4,7 @@ import re
 import secrets
 import time
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QPushButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QCheckBox, QPushButton
 from sensor_bench.protocol import parse_line
 from simulator import VirtualController
 
@@ -14,7 +14,7 @@ TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.rel
 STATES = {'OFF','READY','CLAMP_DELAY','CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','RELEASE_CLEAR',
           'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN','FAULT'}
 TRAVEL = {'DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN'}
-COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DTARM|DTPRESS|DTRELEASE)')
+COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DMANUAL ([0-9]+)|DTHOLD|DTPRESS|DTRELEASE)')
 
 
 def timing_hash(values):
@@ -43,7 +43,10 @@ class NativeDryRun(QObject):
         self.sequence = None
         self.issuing_sequence = False
         self.last_keepalive = 0
-        self.message = 'Connect matching 0.17.0 unloaded-test firmware.'
+        self.manual_start = None
+        self.trigger_held = False
+        self.last_trigger_hold = 0
+        self.message = 'Connect matching 0.18.0 unloaded-test firmware.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
 
     def controls(self):
@@ -51,22 +54,25 @@ class NativeDryRun(QObject):
         layout = QVBoxLayout(self.widget); layout.setContentsMargins(0,0,0,0)
         self.consent = QCheckBox('Unloaded test: no stock; saw unplugged; suppression and air checks complete')
         self.consent.toggled.connect(self.consent_changed)
-        layout.addWidget(self.consent)
-        row = QHBoxLayout()
+        # Auto retains its separate preparation control. Manual uses one explicit
+        # session-enable gesture; hidden objects preserve shared state/bindings.
+        self.consent.setParent(self.widget); self.consent.hide()
         self.configure_button = QPushButton('Load dry-run timings')
         self.configure_button.setEnabled(False)
         self.configure_button.clicked.connect(self.configure)
         self.arm_button = QPushButton('Arm unloaded pneumatics')
         self.arm_button.setEnabled(False)
         self.arm_button.clicked.connect(lambda: self.request('arm'))
-        row.addWidget(self.configure_button); row.addWidget(self.arm_button); layout.addLayout(row)
+        self.configure_button.setParent(self.widget); self.configure_button.hide()
+        self.arm_button.setParent(self.widget); self.arm_button.hide()
         self.trigger_consent = QCheckBox('Trigger test ONLY: saw mains physically unplugged; no stock; keep saw UP')
         self.trigger_consent.toggled.connect(self.trigger_consent_changed)
-        layout.addWidget(self.trigger_consent)
-        self.trigger_arm_button = QPushButton('Arm ONE trigger press (2-second maximum)')
-        self.trigger_arm_button.setEnabled(False)
-        self.trigger_arm_button.clicked.connect(lambda: self.request('trigger_arm'))
-        layout.addWidget(self.trigger_arm_button)
+        self.trigger_consent.setParent(self.widget); self.trigger_consent.hide()
+        note=QLabel('UNPOWERED TEST ONLY — saw mains physically unplugged; no stock.')
+        note.setWordWrap(True); layout.addWidget(note)
+        self.enable_manual_button=QPushButton('Enable unpowered manual controls')
+        self.enable_manual_button.clicked.connect(self.enable_manual)
+        layout.addWidget(self.enable_manual_button)
         self.label = QLabel(self.message); self.label.setWordWrap(True)
         self.label.setStyleSheet('color:#fbbf24;font-size:13px;'); layout.addWidget(self.label)
         return self.widget
@@ -79,15 +85,16 @@ class NativeDryRun(QObject):
         if session != self.session:
             self.session = session; self.compatible=False; self.data={}; self.received=None
             self.token=0; self.loaded=None; self.pending=None; self.awaiting_stop=False; self.local_fault=''; self.sequence=None
+            self.manual_start=None; self.trigger_held=False
             if hasattr(self,'consent'): self.consent.setChecked(False)
             if hasattr(self,'trigger_consent'): self.trigger_consent.setChecked(False)
 
     def fresh(self):
         return self.native() and self.compatible and self.received is not None and time.monotonic()-self.received <= 2
 
-    def safe_link(self):
+    def safe_link(self, require_consent=True):
         p=self.owner.carriage_tab
-        return (self.fresh() and self.consent.isChecked() and not self.local_fault and p.ready_link()
+        return (self.fresh() and (not require_consent or self.consent.isChecked()) and not self.local_fault and p.ready_link()
                 and p.fresh('INPUTS') and not p.local_fault and p.x.get('FAULT')=='NONE'
                 and p.safety.get('FAULT')=='NONE' and p.safety.get('DOOR_CLOSED')=='1'
                 and p.inputs.get('FENCE_DOOR')=='0' and p.x.get('ALARM_RAW')=='1'
@@ -101,7 +108,7 @@ class NativeDryRun(QObject):
                 and self.loaded == tuple(self.owner.cylinder_timing.snapshot()[key] for key in TIMING_KEYS))
 
     def motion_locked(self):
-        return self.native() and (self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
+        return self.native() and (bool(self.manual_start) or self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
                                  self.data.get('ARMED')=='1' or self.data.get('STATE','OFF') not in ('OFF','FAULT'))
 
     def consent_changed(self, checked):
@@ -114,11 +121,53 @@ class NativeDryRun(QObject):
             self.request('unpress')
         self.changed.emit()
 
+    def can_enable_manual(self):
+        p=self.owner.carriage_tab
+        return (self.safe_link(False) and not self.pending and not self.manual_start and not self.sequence
+                and not self.awaiting_stop and not p.armed and not p.pending and not p.profile_pending
+                and self.data.get('STATE')=='OFF' and p.x.get('REMAINING')=='0'
+                and p.inputs.get('SAW_UP')=='0' and p.inputs.get('SAW_DOWN')=='1')
+
+    def enable_manual(self):
+        if self.data.get('MANUAL')=='1': self.stop(); return True
+        if not self.can_enable_manual(): return False
+        self.consent.setChecked(True)
+        self.trigger_consent.setChecked(True)
+        self.manual_start='config'
+        if not self.configure():
+            self.manual_start=None; return False
+        return True
+
+    def operator_holding_trigger(self):
+        return (self.trigger_held and self.owner.manual_pneumatics.buttons['press'].isDown()
+                and self.owner.isActiveWindow() and self.owner.tabs.currentWidget() is self.owner.legacy_tab)
+
+    def can_hold_trigger(self):
+        p=self.owner.carriage_tab
+        return (self.safe_link() and not self.pending and not self.sequence and not self.awaiting_stop
+                and self.settings_match() and self.data.get('CFG')==str(self.token)
+                and self.data.get('MANUAL')=='1' and self.data.get('STATE') in ('READY','CLAMPED')
+                and self.data.get('TRIGGER')=='0' and p.inputs.get('SAW_UP')=='0'
+                and p.inputs.get('SAW_DOWN')=='1')
+
+    def begin_trigger_hold(self):
+        self.trigger_held=True
+        if self.request('press'): return True
+        self.trigger_held=False; return False
+
+    def end_trigger_hold(self):
+        was_held=self.trigger_held
+        self.trigger_held=False
+        if was_held or self.data.get('TRIGGER')=='1': self.request('unpress')
+
     def allowed(self, command):
         if command=='DOFF': return self.native() and self.compatible
         if command=='DTRELEASE': return self.native() and self.compatible and not self.sequence
         if self.awaiting_stop: return False
         if command=='KEEPALIVE': return self.safe_link() and self.data.get('ARMED')=='1'
+        if command=='DTHOLD':
+            return (self.safe_link() and not self.sequence and self.operator_holding_trigger()
+                    and self.data.get('MANUAL')=='1' and self.data.get('TRIGGER')=='1')
         if self.sequence and not self.issuing_sequence: return False
         match=COMMAND.fullmatch(command)
         if not match or not self.safe_link(): return False
@@ -132,16 +181,14 @@ class NativeDryRun(QObject):
             return bool(self.pending and self.pending['kind']=='config' and self.data.get('ARMED')=='0'
                         and state=='OFF' and not p.armed and not p.pending and not p.profile_pending
                         and p.x.get('REMAINING')=='0')
-        if command.startswith('DARM '):
-            return (command==f'DARM {self.token}' and not self.pending and not p.armed and not p.pending and p.x.get('REMAINING')=='0'
+        if command.startswith(('DARM ','DMANUAL ')):
+            requested=(f'DMANUAL {self.token}' if self.manual_start=='arm' else f'DARM {self.token}')
+            return (command==requested and not self.pending and not p.armed and not p.pending and p.x.get('REMAINING')=='0'
                     and state=='OFF' and self.data.get('CFG')==str(self.token) and self.settings_match())
         if self.pending or self.data.get('ARMED')!='1' or self.data.get('CFG')!=str(self.token): return False
-        if command in ('DTARM','DTPRESS'):
-            return (not self.sequence and self.trigger_consent.isChecked() and self.settings_match()
-                    and state in ('READY','CLAMPED') and p.inputs.get('SAW_UP')=='0'
-                    and p.inputs.get('SAW_DOWN')=='1' and self.data.get('TRIGGER')=='0'
-                    and self.data.get('LOCK')==('1' if command=='DTARM' else '0'))
-        if self.data.get('LOCK')!='1': return False
+        if command=='DTPRESS':
+            return self.can_hold_trigger() and self.operator_holding_trigger()
+        if self.data.get('TRIGGER')!='0': return False
         if command=='DCLAMP 0': return state=='CLAMPED'
         if command=='DUP': return state in {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY'}
         if not self.settings_match(): return False
@@ -166,7 +213,7 @@ class NativeDryRun(QObject):
 
     def request(self, action):
         commands={'arm':f'DARM {self.token}','engage':'DCLAMP 1','release':'DCLAMP 0',
-                  'lower':'DDOWN','up':'DUP','cycle':'DCYCLE','trigger_arm':'DTARM',
+                  'lower':'DDOWN','up':'DUP','cycle':'DCYCLE','manual_arm':f'DMANUAL {self.token}',
                   'press':'DTPRESS','unpress':'DTRELEASE'}
         command=commands.get(action,'')
         if not self.allowed(command): return False
@@ -182,14 +229,15 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.17.0'
-                        and f.get('DRY_RUN')=='UNLOADED_V2' and f.get('BLADE_LOCK')=='TEST_ONLY'
-                        and f.get('TRIGGER_TEST')=='BOUNDED_V1')
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.18.0'
+                        and f.get('DRY_RUN')=='UNLOADED_V3' and f.get('BLADE_LOCK')=='MANUAL_HOLD'
+                        and f.get('TRIGGER_TEST')=='HOLD_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
         elif message.kind=='BENCH_DRY':
             try:
-                valid=(f.get('PROTO')=='2' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
+                valid=(f.get('PROTO')=='3' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
+                       and f.get('MANUAL') in ('0','1')
                        and f.get('STATE') in STATES and f.get('ARMED') in ('0','1')
                        and f.get('CLAMP') in ('0','1') and f.get('SAW') in ('0','1') and bool(f.get('FAULT'))
                        and all(0<=int(f[k])<=0xffffffff for k in ('CFG','HASH','REQ','UP_MS')))
@@ -201,8 +249,9 @@ class NativeDryRun(QObject):
                 valid=(f['ARMED']==('0' if phase in {'OFF','STOP_RETURN','FAULT'} else '1')
                        and f['CLAMP']==str(int(clamped)) and f['SAW']==str(int(lowered))
                        and (f['FAULT']!='NONE')==(phase=='FAULT')
-                       and (f['LOCK']=='1' or (f['ARMED']=='1' and phase in ('READY','CLAMPED') and f['SAW']=='0'))
-                       and (f['TRIGGER']=='0' or f['LOCK']=='0'))
+                       and f['LOCK']==('0' if f['MANUAL']=='1' else '1')
+                       and (f['MANUAL']=='0' or f['ARMED']=='1')
+                       and (f['TRIGGER']=='0' or (f['MANUAL']=='1' and phase in ('READY','CLAMPED') and f['SAW']=='0')))
             if not valid:
                 self.stop('Invalid dry-run readback'); return
             if self.data and int(f['UP_MS'])<int(self.data['UP_MS']):
@@ -216,10 +265,10 @@ class NativeDryRun(QObject):
                     (self.pending['kind']=='action' and int(f['REQ'])==self.pending['req'])):
                     self.pending=None
             if f['FAULT']!='NONE':
-                self.sequence=None; self.pending=None; self.message='Controller fault: '+f['FAULT']
+                self.sequence=None; self.pending=None; self.manual_start=None; self.trigger_held=False; self.message='Controller fault: '+f['FAULT']
             elif not self.local_fault and not self.sequence and not self.message.startswith('Unloaded dry list complete'):
-                trigger=('PRESSED (commanded); automatic release within 2 seconds' if f['TRIGGER']=='1' else
-                         'ARMED for one press; expires after 10 seconds' if f['LOCK']=='0' else 'locked OFF')
+                trigger=('PRESSED while held (commanded)' if f['TRIGGER']=='1' else
+                         'released; hold-to-test ready' if f['MANUAL']=='1' else 'locked OFF')
                 self.message='Unloaded dry run: '+f['STATE']+'; trigger '+trigger+'.'
         elif message.kind=='BENCH_ERROR' and f.get('CODE','').startswith(('DRY_','BLADE_')):
             self.stop('Controller rejected dry-run request: '+f.get('CODE','UNKNOWN'))
@@ -229,7 +278,7 @@ class NativeDryRun(QObject):
         if self.native() and self.owner.ser and self.owner.ser.is_open:
             self.awaiting_stop=True
             self.owner.send_command('OFF')
-        self.sequence=None; self.pending=None; self.message=reason
+        self.sequence=None; self.pending=None; self.manual_start=None; self.trigger_held=False; self.message=reason
         if reason!='Stopped; unloaded clamp released.': self.local_fault=reason
         self.changed.emit()
 
@@ -242,6 +291,19 @@ class NativeDryRun(QObject):
             elif not self.awaiting_stop and now-self.last_keepalive>=.25 and self.data.get('ARMED')=='1':
                 self.owner.send_command('KEEPALIVE'); self.last_keepalive=now
         if self.pending and now-self.pending['at']>2: self.stop('Dry-run acknowledgment timed out')
+        if self.manual_start and not self.pending:
+            if not self.safe_link(): self.stop('Manual setup feedback lost')
+            elif self.manual_start=='config' and self.data.get('CFG')==str(self.token):
+                self.manual_start='arm'
+                if not self.request('manual_arm'): self.stop('Manual enable rejected')
+            elif self.manual_start=='arm' and self.data.get('MANUAL')=='1': self.manual_start=None
+        if self.trigger_held:
+            if not self.operator_holding_trigger(): self.end_trigger_hold()
+            elif self.data.get('TRIGGER')=='1' and now-self.last_trigger_hold>=.1:
+                self.owner.send_command('DTHOLD'); self.last_trigger_hold=now
+            elif not self.pending and self.data.get('TRIGGER')=='0':
+                # An expired/lost hold never presses itself again.
+                self.trigger_held=False
         if self.sequence:
             self.issuing_sequence=True
             try: self.advance_sequence()
@@ -250,7 +312,9 @@ class NativeDryRun(QObject):
             self.label.setText(self.message)
             self.configure_button.setEnabled(self.safe_link() and not self.pending and not self.owner.carriage_tab.armed and self.data.get('STATE')=='OFF')
             self.arm_button.setEnabled(self.allowed(f'DARM {self.token}'))
-            self.trigger_arm_button.setEnabled(self.allowed('DTARM'))
+            self.enable_manual_button.setText('Disable manual controls / release' if self.data.get('MANUAL')=='1' else
+                                             'Enabling manual controls…' if self.manual_start else 'Enable unpowered manual controls')
+            self.enable_manual_button.setEnabled(self.can_enable_manual() or self.data.get('MANUAL')=='1')
         if hasattr(self.owner,'auto_dry_run'):
             self.owner.auto_dry_status.setText(self.message)
             self.owner.auto_dry_run.setEnabled(self.can_start())

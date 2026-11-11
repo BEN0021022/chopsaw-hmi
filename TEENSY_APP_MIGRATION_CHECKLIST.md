@@ -1,8 +1,8 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-10. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current source/build: custom **0.17.0 / CARRIAGE_V11**, unloaded cut-list mode
-plus a separate explicitly armed unpowered Manual trigger test. Saw unplugged.
+Prepared source/build: custom **0.18.0 / CARRIAGE_V12**, unloaded cut-list mode
+plus one-click Manual enable and hold-to-test trigger. Not yet flashed; saw unplugged.
 Prior 0.16.0 was flashed/read back on COM4 on 2026-11-09 after isolation confirmation;
 startup disarmed, unconfigured, outputs OFF, position unknown, no queued motion.
 Physical unloaded acceptance pending. Deployed 0.15.0 rollback preserved.
@@ -19,6 +19,19 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
 ## Unpowered trigger addition - 2026-11-10
+
+0.18 simplifies the earlier 0.17 controls below:
+
+- [x] One **Enable unpowered manual controls** gesture loads/ACKs timings and
+      enables the session; no repeated checkboxes or per-action trigger arm.
+- [x] Hold trigger to press, release/tab/focus loss to stop; no two-second cap
+      or ten-second unused permission expiry. Firmware hold lease remains
+      350 ms; late hold cannot repress. Repeated deliberate tests need no rearm.
+- [x] Preserve Stop, guard/endpoint/alarm/watchdog, clamp/travel fault limits;
+      keep Auto trigger blocked in firmware as well as the app.
+- [x] Actual-sketch and Qt mouse/hold/release/one-click tests; Teensy compile.
+- [ ] Flash/read back 0.18 after renewed physical isolation confirmation.
+- [ ] Physical acceptance of simplified controls and mechanical release.
 
 - [x] Add separate Manual consent and explicit one-press trigger arm on Flood/D19.
 - [x] Firmware maximum 2 s press, unused-arm expiry 10 s, watchdog/interlock

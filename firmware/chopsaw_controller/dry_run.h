@@ -13,7 +13,7 @@ class DryRun {
                Returning, UpSettle, StopReturn, Failed };
   Phase phase = Off;
   bool armed = false, clamp = false, saw = false;
-  bool triggerArmed = false, trigger = false;
+  bool manualMode = false, trigger = false;
   uint32_t configId = 0, requestId = 0, timingHash = 0;
   const char *fault = "NONE";
   bench::StableAssertion door, up, down;
@@ -37,17 +37,17 @@ class DryRun {
       timingHash=(timingHash ^ ((timing[i]>>(byte*8))&255u))*16777619u;
     configId = id; staged = 0; return true;
   }
-  bool arm(uint32_t id, uint32_t now) {
+  bool arm(uint32_t id, uint32_t now, bool manual = false) {
     if (!configEditable() || !configId || configId != id || rawDown) return false;
-    armed = true; heartbeat = now; enter(Ready, now); ++requestId; return true;
+    armed = true; manualMode = manual; heartbeat = now; enter(Ready, now); ++requestId; return true;
   }
   bool commandClamp(bool on, uint32_t now) {
-    if (!armed || failed() || !up.stable || rawDown || saw || triggerArmed) return false;
+    if (!armed || failed() || !up.stable || rawDown || saw || trigger) return false;
     if (on ? phase != Ready : phase != Clamped) return false;
     enter(on ? ClampDelay : ReleaseDelay, now); ++requestId; return true;
   }
   bool stroke(bool cycle, uint32_t now) {
-    if (!armed || phase != Clamped || !clamp || !up.stable || rawDown || triggerArmed) return false;
+    if (!armed || phase != Clamped || !clamp || !up.stable || rawDown || trigger) return false;
     automaticReturn = cycle; enter(DownDelay, now); ++requestId; return true;
   }
   bool returnUp(uint32_t now) {
@@ -56,39 +56,36 @@ class DryRun {
     saw = false; enter(Returning, now); ++requestId; return true;
   }
   void keepalive(uint32_t now) { if (armed) heartbeat = now; }
-  bool armTrigger(uint32_t now) {
-    if (!armed || triggerArmed || trigger || failed() || saw ||
-        !(phase == Ready || phase == Clamped) || !door.stable || !rawDoor ||
-        !up.stable || !rawUp || rawDown || !alarm) return false;
-    triggerArmed = true; triggerArmAt = now; ++requestId; return true;
-  }
   bool pressTrigger(uint32_t now) {
-    if (!armed || !triggerArmed || trigger || failed() || saw ||
+    if (!armed || !manualMode || trigger || failed() || saw ||
         !(phase == Ready || phase == Clamped) || !rawDoor || !rawUp || rawDown || !alarm) return false;
-    trigger = true; triggerAt = now; ++requestId; return true;
+    trigger = true; triggerHoldAt = now; ++requestId; return true;
   }
-  void releaseTrigger() { trigger = triggerArmed = false; ++requestId; }
+  bool holdTrigger(uint32_t now) {
+    if (!armed || !manualMode || !trigger || failed() || saw ||
+        !(phase == Ready || phase == Clamped) || !rawDoor || !rawUp || rawDown || !alarm) return false;
+    triggerHoldAt = now; return true;
+  }
+  void releaseTrigger() { trigger = false; ++requestId; }
   void stop(uint32_t now) {
-    armed = clamp = saw = trigger = triggerArmed = false; automaticReturn = false;
+    armed = clamp = saw = trigger = manualMode = false; automaticReturn = false;
     if (!failed()) enter(up.stable && !rawDown ? Off : StopReturn, now);
     ++requestId;
   }
   bool reset(uint32_t now) {
     if (active() || !door.stable || !up.stable || rawDown || !alarm) return false;
-    trigger = triggerArmed = false; fault = "NONE"; enter(Off,now); return true;
+    trigger = manualMode = false; fault = "NONE"; enter(Off,now); return true;
   }
   void trip(const char *reason, uint32_t now) {
     if (!failed()) fault = reason;
-    armed = clamp = saw = trigger = triggerArmed = false; automaticReturn = false; enter(Failed,now);
+    armed = clamp = saw = trigger = manualMode = false; automaticReturn = false; enter(Failed,now);
   }
   void tick(bool d, bool u, bool n, bool a, uint32_t now) {
     rawDoor=d; rawUp=u; rawDown=n; alarm=a;
     door.update(d,now); up.update(u,now); down.update(n,now);
-    // One press per explicit trigger arm. Neither keepalive nor repeated press
-    // commands extend these deadlines. Expiry releases and locks the output.
-    if (triggerArmed && ((trigger && static_cast<uint32_t>(now-triggerAt) >= 2000) ||
-                        (!trigger && static_cast<uint32_t>(now-triggerArmAt) >= 10000)))
-      trigger = triggerArmed = false;
+    // Hold-to-test: only live DTHOLD messages renew a press. Generic keepalive
+    // cannot keep the trigger on after mouse release/UI loss. Never auto-press.
+    if (trigger && static_cast<uint32_t>(now-triggerHoldAt) >= 350) trigger = false;
     if (armed) {
       if (!d) trip("DRY_DOOR_OPEN",now);
       else if (!a) trip("DRY_DRIVER_ALARM",now);
@@ -145,7 +142,7 @@ class DryRun {
   uint32_t draft[Count] = {}, timing[Count] = {};
   uint16_t staged = 0;
   uint32_t at=0, heartbeat=0, clampAt=0, sawAt=0;
-  uint32_t triggerArmAt=0, triggerAt=0;
+  uint32_t triggerHoldAt=0;
   bool automaticReturn=false;
   void enter(Phase value, uint32_t now) { phase=value; at=now; }
 };

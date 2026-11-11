@@ -1,5 +1,10 @@
 # Next bench session - unloaded cut-list commissioning
 
+Latest 2026-11-10: prepared **0.18.0 / CARRIAGE_V12 / UNLOADED_V3** replaces
+Manual's repeated arms/checks with one enable gesture and hold-to-test trigger.
+Not yet flashed; renewed isolation confirmation needed. Auto still never presses
+the trigger. [Current Manual procedure](TRIGGER_TEST.md) supersedes 0.17 below.
+
 2026-11-10 update: matching **0.17.0 / CARRIAGE_V11 / UNLOADED_V2** adds a
 separate [Manual unpowered trigger test](TRIGGER_TEST.md). Auto still never
 presses the blade trigger. Follow that procedure first; saw mains stay unplugged.

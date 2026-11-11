@@ -42,7 +42,12 @@ class ManualPneumatics(QGroupBox):
                 button = QPushButton(text)
                 button.setMinimumHeight(40)
                 button.setEnabled(False)
-                button.clicked.connect(lambda _checked=False, a=action: self.request(a))
+                if action=='press':
+                    button.pressed.connect(lambda: self.owner.dry_run.begin_trigger_hold() if not self.simulator() else None)
+                    button.released.connect(lambda: self.owner.dry_run.end_trigger_hold() if not self.simulator() else None)
+                    button.clicked.connect(lambda: self.request('press') if self.simulator() else None)
+                else:
+                    button.clicked.connect(lambda _checked=False, a=action: self.request(a))
                 self.buttons[action] = button
                 layout.addWidget(button, row, column)
         self.cycle_button = QPushButton('Manual Saw Cycle')
@@ -198,7 +203,10 @@ class ManualPneumatics(QGroupBox):
             native=self.owner.dry_run
             commands={'engage':'DCLAMP 1','release':'DCLAMP 0','lower':'DDOWN','up':'DUP',
                       'press':'DTPRESS','unpress':'DTRELEASE'}
-            for action,button in self.buttons.items(): button.setEnabled(native.allowed(commands.get(action,'')))
+            for action,button in self.buttons.items():
+                if action!='press': button.setEnabled(native.allowed(commands.get(action,'')))
+            self.buttons['press'].setEnabled(native.can_hold_trigger() or
+                                            (native.trigger_held and native.safe_link() and not native.sequence))
             self.cycle_button.setText('Unloaded Saw Cycle')
             self.cycle_button.setEnabled(native.allowed('DCYCLE'))
             self.stop_button.setText('Stop / release')
@@ -206,11 +214,11 @@ class ManualPneumatics(QGroupBox):
             fresh=native.fresh()
             self.labels['clamp'].setText(('ON commanded' if native.data.get('CLAMP')=='1' else 'OFF commanded') if fresh else 'UNKNOWN')
             self.labels['travel'].setText(self.owner.carriage_tab.safety.get('SAW_POSITION','UNKNOWN') if fresh else 'UNKNOWN')
-            self.buttons['press'].setText('Press trigger (max 2 s)')
+            self.buttons['press'].setText('HOLD to press trigger')
             self.labels['trigger'].setText(('PRESSED commanded' if native.data.get('TRIGGER')=='1' else
-                                           'ARMED / OFF' if native.data.get('LOCK')=='0' else 'LOCKED OFF') if fresh else 'UNKNOWN')
-            self.status.setText(native.message if native.compatible else 'Requires matching unloaded-test firmware 0.17.0. No hardware outputs are enabled here.')
-            self.note.setText('Saw mains MUST remain unplugged; no stock. Trigger test is separate from saw travel and Auto. Each press releases/disarms within 2 s. Stop/fault releases the clamp.')
+                                           'RELEASED / manual ready' if native.data.get('MANUAL')=='1' else 'LOCKED OFF') if fresh else 'UNKNOWN')
+            self.status.setText(native.message if native.compatible else 'Requires matching unloaded-test firmware 0.18.0. No hardware outputs are enabled here.')
+            self.note.setText('Saw unplugged; no stock. One session enable, then direct controls. Hold trigger button to press; release to stop. Guard, position, watchdog and clamp/travel fault limits remain. Auto never presses the trigger.')
             self.state_changed.emit()
             return
         self.cycle_button.setText('Manual Saw Cycle'); self.stop_button.setText('STOP')

@@ -5,13 +5,15 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-10)
 
-Matching build **0.17.0 / CARRIAGE_V11 / UNLOADED_V2** adds a separate explicitly
-armed Manual trigger-cylinder test on Flood/D19: one press per arm, maximum 2 s,
-guard/UP/alarm/heartbeat checks, no simultaneous travel or carriage motion.
+Prepared matching build **0.18.0 / CARRIAGE_V12 / UNLOADED_V3** simplifies Manual
+to one session-enable button (loads/acknowledges settings automatically), then
+direct controls and repeated hold-to-test trigger on Flood/D19. Two-second pulse
+and per-action rearm are removed; guard/UP/alarm/watchdog/fault checks remain.
+Not yet flashed. No simultaneous trigger/travel or carriage motion.
 Saw mains MUST remain physically unplugged. Auto dry lists never press the
 trigger. See [trigger procedure](docs/TRIGGER_TEST.md). Physical acceptance pending;
 prior 0.16.0 hard-trigger-locked source/HEX are preserved for rollback.
-0.17.0 flashed/read back on COM4 on 2026-11-10 with isolation confirmed; outputs
+Prior 0.17.0 flashed/read back on COM4 on 2026-11-10 with isolation confirmed; outputs
 OFF, no faults, disarmed, no queued motion. Matching Manual app reopened.
 
 The main app now has a **Teensy Carriage** controller mode and native CARRIAGE

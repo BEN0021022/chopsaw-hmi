@@ -1,64 +1,63 @@
-# Unpowered blade-trigger test - 2026-11-10
+# Unpowered Manual controls - 2026-11-10
 
-Firmware 0.17.0 / CARRIAGE_V11 / UNLOADED_V2 adds a separate bounded Manual
-test for the tiny trigger-cylinder valve on **Flood TTL / D19**. This does not
-enable powered cutting or add a blade trigger to the Auto dry-list sequence.
-0.16.0 remains the hard-trigger-locked rollback. Physical acceptance is pending.
-Flashed/read back on COM4 on 2026-11-10 after operator isolation confirmation:
-no faults, disarmed/unconfigured, all outputs OFF, trigger locked, position
-unknown and zero queued motion. The matching Manual app was reopened with no
-consent checked; no arm/press/motion commands were sent by the agent.
+Prepared firmware **0.18.0 / CARRIAGE_V12 / UNLOADED_V3** replaces the click-heavy
+0.17 trigger test with one Manual session-enable gesture and hold-to-test.
+**Not yet flashed.** Prior 0.17.0 is preserved; 0.16.0 is the hard-trigger-locked
+rollback. Physical acceptance remains pending. Flood TTL / D19 drives the tiny
+trigger-cylinder valve. No powered cutting or automatic blade triggering is enabled.
 
-## Procedure
+## Operator flow
 
-1. Keep saw mains **physically unplugged throughout**, with no stock. The app
-   cannot sense that plug. Inspect the trigger mechanism for free release and
-   interference. Keep hands clear; a software OFF command does not prove that
-   the printed mechanism has released the saw switch.
-2. Flash only with app closed, driver OFF, valve power disconnected, air
-   isolated/bleed verified and the saw head secured. Boot/connection never arms.
-3. Check guard closed, real saw UP, DOWN inactive and healthy alarm readback.
-   Confirm each DC coil's suppression orientation, fusing, OFF behavior and
-   regulated air/flow controls before restoring valve power and air yourself.
-   Leave carriage driver power OFF for this isolated trigger test.
-4. In MANUAL / Manual Machine Controls, confirm unloaded preparation,
-   **Load dry-run timings**, wait for acknowledgment, then **Arm unloaded
-   pneumatics**. This alone does not turn an output ON. No Home is required for
-   the stationary pneumatic test.
-5. Check **Trigger test ONLY: saw mains physically unplugged**. Click
-   **Arm ONE trigger press (2-second maximum)**. It enables one press, but does
-   not press the switch. This unused permission expires after 10 seconds.
-6. Click **Press trigger (max 2 s)** and observe the mechanism. **Release trigger**
-   releases and locks it early. The controller automatically releases and locks
-   it after at most 2 seconds, independent of PC timers/keepalive. A new press
-   requires another explicit trigger arm. This is not a hold-to-run button.
-7. Verify actual switch release. Test Stop and guard response while saw mains
-   remain unplugged, then finish with **Stop / release**. Do not restore saw power.
+1. Saw mains must remain **physically unplugged**, with no stock. The app cannot
+   verify that plug or actual switch release. Inspect free mechanical return.
+2. For flashing: app closed, driver/valve power OFF, air isolated/bleed verified,
+   saw head secured. Boot and connection remain disarmed, all outputs OFF.
+3. Verify guard closed, saw UP/DOWN inactive, healthy alarm, suppression/fuses
+   and regulated air. Restore valve power/air yourself when ready. Driver may
+   stay OFF; stationary pneumatic tests do not need Home or carriage enable.
+4. MANUAL / Manual Machine Controls: click **Enable unpowered manual controls**.
+   That single explicit gesture transfers the current bounded timing snapshot,
+   waits for token/hash acknowledgment and enables the Manual session. It does
+   not turn on a coil. No additional checkboxes or per-action arm buttons.
+5. Use Clamp/Release, Lower/Return UP or Unloaded Saw Cycle as appropriate.
+   Stroke still requires the clamp command to settle and real endpoint feedback.
+6. **HOLD to press trigger**; release the mouse/touch to release. Repeat without
+   rearming. The two-second pulse cap and ten-second permission expiry are gone.
+   Trigger is allowed only at UP in READY/CLAMPED; no concurrent clamp changes,
+   saw strokes or carriage motion. It is not latched ON.
+7. Stop / release or Disable manual controls ends the session and releases the
+   unloaded clamp, requests UP, and releases trigger. Recovery never resumes.
 
-Trigger arming is accepted only while unloaded pneumatics are armed and in READY
-or CLAMPED, with stable UP, DOWN inactive, closed guard and healthy driver alarm.
-During trigger arming/pressing, clamp changes and saw strokes are blocked;
-carriage/legacy output commands are already excluded by the unloaded mode.
-Door/alarm/position/communications faults clear the trigger and its permission.
-The firmware watchdog is 1500 ms. Repeated press/arm commands cannot renew a
-press. Stops, reset/reboot and reconnect do not rearm. The PC additionally
-requires fresh matching telemetry and explicit consent. Raw `OUT 2 1` remains
-rejected, including in the legacy Sensor Bench.
+## Protections retained
 
-`TRIGGER` is the commanded electrical output, not feedback from the physical saw
-switch, motor or blade. `LOCK:0` means one trigger test is armed; `LOCK:1` means
-locked OFF. No automatic sequence uses DTARM/DTPRESS. The trigger timing fields
-in Settings are not used for this fixed-duration isolated test.
+- Trigger releases on button release, leaving MANUAL, losing window focus,
+  feedback/interlock loss, Stop, disconnect or reboot.
+- While the button is genuinely held in the active Manual window, the app sends
+  DTHOLD at 100 ms intervals. Firmware releases after 350 ms without a valid hold.
+  Generic KEEPALIVE cannot sustain it. Late hold messages cannot repress it.
+- Guard, driver alarm, contradictory/lost endpoint faults, 1500 ms watchdog,
+  loaded travel deadlines, 60 s clamp maximum and 15 s saw-valve maximum remain.
+  These are fault detection, not extra user confirmations.
+- Carriage and pneumatics remain mutually excluded. Raw OUT 2 ON stays rejected.
+- Auto uses DARM (not DMANUAL), never sends a trigger press/hold, and the firmware
+  rejects trigger presses in Auto even with otherwise healthy feedback.
+- Trigger and clamp readbacks are commands, not proof of switch release or grip.
+  Production stock retention and powered-blade safety still require separate work.
+
+The trigger timing fields in Settings do not control this isolated hold-to-test.
+Other cylinder timing settings are loaded automatically by the enable action.
+After editing them mid-session, disable/re-enable to transfer the new snapshot.
 
 ## Acceptance
 
-- [ ] Verify OFF/released startup before restoring valve power/air.
-- [ ] One explicit arm/press actuates the trigger; release locks it OFF.
-- [ ] Two-second maximum and ten-second unused-arm expiry work physically.
-- [ ] Guard/Stop releases the mechanism; no unexpected other-cylinder/carriage motion.
-- [ ] Verify physical switch return and clearance after repeated unloaded tests.
-- [ ] Separately design and commission powered blade/air-loss/guard fault behavior.
+- [ ] Boot/connection OFF, one enable gesture leaves all coils OFF.
+- [ ] Repeat hold/release trigger tests without per-action rearming.
+- [ ] Release, tab/window change, guard/Stop and communication loss release it.
+- [ ] Verify actual printed mechanism/switch release and clearance.
+- [ ] Accept individual clamp/travel controls and their fault limits.
+- [ ] Separately commission powered blade/air-loss/guard/stock-retention behavior.
 
-Host tests exercise the actual sketch and Qt write boundary, including timeouts,
-rollover, watchdog with blocked serial, interlocks, source exclusion, readback
-and Auto trigger absence. They are not physical acceptance or safety certification.
+Actual-sketch host and Qt mouse press/release tests cover a hold longer than
+two seconds, repeated tests, tab loss, lease expiry/no auto-repress, watchdog,
+faults, rollover, source exclusion, one-click setup and Auto trigger rejection.
+Software tests are not physical acceptance or safety certification.

@@ -1,7 +1,7 @@
 # Unloaded cut-list test - updated 2026-11-10
 
-**Current matching build: 0.17.0 / CARRIAGE_V11 / UNLOADED_V2.** It preserves
-the Auto trigger-OFF sequence below and adds only a separate explicitly armed
+**Prepared matching build: 0.18.0 / CARRIAGE_V12 / UNLOADED_V3 (not yet flashed).** It preserves
+the Auto trigger-OFF sequence below and adds only a separate one-click-enabled
 [unpowered Manual trigger test](TRIGGER_TEST.md). The 0.16 deployment record below
 is historical; physical unloaded acceptance remains pending.
 
@@ -51,7 +51,7 @@ automatic retry, early carriage return or resumption after a fault.
 ## At the machine
 
 1. App closed, driver power OFF, valve power disconnected, air isolated and
-   saw unplugged: load prepared 0.17.0 and open the matching app. Verify identity,
+   saw unplugged: load prepared 0.18.0 and open the matching app. Verify identity,
    pin map, outputs OFF and no queued pulses.
 2. Check door, Home, board detector and both saw endpoint pills. Verify valve
    suppression/polarity and fuses. Check unloaded OFF/UP and clamp behavior with
