@@ -10,11 +10,13 @@ from simulator import VirtualController
 
 TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.release_delay',
                'main.release_clearance','saw.down_delay','saw.down_timeout','saw.bottom_dwell',
-               'saw.up_delay','saw.up_timeout','saw.up_settle')
+               'saw.up_delay','saw.up_timeout','saw.up_settle','trigger.press_delay',
+               'trigger.spinup','trigger.release_delay','trigger.brake_wait')
 STATES = {'OFF','READY','CLAMP_DELAY','CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','RELEASE_CLEAR',
-          'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN','FAULT'}
+          'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN','FAULT',
+          'TRIGGER_DELAY','SPINUP','TRIGGER_RELEASE_DELAY','BRAKE_WAIT','STOPPED'}
 TRAVEL = {'DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN'}
-COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DMANUAL ([0-9]+)|DTHOLD|DTPRESS|DTRELEASE)')
+COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DMANUAL ([0-9]+)|DTHOLD|DTPRESS|DTRELEASE|DCUT|DRELEASE)')
 
 
 def timing_hash(values):
@@ -44,9 +46,11 @@ class NativeDryRun(QObject):
         self.issuing_sequence = False
         self.last_keepalive = 0
         self.manual_start = None
+        self.auto_start = None
+        self.auto_start_at = 0
         self.trigger_held = False
         self.last_trigger_hold = 0
-        self.message = 'Connect matching 0.18.0 unloaded-test firmware.'
+        self.message = 'Connect matching 0.19.0 saw-unplugged firmware.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
 
     def controls(self):
@@ -68,7 +72,7 @@ class NativeDryRun(QObject):
         self.trigger_consent = QCheckBox('Trigger test ONLY: saw mains physically unplugged; no stock; keep saw UP')
         self.trigger_consent.toggled.connect(self.trigger_consent_changed)
         self.trigger_consent.setParent(self.widget); self.trigger_consent.hide()
-        note=QLabel('UNPOWERED TEST ONLY — saw mains physically unplugged; no stock.')
+        note=QLabel('SAW MAINS UNPLUGGED — integrated timing dry run only.')
         note.setWordWrap(True); layout.addWidget(note)
         self.enable_manual_button=QPushButton('Enable unpowered manual controls')
         self.enable_manual_button.clicked.connect(self.enable_manual)
@@ -85,7 +89,7 @@ class NativeDryRun(QObject):
         if session != self.session:
             self.session = session; self.compatible=False; self.data={}; self.received=None
             self.token=0; self.loaded=None; self.pending=None; self.awaiting_stop=False; self.local_fault=''; self.sequence=None
-            self.manual_start=None; self.trigger_held=False
+            self.manual_start=None; self.auto_start=None; self.trigger_held=False
             if hasattr(self,'consent'): self.consent.setChecked(False)
             if hasattr(self,'trigger_consent'): self.trigger_consent.setChecked(False)
 
@@ -108,7 +112,7 @@ class NativeDryRun(QObject):
                 and self.loaded == tuple(self.owner.cylinder_timing.snapshot()[key] for key in TIMING_KEYS))
 
     def motion_locked(self):
-        return self.native() and (bool(self.manual_start) or self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
+        return self.native() and (bool(self.manual_start) or bool(self.auto_start) or self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
                                  self.data.get('ARMED')=='1' or self.data.get('STATE','OFF') not in ('OFF','FAULT'))
 
     def consent_changed(self, checked):
@@ -123,7 +127,7 @@ class NativeDryRun(QObject):
 
     def can_enable_manual(self):
         p=self.owner.carriage_tab
-        return (self.safe_link(False) and not self.pending and not self.manual_start and not self.sequence
+        return (self.safe_link(False) and not self.pending and not self.manual_start and not self.auto_start and not self.sequence
                 and not self.awaiting_stop and not p.armed and not p.pending and not p.profile_pending
                 and self.data.get('STATE')=='OFF' and p.x.get('REMAINING')=='0'
                 and p.inputs.get('SAW_UP')=='0' and p.inputs.get('SAW_DOWN')=='1')
@@ -144,7 +148,7 @@ class NativeDryRun(QObject):
 
     def can_hold_trigger(self):
         p=self.owner.carriage_tab
-        return (self.safe_link() and not self.pending and not self.sequence and not self.awaiting_stop
+        return (self.safe_link() and not self.pending and not self.sequence and not self.auto_start and not self.manual_start and not self.awaiting_stop
                 and self.settings_match() and self.data.get('CFG')==str(self.token)
                 and self.data.get('MANUAL')=='1' and self.data.get('STATE') in ('READY','CLAMPED')
                 and self.data.get('TRIGGER')=='0' and p.inputs.get('SAW_UP')=='0'
@@ -162,6 +166,7 @@ class NativeDryRun(QObject):
 
     def allowed(self, command):
         if command=='DOFF': return self.native() and self.compatible
+        if command=='DRELEASE': return self.fresh() and self.data.get('RELEASE_READY')=='1' and not self.sequence
         if command=='DTRELEASE': return self.native() and self.compatible and not self.sequence
         if self.awaiting_stop: return False
         if command=='KEEPALIVE': return self.safe_link() and self.data.get('ARMED')=='1'
@@ -188,6 +193,8 @@ class NativeDryRun(QObject):
         if self.pending or self.data.get('ARMED')!='1' or self.data.get('CFG')!=str(self.token): return False
         if command=='DTPRESS':
             return self.can_hold_trigger() and self.operator_holding_trigger()
+        if command=='DCUT': return self.settings_match() and state in ('READY','CLAMPED') and self.data.get('CYCLE')=='0' and self.data.get('TRIGGER')=='0'
+        if self.data.get('CYCLE')=='1': return command=='DUP'
         if self.data.get('TRIGGER')!='0': return False
         if command=='DCLAMP 0': return state=='CLAMPED'
         if command=='DUP': return state in {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY'}
@@ -213,8 +220,8 @@ class NativeDryRun(QObject):
 
     def request(self, action):
         commands={'arm':f'DARM {self.token}','engage':'DCLAMP 1','release':'DCLAMP 0',
-                  'lower':'DDOWN','up':'DUP','cycle':'DCYCLE','manual_arm':f'DMANUAL {self.token}',
-                  'press':'DTPRESS','unpress':'DTRELEASE'}
+                  'lower':'DDOWN','up':'DUP','cycle':'DCUT','manual_arm':f'DMANUAL {self.token}',
+                  'press':'DTPRESS','unpress':'DTRELEASE','recover_release':'DRELEASE'}
         command=commands.get(action,'')
         if not self.allowed(command): return False
         expected=(int(self.data.get('REQ','0'))+1)&0xffffffff
@@ -229,29 +236,35 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.18.0'
-                        and f.get('DRY_RUN')=='UNLOADED_V3' and f.get('BLADE_LOCK')=='MANUAL_HOLD'
-                        and f.get('TRIGGER_TEST')=='HOLD_V1')
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.19.0'
+                        and f.get('DRY_RUN')=='UNLOADED_V4' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
+                        and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
         elif message.kind=='BENCH_DRY':
             try:
-                valid=(f.get('PROTO')=='3' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
+                valid=(f.get('PROTO')=='4' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
                        and f.get('MANUAL') in ('0','1')
+                       and f.get('CYCLE') in ('0','1') and f.get('RELEASE_READY') in ('0','1')
                        and f.get('STATE') in STATES and f.get('ARMED') in ('0','1')
                        and f.get('CLAMP') in ('0','1') and f.get('SAW') in ('0','1') and bool(f.get('FAULT'))
-                       and all(0<=int(f[k])<=0xffffffff for k in ('CFG','HASH','REQ','UP_MS')))
+                       and all(0<=int(f[k])<=0xffffffff for k in ('CFG','HASH','REQ','UP_MS','DONE')))
             except (KeyError,ValueError): valid=False
             if valid:
                 phase=f['STATE']
-                clamped=phase in {'CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE'}
+                clamped=phase in {'CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','TRIGGER_DELAY','SPINUP','TRIGGER_RELEASE_DELAY','BRAKE_WAIT'}
                 lowered=phase in {'DESCEND','DOWN','DWELL','UP_DELAY'}
-                valid=(f['ARMED']==('0' if phase in {'OFF','STOP_RETURN','FAULT'} else '1')
-                       and f['CLAMP']==str(int(clamped)) and f['SAW']==str(int(lowered))
+                recovering=phase in ('STOP_RETURN','STOPPED','FAULT')
+                cycle_trigger=phase in {'SPINUP','DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','TRIGGER_RELEASE_DELAY'}
+                valid=(f['ARMED']==('0' if phase in {'OFF','STOP_RETURN','STOPPED','FAULT'} else '1')
+                       and (recovering or f['CLAMP']==str(int(clamped))) and f['SAW']==str(int(lowered))
                        and (f['FAULT']!='NONE')==(phase=='FAULT')
-                       and f['LOCK']==('0' if f['MANUAL']=='1' else '1')
+                       and f['LOCK']==('0' if f['MANUAL']=='1' or f['CYCLE']=='1' else '1')
                        and (f['MANUAL']=='0' or f['ARMED']=='1')
-                       and (f['TRIGGER']=='0' or (f['MANUAL']=='1' and phase in ('READY','CLAMPED') and f['SAW']=='0')))
+                       and (f['CYCLE']=='0' or (f['ARMED']=='1' and phase not in ('READY','CLAMPED')))
+                       and (f['CYCLE']!='1' or f['TRIGGER']==str(int(cycle_trigger)))
+                       and (f['TRIGGER']=='0' or f['CYCLE']=='1' or (f['MANUAL']=='1' and phase in ('READY','CLAMPED') and f['SAW']=='0'))
+                       and (f['RELEASE_READY']=='0' or (phase in ('STOPPED','FAULT') and f['CLAMP']=='1')))
             if not valid:
                 self.stop('Invalid dry-run readback'); return
             if self.data and int(f['UP_MS'])<int(self.data['UP_MS']):
@@ -265,7 +278,7 @@ class NativeDryRun(QObject):
                     (self.pending['kind']=='action' and int(f['REQ'])==self.pending['req'])):
                     self.pending=None
             if f['FAULT']!='NONE':
-                self.sequence=None; self.pending=None; self.manual_start=None; self.trigger_held=False; self.message='Controller fault: '+f['FAULT']
+                self.sequence=None; self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message='Controller fault: '+f['FAULT']+'; clamp retained if engaged.'
             elif not self.local_fault and not self.sequence and not self.message.startswith('Unloaded dry list complete'):
                 trigger=('PRESSED while held (commanded)' if f['TRIGGER']=='1' else
                          'released; hold-to-test ready' if f['MANUAL']=='1' else 'locked OFF')
@@ -274,12 +287,12 @@ class NativeDryRun(QObject):
             self.stop('Controller rejected dry-run request: '+f.get('CODE','UNKNOWN'))
         self.changed.emit()
 
-    def stop(self, reason='Stopped; unloaded clamp released.'):
+    def stop(self, reason='Stopped; trigger released, engaged clamp retained.'):
         if self.native() and self.owner.ser and self.owner.ser.is_open:
             self.awaiting_stop=True
             self.owner.send_command('OFF')
-        self.sequence=None; self.pending=None; self.manual_start=None; self.trigger_held=False; self.message=reason
-        if reason!='Stopped; unloaded clamp released.': self.local_fault=reason
+        self.sequence=None; self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message=reason
+        if reason!='Stopped; trigger released, engaged clamp retained.': self.local_fault=reason
         self.changed.emit()
 
     def tick(self):
@@ -297,6 +310,18 @@ class NativeDryRun(QObject):
                 self.manual_start='arm'
                 if not self.request('manual_arm'): self.stop('Manual enable rejected')
             elif self.manual_start=='arm' and self.data.get('MANUAL')=='1': self.manual_start=None
+        if self.auto_start and not self.pending:
+            self.issuing_sequence=True
+            try:
+                if not self.safe_link(): self.stop('Auto setup feedback lost')
+                elif self.auto_start=='off' and now-self.auto_start_at>2: self.stop('Auto stop acknowledgment timed out')
+                elif self.auto_start=='off' and self.data.get('STATE')=='OFF':
+                    self.auto_start='config'
+                    if not self.configure(): self.stop('Auto timing load rejected')
+                elif self.auto_start=='config' and self.data.get('CFG')==str(self.token):
+                    self.auto_start=None
+                    if not self.start_sequence(): self.stop('Auto start rejected')
+            finally: self.issuing_sequence=False
         if self.trigger_held:
             if not self.operator_holding_trigger(): self.end_trigger_hold()
             elif self.data.get('TRIGGER')=='1' and now-self.last_trigger_hold>=.1:
@@ -312,7 +337,7 @@ class NativeDryRun(QObject):
             self.label.setText(self.message)
             self.configure_button.setEnabled(self.safe_link() and not self.pending and not self.owner.carriage_tab.armed and self.data.get('STATE')=='OFF')
             self.arm_button.setEnabled(self.allowed(f'DARM {self.token}'))
-            self.enable_manual_button.setText('Disable manual controls / release' if self.data.get('MANUAL')=='1' else
+            self.enable_manual_button.setText('Disable manual controls / STOP' if self.data.get('MANUAL')=='1' else
                                              'Enabling manual controls…' if self.manual_start else 'Enable unpowered manual controls')
             self.enable_manual_button.setEnabled(self.can_enable_manual() or self.data.get('MANUAL')=='1')
         if hasattr(self.owner,'auto_dry_run'):
@@ -320,12 +345,34 @@ class NativeDryRun(QObject):
             self.owner.auto_dry_run.setEnabled(self.can_start())
             self.owner.auto_dry_configure.setEnabled(self.configure_button.isEnabled() and not self.sequence)
             self.owner.auto_dry_stop.setEnabled(self.native() and self.compatible)
+            if self.native(): self.owner.start_cycle_button.setEnabled(self.can_begin_auto())
         self.changed.emit()
 
     def acknowledge(self):
         if self.native() and self.owner.carriage_tab.ready_link() and self.owner.carriage_tab.safety.get('RESET_READY')=='1':
             self.owner.carriage_tab.acknowledge(); self.local_fault=''; self.consent.setChecked(False)
             self.trigger_consent.setChecked(False)
+
+    def can_begin_auto(self):
+        p=self.owner.carriage_tab
+        return (self.safe_link(False) and not self.pending and not self.manual_start and not self.auto_start
+                and not self.awaiting_stop and not self.sequence and not p.armed and not p.pending
+                and not p.profile_pending and not p.stopping and p.x.get('CONFIGURED')=='1'
+                and p.x.get('POS_KNOWN')=='1' and p.x.get('REMAINING')=='0'
+                and self.data.get('STATE') in ('OFF','READY') and self.data.get('CLAMP')=='0'
+                and self.data.get('TRIGGER')=='0' and self.data.get('CYCLE')=='0'
+                and p.inputs.get('SAW_UP')=='0' and p.inputs.get('SAW_DOWN')=='1'
+                and p.inputs.get('BOARD_EDGE')=='1' and bool(self.owner.cut_list))
+
+    def begin_auto(self):
+        if not self.can_begin_auto(): return False
+        self.consent.setChecked(True); self.owner.carriage_tab.consent.setChecked(True)
+        self.auto_start='off'; self.auto_start_at=time.monotonic()
+        self.issuing_sequence=True
+        try: sent=self.owner.send_command('DOFF')
+        finally: self.issuing_sequence=False
+        if not sent: self.stop('Cannot prepare Auto'); return False
+        return True
 
     def start_sequence(self):
         p=self.owner.carriage_tab
@@ -348,7 +395,7 @@ class NativeDryRun(QObject):
 
     def can_start(self):
         p=self.owner.carriage_tab
-        return not (not self.safe_link() or self.awaiting_stop or self.pending or self.sequence or not self.settings_match() or
+        return not (not self.safe_link() or self.awaiting_stop or self.pending or self.sequence or self.auto_start or self.manual_start or not self.settings_match() or
                 self.data.get('CFG')!=str(self.token) or not self.token or p.pending or p.profile_pending or p.stopping or
                 self.data.get('STATE')!='OFF' or p.armed or p.x.get('POS_KNOWN')!='1'
                 or not p.consent.isChecked() or p.x.get('CONFIGURED')!='1'
@@ -387,19 +434,14 @@ class NativeDryRun(QObject):
             if not self.request('arm'): self.stop('Cannot arm unloaded pneumatics'); return
             next_stage('CLAMP')
         elif stage=='CLAMP' and self.data.get('STATE')=='READY':
-            if not self.request('engage'): self.stop('Clamp request rejected'); return
-            next_stage('CLAMP_WAIT')
-        elif stage=='CLAMP_WAIT' and self.data.get('STATE')=='CLAMPED':
+            s['done']=int(self.data['DONE'])
             if not self.request('cycle'): self.stop('Saw cycle rejected'); return
             next_stage('SAW_ACK')
         elif stage=='SAW_ACK':
             # REQ acknowledgment completes before this branch; next status may
             # still be DOWN_DELAY, but the cycle must actually leave CLAMPED.
-            if self.data.get('STATE')!='CLAMPED': next_stage('SAW_WAIT')
-        elif stage=='SAW_WAIT' and self.data.get('STATE')=='CLAMPED':
-            if not self.request('release'): self.stop('Clamp release rejected'); return
-            next_stage('RELEASE_WAIT')
-        elif stage=='RELEASE_WAIT' and self.data.get('STATE')=='READY':
+            if self.data.get('CYCLE')=='1': next_stage('SAW_WAIT')
+        elif stage=='SAW_WAIT' and self.data.get('STATE')=='READY' and int(self.data['DONE'])!=s['done']:
             self.owner.send_command('DOFF'); next_stage('PNEU_OFF')
         elif stage=='PNEU_OFF' and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0':
             s['index']+=1
@@ -420,6 +462,6 @@ class NativeDryRun(QObject):
             self.sequence=None; self.message='Unloaded dry list complete; production cut-list progress unchanged.'; return
         if self.sequence:
             label = ('SEARCH — trip and hold the real board detector until truing starts' if s['stage']=='SEARCH' else s['stage'])
-            self.message=f"Dry list: {label} — {'truing' if s['index']<0 else 'cut '+str(s['index']+1)}; blade locked OFF."
+            self.message=f"Dry list: {label} — {'truing' if s['index']<0 else 'cut '+str(s['index']+1)}; saw mains MUST stay unplugged."
             if time.monotonic()-s['at']>180:
                 self.stop('Dry-list phase exceeded 180 seconds')

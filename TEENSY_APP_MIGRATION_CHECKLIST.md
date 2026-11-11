@@ -1,8 +1,9 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-10. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Prepared source/build: custom **0.18.0 / CARRIAGE_V12**, unloaded cut-list mode
-plus one-click Manual enable and hold-to-test trigger. Not yet flashed; saw unplugged.
+Prepared source/build: custom **0.19.0 / CARRIAGE_V13**, integrated saw-unplugged
+Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
+0.18.0 was flashed/read back on 2026-11-10; individual mechanisms passed.
 Prior 0.16.0 was flashed/read back on COM4 on 2026-11-09 after isolation confirmation;
 startup disarmed, unconfigured, outputs OFF, position unknown, no queued motion.
 Physical unloaded acceptance pending. Deployed 0.15.0 rollback preserved.
@@ -19,6 +20,21 @@ See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
 ## Unpowered trigger addition - 2026-11-10
+
+Latest integrated 0.19 update supersedes earlier trigger-OFF/release-on-fault
+entries below. [Current procedure](docs/INTEGRATED_DRY_RUN.md).
+
+- [x] Operator confirms trigger, saw travel and clamp individual tests passed.
+- [x] Remove Manual Controls frame, retain one Home button; acknowledged driver
+      setup + full 20594-pulse search. Keep finite failed-sensor and fault stops.
+- [x] Controller-owned DCUT: clamp/settle, trigger/spinup, real DOWN/UP, trigger
+      release/brake wait, clamp release. Load 15 timing values with hash/ACK.
+- [x] Start Auto uses same full cycle between real-detector/truing/feed/FAST moves.
+- [x] Stop/fault retains engaged clamp, releases trigger; explicit UP/brake-delayed
+      recovery release. Cancel during preparation cannot restart the sequence.
+- [x] Actual firmware/Qt/one-click Home/combined Manual and two-cut Auto tests.
+- [ ] Flash/read back 0.19 and physically accept integrated sequence.
+- [ ] Independent safeguarding and powered-cut/grip/brake acceptance remain open.
 
 0.18 simplifies the earlier 0.17 controls below:
 

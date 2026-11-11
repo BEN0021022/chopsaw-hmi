@@ -1,5 +1,10 @@
 # Unpowered Manual controls - 2026-11-10
 
+**Superseded for the current 0.19 build by [Integrated dry runs](INTEGRATED_DRY_RUN.md).**
+Individual hold-to-test controls below remain, but DCUT now coordinates trigger
+with saw travel and Stop/fault retains clamp instead of releasing it. The 0.18
+deployment succeeded and individual mechanisms passed; combined acceptance pending.
+
 Prepared firmware **0.18.0 / CARRIAGE_V12 / UNLOADED_V3** replaces the click-heavy
 0.17 trigger test with one Manual session-enable gesture and hold-to-test.
 **Not yet flashed.** Prior 0.17.0 is preserved; 0.16.0 is the hard-trigger-locked

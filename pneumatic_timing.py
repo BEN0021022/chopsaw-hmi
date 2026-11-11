@@ -86,7 +86,7 @@ class CylinderTimingPanel(QGroupBox):
                 spin.setMaximumWidth(260)
                 spin.setStyleSheet('QSpinBox { background:#0b1222;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:6px;font-size:16px; }')
                 if field.planned_limit:
-                    spin.setToolTip('Saw travel limits are enforced after loading into 0.18.0 unloaded-test firmware (100–5000 ms). Clamp confirmation limits require future feedback; they remain planned.')
+                    spin.setToolTip('Saw travel limits are enforced after loading into 0.19.0 saw-unplugged firmware (100–5000 ms). Clamp confirmation limits require future feedback; they remain planned.')
                 self.fields[field.key] = spin
                 form.addRow(field.label + ':', spin)
             page_layout.addWidget(page)
@@ -110,9 +110,9 @@ class CylinderTimingPanel(QGroupBox):
     def set_simulator_mode(self, simulator):
         self.mode_hint.setText(
             'Simulator: normal-cycle delays are active. Confirmation/travel limits remain planned.' if simulator else
-            'Unloaded Teensy tests: load the main-clamp / saw-travel timings from Manual or Auto. '
-            'Delays must be 0–5000 ms; saw travel limits 100–5000 ms. Auto trigger stays OFF; '
-            'the separate Manual trigger test is hold-to-test, not controlled by these timing fields. '
+            'Saw-unplugged tests: Manual enable / Start Auto load main-clamp, saw and trigger timings. '
+            'Delays 0–5000 ms; travel limits 100–5000 ms. Full cycle includes spin-up and brake waits. '
+            'Held-trigger individual tests remain hold-to-test. Timers do not verify grip or blade stop. '
             'Clamp confirmation and additional clamps remain planned.'
         )
 

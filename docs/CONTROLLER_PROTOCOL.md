@@ -1,8 +1,8 @@
 # Controller protocol
 
-Updated 2026-11-10. Prepared controller firmware **0.18.0** uses the
-existing LF-terminated ASCII BENCH records plus CARRIAGE_V12. One-click Manual
-enable with unpowered hold-to-test trigger; not yet flashed, acceptance pending. 115200 baud,
+Updated 2026-11-10. Prepared controller firmware **0.19.0** uses the
+existing LF-terminated ASCII BENCH records plus CARRIAGE_V13. Integrated
+saw-unplugged clamp/trigger/travel cycles; not yet flashed, acceptance pending. 115200 baud,
 63-character command maximum. No live MEGA commands or G-code are supported.
 The Sensor Bench 0.6.0 sketch remains archived as a separate entry point.
 
@@ -31,16 +31,16 @@ Main-app motion requires all of:
 
 ```
 PROTO:2,BOARD:TEENSY41,MAP:T41U5XBB_V2_20
-X_APP:CARRIAGE_V12,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
+X_APP:CARRIAGE_V13,X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40
 INPUT_MAP:DOOR29_UP22_DOWN16,OUTPUT_MAP:AUX2_AUX1_FLOOD
 INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,CAL_SPI:127.12
 MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY
 HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5
 ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1
-DRY_RUN:UNLOADED_V3,BLADE_LOCK:MANUAL_HOLD,TRIGGER_TEST:HOLD_V1
+DRY_RUN:UNLOADED_V4,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1
 ```
 
-Prepared firmware version is 0.18.0. Reads HELLO, PINMAP and STATUS are sent on
+Prepared firmware version is 0.19.0. Reads HELLO, PINMAP and STATUS are sent on
 connection. Connect, identity matching, RESET and reconnect never arm/enable.
 The main app rejects motion if identity differs or motion/safety telemetry
 is older than two seconds. Firmware is authoritative if the PC stops responding.
@@ -139,54 +139,63 @@ hardware requirements. New unloaded Manual/Auto controls use the separate
 acknowledged protocol below; powered cutting remains unavailable. The separate
 Manual trigger test requires the saw mains physically unplugged.
 
-## Unloaded pneumatic extension (0.18.0)
+## Saw-unplugged integrated extension (0.19.0)
 
-Exact FW 0.18.0, DRY_RUN:UNLOADED_V3, BLADE_LOCK:MANUAL_HOLD and
-TRIGGER_TEST:HOLD_V1 are also required by the
+Exact FW 0.19.0, DRY_RUN:UNLOADED_V4, BLADE_LOCK:UNPLUGGED_CYCLE,
+TRIGGER_TEST:HOLD_V1 and CYCLE:CLAMP_TRIGGER_TRAVEL_V1 are also required by the
 app. OUT 0=D33 saw, OUT 1=D32 main clamp; D19 defaults LOW and remains locked
-except the explicitly enabled Manual hold-to-test. Raw OUT 2 1 is rejected. These are
+except explicit Manual hold-to-test or DCUT controller sequence. Raw OUT 2 1 is rejected. These are
 physical channel indices, not virtual clamp IDs. Production cutting is excluded.
 
 | Command | Meaning |
 |---|---|
-| DSET index milliseconds | Stage one timing (0..10); index 0 clears draft/config token. Disarmed, UP/door/alarm healthy, carriage idle only |
-| DCOMMIT nonzero-token | Commit complete 11-field snapshot; report token and FNV-1a32 hash over uint32 little-endian fields |
+| DSET index milliseconds | Stage one timing (0..14); index 0 clears draft/config token. Disarmed, UP/door/alarm healthy, carriage idle only |
+| DCOMMIT nonzero-token | Commit complete 15-field snapshot; report token and FNV-1a32 hash over uint32 little-endian fields |
 | DARM token | Explicit arm, no valve ON; matching committed token and safe UP required |
 | DMANUAL token | Arm Manual session after same configuration/UP/interlocks; no coil ON; enables repeated hold-to-test, not Auto |
 | DCLAMP 1 / DCLAMP 0 | Engage/settle or release/clearance; release requires settled UP |
 | DCYCLE / DDOWN | One automatic DOWN/UP stroke or lower-and-hold; settled commanded clamp required |
+| DCUT | From READY/CLAMPED: clamp/settle as needed, trigger delay/press/spinup, real DOWN/UP, release delay/trigger OFF, brake wait, clamp release/clearance; increments DONE and returns READY |
 | DUP | Return UP during a stroke; cannot queue/repeat strokes |
 | DTPRESS | Begin trigger hold only in Manual READY/CLAMPED with UP/guard/alarm; no clamp/travel while pressed |
 | DTHOLD | Renew active trigger hold for 350 ms; no REQ increment or immediate telemetry; cannot start/restart output; generic KEEPALIVE cannot renew |
-| DTRELEASE | Release trigger immediately, including while faulted; increments REQ; Manual permission persists, clamp unchanged |
-| DOFF / OFF | Cancel, disarm, release clamp, request saw UP; retain carriage holding torque |
+| DTRELEASE | Release held trigger; during DCUT stops the combined sequence and retains clamp; no automatic continuation |
+| DOFF / OFF | Cancel/disarm, release trigger, request saw UP, retain engaged clamp and carriage holding torque |
+| DRELEASE | Explicit stopped/faulted clamp recovery; requires healthy guard/alarm, stable UP, trigger/saw OFF, programmed brake interval elapsed; does not acknowledge fault |
 | KEEPALIVE | 1500 ms firmware watchdog while armed |
 
 Timing indices: board.settle, main.engage_delay, main.engage_settle,
 main.release_delay, main.release_clearance, saw.down_delay, saw.down_timeout,
-saw.bottom_dwell, saw.up_delay, saw.up_timeout, saw.up_settle. All 0..5000 ms;
-travel timeouts minimum 100 ms. Additional clamp/trigger fields are not loaded.
+saw.bottom_dwell, saw.up_delay, saw.up_timeout, saw.up_settle, trigger.press_delay,
+trigger.spinup, trigger.release_delay, trigger.brake_wait. All 0..5000 ms;
+travel timeouts minimum 100 ms. Additional clamp confirmation fields are not loaded.
 
 ```
-BENCH_DRY,PROTO:3,CFG:123,HASH:456,REQ:7,ARMED:1,STATE:CLAMPED,CLAMP:1,SAW:0,TRIGGER:0,LOCK:1,MANUAL:0,FAULT:NONE,UP_MS:12000
+BENCH_DRY,PROTO:4,CFG:123,HASH:456,REQ:7,ARMED:1,STATE:READY,CLAMP:0,SAW:0,TRIGGER:0,LOCK:1,MANUAL:0,CYCLE:0,DONE:1,RELEASE_READY:0,FAULT:NONE,UP_MS:12000
 ```
 
 REQ increments on accepted arm/action/stop; configuration is acknowledged by
-CFG and HASH. LOCK 0 is equivalent to MANUAL 1 (session enabled); TRIGGER is
-effective D19 GPIO. TRIGGER 1 requires MANUAL 1, ARMED 1 and READY/CLAMPED.
+CFG and HASH. LOCK 0 means MANUAL 1 or CYCLE 1; TRIGGER is effective D19 GPIO.
+Held trigger requires Manual READY/CLAMPED. Automatic trigger is firmware-owned
+only in DCUT after clamp settling; it remains ON through UP settling/release delay.
 Hold expiry clears trigger without incrementing REQ or ending Manual permission.
-All faults/stops clear Manual permission/output. No automatic trigger use.
+All faults/stops clear Manual/CYCLE permission and trigger output. DONE advances
+only after successful full cycle and release clearance, never on Stop/fault.
+RELEASE_READY authorizes explicit retained-clamp recovery, not automatic release.
 See [unpowered trigger procedure](TRIGGER_TEST.md).
 
 App never substitutes elapsed PC time for completion. States:
 OFF, READY, CLAMP_DELAY, CLAMP_SETTLE, CLAMPED, RELEASE_DELAY, RELEASE_CLEAR,
-DOWN_DELAY, DESCEND, DOWN, DWELL, UP_DELAY, RETURN, UP_SETTLE, STOP_RETURN, FAULT.
+DOWN_DELAY, DESCEND, DOWN, DWELL, UP_DELAY, RETURN, UP_SETTLE, STOP_RETURN, FAULT,
+TRIGGER_DELAY, SPINUP, TRIGGER_RELEASE_DELAY, BRAKE_WAIT, STOPPED.
 BENCH_OUTPUTS now reports effective GPIO states, including unloaded outputs.
 BENCH_SAFETY has BLOCKER:DRY_RUN_ACTIVE while the unloaded engine owns control.
 
-Normal stroke retains clamp. Unloaded Stop/fault releases it and requests UP;
+Legacy travel-only stroke retains clamp; DCUT releases only after UP/trigger OFF/brake wait.
+Stop/fault retains an engaged clamp and requests UP;
 StopReturn waits up to 5 s for UP. Door/alarm, contradictory/lost endpoints,
-configured travel deadline, watchdog, 60 s clamp ON or 15 s saw ON latch faults.
+configured travel deadline, watchdog, 60 s clamp ON, 15 s saw ON or 30 s automatic
+trigger ON latch faults. These finite limits remain; no powered-cut approval.
 Fault invalidates Home; recovery is explicit and never resumes. While this
 mode is active/faulted, carriage and legacy output commands cannot start.
 Fresh app phase/output consistency, timing/config and action ACKs are required.

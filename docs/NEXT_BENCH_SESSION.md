@@ -1,5 +1,11 @@
 # Next bench session - unloaded cut-list commissioning
 
+Current prepared **0.19.0 / CARRIAGE_V13 / UNLOADED_V4**: single Manual Home,
+full supported search bound, combined clamp/trigger/travel/brake/release cycle,
+native Start Auto with the same cycle. Saw remains physically unplugged; guard
+is a Teensy input only. Follow [Integrated dry runs](INTEGRATED_DRY_RUN.md).
+0.18 was flashed and individual mechanisms passed. New combined acceptance pending.
+
 Latest 2026-11-10: prepared **0.18.0 / CARRIAGE_V12 / UNLOADED_V3** replaces
 Manual's repeated arms/checks with one enable gesture and hold-to-test trigger.
 Not yet flashed; renewed isolation confirmation needed. Auto still never presses

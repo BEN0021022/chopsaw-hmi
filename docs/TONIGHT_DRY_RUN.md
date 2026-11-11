@@ -1,5 +1,8 @@
 # Unloaded cut-list test - updated 2026-11-10
 
+**Historical 0.16-0.18 procedure. Current 0.19 adds full trigger timing to Manual
+Cycle/Start Auto and retains clamp on Stop/fault. Follow [the integrated procedure](INTEGRATED_DRY_RUN.md).**
+
 **Prepared matching build: 0.18.0 / CARRIAGE_V12 / UNLOADED_V3 (not yet flashed).** It preserves
 the Auto trigger-OFF sequence below and adds only a separate one-click-enabled
 [unpowered Manual trigger test](TRIGGER_TEST.md). The 0.16 deployment record below

@@ -19,7 +19,7 @@ READS = {"HELLO", "PINMAP", "STATUS", "PING"}
 STOPS = {"OFF", "XARM 0", "XDISABLE", "RESET"}
 IDENTITY = {
     "PROTO": "2", "BOARD": "TEENSY41", "MAP": "T41U5XBB_V2_20",
-    "X_APP": "CARRIAGE_V12", "X_TEST": "MANUAL_JOG_V1",
+    "X_APP": "CARRIAGE_V13", "X_TEST": "MANUAL_JOG_V1",
     "X_MAP": "STEP2_DIR3_EN40", "INPUT_MAP": "DOOR29_UP22_DOWN16",
     "OUTPUT_MAP": "AUX2_AUX1_FLOOD", "INTERLOCKS": "DOOR_POSITION_V1",
     "COMMISSIONING": "UNLOADED_DRY_RUN", "CAL_SPI": "127.12",
@@ -53,6 +53,7 @@ class TeensyCarriagePanel(QWidget):
         self.x, self.safety, self.inputs = {}, {}, {}
         self.received = {}
         self.pending = None
+        self.full_home_pending = None
         self.profile_pending = None
         self.profile_values = dict(PROFILE_DEFAULTS)
         self._profiles_initialized = False
@@ -317,6 +318,7 @@ class TeensyCarriagePanel(QWidget):
         self.compatible = False
         self.x, self.safety, self.inputs, self.received = {}, {}, {}, {}
         self.pending = None
+        self.full_home_pending = None
         self.profile_pending = None
         self.profile_values = dict(PROFILE_DEFAULTS)
         self._profiles_initialized = False
@@ -518,6 +520,7 @@ class TeensyCarriagePanel(QWidget):
             if self.connected:
                 self.send("OFF")
         self.pending = None
+        self.full_home_pending = None
         self.profile_pending = None
         self.consent.setChecked(False)
         self.refresh()
@@ -535,6 +538,7 @@ class TeensyCarriagePanel(QWidget):
         self.refresh()  # reset does not arm or restore consent
 
     def stop(self, command="OFF"):
+        self.full_home_pending = None
         if self.connected:
             self.stopping = True
             self.send(command)
@@ -615,6 +619,25 @@ class TeensyCarriagePanel(QWidget):
         command = f"XHOME {count}"
         return self.request_move(command)
 
+    def can_full_home(self):
+        return (self.ready_link() and self.fresh('INPUTS') and not self.local_fault and not self.stopping
+                and not self.pending and not self.profile_pending and not self.full_home_pending and not self.armed
+                and not self.homing and not self.edge_searching and self.x.get('REMAINING')=='0'
+                and self.x.get('FAULT')=='NONE' and self.x.get('ALARM_RAW')=='1'
+                and self.safety.get('FAULT')=='NONE' and self.safety.get('READY')=='1'
+                and self.safety.get('DOOR_CLOSED')=='1' and self.safety.get('SAW_POSITION')=='UP'
+                and self.inputs.get('SAW_UP')=='0' and self.inputs.get('SAW_DOWN')=='1')
+
+    def full_home(self):
+        if not self.can_full_home(): return False
+        # One deliberate Home gesture authorizes setup + this bounded move, not
+        # movement on connect or a later automatic retry.
+        self.consent.setChecked(True)
+        if self.x.get('CONFIGURED')=='1': return self.request_move('XHOME 20594')
+        self.full_home_pending=time.monotonic()
+        if self.send('XCONFIG 0 1'): return True
+        self.full_home_pending=None; return False
+
     def jog(self, direction):
         return self.jog_distance(direction*self.distance.value())
 
@@ -625,6 +648,14 @@ class TeensyCarriagePanel(QWidget):
         return self.request_move(f"XJOG {1 if inches>0 else -1} {count}")
 
     def tick(self):
+        if self.full_home_pending is not None:
+            if not self.ready_link() or self.local_fault or not self.consent.isChecked():
+                self.trip_local('Home setup feedback lost')
+            elif time.monotonic()-self.full_home_pending>2:
+                self.trip_local('Home setup acknowledgment timed out')
+            elif self.x.get('CONFIGURED')=='1':
+                self.full_home_pending=None
+                if not self.request_move('XHOME 20594'): self.trip_local('Home request rejected')
         if self.connected and self.armed:
             if not self.ready_link():
                 self.trip_local("Controller telemetry stale; motion stopped")
@@ -651,7 +682,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible firmware 0.18.0 and verified machine pin map"
+            text = "Waiting for compatible firmware 0.19.0 and verified machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":

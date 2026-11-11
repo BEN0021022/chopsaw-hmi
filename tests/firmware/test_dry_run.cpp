@@ -3,8 +3,8 @@ void advanceDry(unsigned ms, bool heartbeat=true) {
   while (ms--) { ++fakeTime; if (heartbeat && fakeTime%200==0) command("KEEPALIVE"); else loop(); }
 }
 void configDry() {
-  const unsigned values[] = {10,10,20,10,10,10,1000,20,10,1000,20};
-  for (unsigned i=0;i<11;++i) command("DSET "+std::to_string(i)+" "+std::to_string(values[i]));
+  const unsigned values[] = {10,10,20,10,10,10,1000,20,10,1000,20,10,30,10,40};
+  for (unsigned i=0;i<15;++i) command("DSET "+std::to_string(i)+" "+std::to_string(values[i]));
   command("DCOMMIT 23"); CHECK(dry.configId==23 && !dry.armed);
 }
 void clampDry() {
@@ -17,7 +17,7 @@ void descendDry() {
   fakePins[22]=HIGH; advanceDry(30); CHECK(!dry.failed());
 }
 int main() {
-  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V3,BLADE_LOCK:MANUAL_HOLD,TRIGGER_TEST:HOLD_V1")!=std::string::npos);
+  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V4,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1")!=std::string::npos);
   command("DARM 23"); CHECK(!dry.armed);
   command("DSET 0 10"); command("DCOMMIT 23"); CHECK(!dry.configId);
   command("DSET 42949672960 0"); CHECK(!dry.configId);
@@ -36,13 +36,15 @@ int main() {
   command("DCLAMP 0"); advanceDry(30); CHECK(!dry.clamp && dry.phase==unloaded::DryRun::Ready);
   command("DOFF"); CHECK(!dry.active() && !dry.armed && fakePins[19]==LOW);
   restart(); clampDry(); descendDry(); command("DOFF");
-  CHECK(!dry.armed && !dry.saw && !dry.clamp && dry.phase==unloaded::DryRun::StopReturn);
+  CHECK(!dry.armed && !dry.saw && dry.clamp && dry.phase==unloaded::DryRun::StopReturn);
   command("XARM 1"); CHECK(!outputsArmed && fakePulses==0);
-  fakePins[22]=LOW; advanceDry(30); CHECK(dry.phase==unloaded::DryRun::Off);
+  fakePins[22]=LOW; advanceDry(50); CHECK(dry.phase==unloaded::DryRun::Stopped && dry.clamp);
+  command("DRELEASE"); CHECK(!dry.clamp && dry.phase==unloaded::DryRun::Off);
   restart(); clampDry(); descendDry(); advanceDry(1100);
-  CHECK(dry.failed() && std::string(dry.fault)=="DRY_DOWN_TIMEOUT" && !dry.clamp && !dry.saw);
+  CHECK(dry.failed() && std::string(dry.fault)=="DRY_DOWN_TIMEOUT" && dry.clamp && !dry.saw);
   command("RESET"); CHECK(dry.failed());
-  fakePins[22]=LOW; advanceDry(30); command("RESET"); CHECK(!dry.failed() && !dry.armed);
+  fakePins[22]=LOW; advanceDry(50); command("RESET"); CHECK(dry.failed() && dry.clamp);
+  command("DRELEASE"); command("RESET"); CHECK(!dry.failed() && !dry.armed && !dry.clamp);
   restart(); clampDry(); descendDry(); fakePins[16]=LOW; advanceDry(70);
   CHECK(dry.phase==unloaded::DryRun::Returning);
   fakePins[16]=HIGH; advanceDry(1100);
@@ -53,8 +55,8 @@ int main() {
     if (event==1) fakePins[14]=LOW;
     if (event==2) { fakePins[22]=LOW; fakePins[16]=LOW; }
     if (event==3) { Serial.txRoom=0; advanceDry(1600,false); }
-    loop(); CHECK(dry.failed() && !dry.armed && !dry.clamp && !dry.saw);
-    CHECK(fakePins[33]==LOW && fakePins[32]==LOW && fakePins[19]==LOW);
+    loop(); CHECK(dry.failed() && !dry.armed && dry.clamp && !dry.saw);
+    CHECK(fakePins[33]==LOW && fakePins[32]==HIGH && fakePins[19]==LOW);
     command("KEEPALIVE"); CHECK(!dry.armed);
   }
   restart(); clampDry(); advanceDry(60010); CHECK(dry.failed() && std::string(dry.fault)=="DRY_CLAMP_MAX_ON");
@@ -99,5 +101,43 @@ int main() {
   CHECK(!dry.trigger && dry.manualMode && !dry.failed() && fakePins[19]==LOW);
   command("DTPRESS"); command("OFF"); CHECK(!dry.manualMode && !dry.trigger && fakePins[19]==LOW);
   restart(); CHECK(!dry.manualMode && fakePins[19]==LOW);
+  // Full firmware-owned clamp -> trigger -> travel -> brake -> release.
+  restart(); configDry(); command("DARM 23"); command("DCUT");
+  CHECK(dry.cycleRunning && !dry.clamp && !dry.trigger && dry.phase==unloaded::DryRun::ClampDelay);
+  for (unsigned i=0;i<200 && dry.phase!=unloaded::DryRun::Spinup;++i) advanceDry(1);
+  CHECK(dry.clamp && dry.trigger && !dry.saw);
+  advanceDry(15); CHECK(!dry.saw && dry.trigger);
+  for (unsigned i=0;i<100 && !dry.saw;++i) advanceDry(1);
+  CHECK(dry.saw && dry.trigger && dry.clamp);
+  fakePins[22]=HIGH; advanceDry(400); CHECK(dry.trigger && !dry.failed()); // not a manual hold lease
+  fakePins[16]=LOW;
+  for (unsigned i=0;i<200 && dry.saw;++i) advanceDry(1);
+  CHECK(!dry.saw && dry.trigger && dry.clamp);
+  fakePins[16]=HIGH; fakePins[22]=LOW;
+  for (unsigned i=0;i<200 && dry.phase!=unloaded::DryRun::BrakeWait;++i) advanceDry(1);
+  CHECK(!dry.trigger && dry.clamp && dry.cycleRunning);
+  advanceDry(20); CHECK(dry.clamp); // brake wait precedes release
+  for (unsigned i=0;i<200 && dry.cycleRunning;++i) advanceDry(1);
+  CHECK(dry.completed==1 && dry.phase==unloaded::DryRun::Ready && !dry.clamp && !dry.trigger && dry.armed);
+  command("DCUT"); advanceDry(60); CHECK(dry.clamp && dry.trigger);
+  command("OFF"); CHECK(dry.clamp && !dry.trigger && !dry.cycleRunning && !dry.armed);
+  command("DRELEASE"); CHECK(dry.clamp); // explicit release must also wait brake interval
+  advanceDry(50); command("DRELEASE"); CHECK(!dry.clamp);
+  // Stop/guard/watchdog at every triggered phase retains material and releases trigger.
+  const unloaded::DryRun::Phase phases[]={unloaded::DryRun::Spinup,unloaded::DryRun::Descend,
+      unloaded::DryRun::Dwell,unloaded::DryRun::Returning,unloaded::DryRun::BrakeWait};
+  for (auto phase:phases) for (unsigned cause=0;cause<3;++cause) {
+    restart(); configDry(); command("DARM 23"); command("DCUT");
+    for (unsigned i=0;i<2000 && dry.phase!=phase;++i) {
+      fakePins[22]=dry.saw ? HIGH:LOW; fakePins[16]=dry.saw ? LOW:HIGH; advanceDry(1);
+    }
+    CHECK(dry.phase==phase && dry.clamp);
+    if (cause==0) command("OFF");
+    if (cause==1) { fakePins[29]=HIGH; loop(); }
+    if (cause==2) { fakeTime+=1510; loop(); }
+    CHECK(dry.clamp && !dry.trigger && !dry.saw && !dry.armed && !dry.cycleRunning);
+    CHECK(fakePins[32]==HIGH && fakePins[19]==LOW && fakePins[33]==LOW);
+    command("KEEPALIVE"); command("DCUT"); CHECK(!dry.cycleRunning && fakePins[19]==LOW);
+  }
   printf("Unloaded dry-run sketch: %u checks passed\n",checks);
 }

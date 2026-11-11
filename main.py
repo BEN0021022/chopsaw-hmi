@@ -435,7 +435,7 @@ class MinimalHMI(QMainWindow):
         dash.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         left.addWidget(dash)
 
-        ctrl = QGroupBox("Controls"); v = QVBoxLayout(ctrl)
+        ctrl = QWidget(); v = QVBoxLayout(ctrl); v.setContentsMargins(0,0,0,0)
         self.manual_teensy_setup = QGroupBox("Teensy preparation - shared with CARRIAGE")
         prep = QVBoxLayout(self.manual_teensy_setup)
         self.manual_teensy_status = QLabel()
@@ -463,9 +463,11 @@ class MinimalHMI(QMainWindow):
         home_hint=QLabel("HOME runs while disarmed. Set the maximum search distance before starting.")
         home_hint.setWordWrap(True); prep.addWidget(home_hint)
         v.addWidget(self.manual_teensy_setup)
+        self.manual_teensy_setup.hide()
         self.enable_chk = QCheckBox("Motor Power Enabled")
         self.enable_chk.toggled.connect(self.toggle_motor_power)
         v.addWidget(self.enable_chk)
+        self.enable_chk.hide()
         self.manual_home_button = QPushButton("Home")
         self.manual_home_button.clicked.connect(self.home_motor)
         v.addWidget(self.manual_home_button)
@@ -480,6 +482,7 @@ class MinimalHMI(QMainWindow):
         self.manual_release.clicked.connect(lambda: self.carriage_tab.stop("XDISABLE"))
         for button in (self.manual_stop,self.manual_reset,self.manual_release): actions.addWidget(button)
         v.addWidget(self.manual_teensy_actions)
+        self.manual_teensy_actions.hide()
 
         ctrl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         left.addWidget(ctrl)
@@ -670,7 +673,7 @@ class MinimalHMI(QMainWindow):
         self.auto_isolation=QCheckBox("Unloaded / unplugged and driver checks confirmed")
         self.auto_isolation.toggled.connect(lambda checked: self.carriage_tab.consent.setChecked(checked))
         prep.addWidget(self.auto_isolation)
-        hint=QLabel("No stock; saw unplugged; blade trigger locked OFF.")
+        hint=QLabel("Saw mains unplugged. Home first; Start Auto loads timings and runs the combined sequence.")
         hint.setWordWrap(True); prep.addWidget(hint)
         row=QHBoxLayout()
         self.auto_configure=QPushButton("Setup")
@@ -944,7 +947,7 @@ class MinimalHMI(QMainWindow):
         self.auto_dry_run.clicked.connect(self.dry_run.start_sequence)
         self.auto_dry_stop=QPushButton('Stop dry run / release clamp')
         self.auto_dry_stop.clicked.connect(lambda: self.dry_run.stop())
-        self.auto_dry_status=QLabel('Requires matching 0.18.0 firmware.'); self.auto_dry_status.setWordWrap(True)
+        self.auto_dry_status=QLabel('Requires matching 0.19.0 firmware.'); self.auto_dry_status.setWordWrap(True)
         for widget in (self.auto_dry_configure,self.auto_dry_run,self.auto_dry_stop,self.auto_dry_status): dry_layout.addWidget(widget)
         right_col.insertWidget(0, self.auto_dry_group)
 
@@ -1618,12 +1621,14 @@ class MinimalHMI(QMainWindow):
         manual_ready = connected and capabilities.manual_motion_ready
         auto_ready = connected and capabilities.automatic_cycle_ready
         native_manual = controller.key == TEENSY_CARRIAGE
-        self.auto_dry_group.setVisible(native_manual)
+        self.auto_dry_group.hide()  # Native Start Auto now owns acknowledged preparation.
         self.cylinder_timing.set_simulator_mode(isinstance(self.ser, VirtualController))
         self.tabs.setTabText(self.tabs.indexOf(self.legacy_tab),"MANUAL" if native_manual else "MANUAL / SIM")
         self.legacy_tab.setEnabled(manual_ready or (connected and native_manual))
-        self.manual_teensy_setup.setVisible(native_manual)
-        self.manual_teensy_actions.setVisible(native_manual)
+        self.manual_teensy_setup.hide()
+        self.manual_teensy_actions.hide()
+        self.enable_chk.hide()
+        self.start_cycle_button.setText('Start Auto — dry run' if native_manual else 'START CYCLE')
         self.manual_home_button.setText("Home")
         self.enable_chk.setToolTip(
             "Check to enable and arm through the shared driver checks. Uncheck to release the motor; Home must be repeated. "
@@ -1895,7 +1900,7 @@ class MinimalHMI(QMainWindow):
     def cancel_auto_cycle(self):
         """Stops any active auto cycle and resets the state."""
         if self.active_controller().key == TEENSY_CARRIAGE:
-            return self.carriage_tab.stop()
+            return self.dry_run.stop() if self.dry_run.compatible else self.carriage_tab.stop()
         # 1. Send a command to stop the motor's current movement. M0 (Move 0) is a safe stop command.
         self.cycle_generation += 1
         self._simulation_pneumatic_pending = False
@@ -1975,6 +1980,8 @@ class MinimalHMI(QMainWindow):
 
 
     def start_auto_cycle(self):
+        if self.active_controller().key == TEENSY_CARRIAGE:
+            return self.dry_run.begin_auto()
         if self.manual_pneumatics.motion_locked():
             return False
         if getattr(self, '_simulation_pneumatic_pending', False):
@@ -2250,6 +2257,8 @@ class MinimalHMI(QMainWindow):
         if self.active_controller().key == TEENSY_CARRIAGE:
             dry = self.dry_run
             stopping = cmd in ('OFF','XARM 0','XDISABLE','RESET','DOFF')
+            if stopping and not dry.issuing_sequence:
+                dry.auto_start=None; dry.manual_start=None; dry.trigger_held=False
             if dry.sequence and not dry.issuing_sequence:
                 if stopping:
                     dry.sequence=None; dry.pending=None; dry.message='Unloaded dry list stopped.'
@@ -2294,7 +2303,8 @@ class MinimalHMI(QMainWindow):
 
     def home_motor(self):
         if self.active_controller().key == TEENSY_CARRIAGE:
-            return self.carriage_tab.home()
+            if self.dry_run.motion_locked(): return False
+            return self.carriage_tab.full_home()
         self.send_backend_commands(self.active_controller().home(), "home the carriage")
     def load_position(self):
         if self.active_controller().key == TEENSY_CARRIAGE:
@@ -2456,7 +2466,7 @@ class MinimalHMI(QMainWindow):
         self.manual_configure.setEnabled(p.allowed("XCONFIG 0 1"))
         self.manual_arm.setText("DISARM MANUAL CONTROL" if p.armed else "ARM MANUAL CONTROL")
         self.manual_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
-        self.manual_home_button.setEnabled(p.home_button.isEnabled())
+        self.manual_home_button.setEnabled(p.can_full_home() and not self.dry_run.motion_locked())
         self.manual_home_search.blockSignals(True)
         self.manual_home_search.setValue(p.home_search.value())
         self.manual_home_search.blockSignals(False)
@@ -2510,13 +2520,13 @@ class MinimalHMI(QMainWindow):
         self.auto_isolation.blockSignals(True)
         self.auto_isolation.setChecked(p.consent.isChecked()); self.auto_isolation.blockSignals(False)
         self.auto_configure.setEnabled(p.allowed("XCONFIG 0 1"))
-        self.auto_home.setEnabled(p.home_button.isEnabled())
+        self.auto_home.setEnabled(p.can_full_home() and not self.dry_run.motion_locked())
         self.auto_arm.setText("DISARM" if p.armed else "ARM")
         self.auto_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
         self.cancel_cycle_button.setEnabled(p.connected)
-        self.start_cycle_button.setEnabled(False)
+        self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto())
         self.fa_start_cycle_button.setEnabled(False)
-        self.auto_status_label.setText("Cutting unavailable. Use the unloaded test above. " + p.status.text())
+        self.auto_status_label.setText('Saw-unplugged integrated dry run. ' + self.dry_run.message)
         self.load_button.setEnabled(p.allowed(f"XLOAD {int(self.native_load_target()*1000+0.5)}"))
         self.load_button.setToolTip("Uses stored FAST profile. Requires Home, explicit arm and a clear path.")
         jogs=((self.auto_jog_left_btn,self.auto_jog_input.value()),(self.auto_jog_right_btn,-self.auto_jog_input.value()),

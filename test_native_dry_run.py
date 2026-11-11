@@ -90,9 +90,8 @@ def run(exe):
             assert not w.manual_pneumatics.request('press')
             assert not w.send_command('OUT 2 1')
             assert not any(c.startswith(('XARM','DARM','XHOME','XMOVE')) for c in wire.writes)
-            p.consent.setChecked(True)
-            assert w.send_command('XCONFIG 0 1'); flush(); tick()
-            assert p.home(); flush(); until(lambda:p.x.get('POS_KNOWN')=='1')
+            assert w.home_motor(); flush(); until(lambda:p.x.get('POS_KNOWN')=='1')
+            assert 'XCONFIG 0 1' in wire.writes and 'XHOME 20594' in wire.writes
             assert not p.armed and p.x['HOME_STATE']=='DONE'
             # Keep short test movements; engine still uses the actual saved profiles.
             assert p.edit_profile(2,1000,1000); flush(); tick()
@@ -128,13 +127,12 @@ def run(exe):
             with patch.object(w,'isActiveWindow',return_value=False): tick()
             assert d.data['TRIGGER']=='0' and not d.trigger_held
             QTest.mouseRelease(press,Qt.MouseButton.LeftButton); flush(); tick()
-            assert d.request('engage'); flush(); until(lambda:d.data['STATE']=='CLAMPED')
             assert not w.send_command('XARM 1') and not w.send_command('XDISABLE')
             assert d.request('cycle'); flush(); until(lambda:d.data['STATE']=='DESCEND')
+            assert d.data['CLAMP']=='1' and d.data['TRIGGER']=='1'
             assert not d.request('release')
-            until(lambda:d.data['STATE']=='CLAMPED')
-            assert d.data['CLAMP']=='1' and wire.strokes==1
-            assert d.request('release'); flush(); until(lambda:d.data['STATE']=='READY')
+            until(lambda:d.data['STATE']=='READY' and d.data['DONE']=='1')
+            assert d.data['CLAMP']=='0' and d.data['TRIGGER']=='0' and wire.strokes==1
             d.stop(); assert d.awaiting_stop and not d.allowed('KEEPALIVE'); flush(); tick()
             assert not d.motion_locked()
             # One truing stroke plus one stroke per list item, then stored FAST Load.
@@ -142,7 +140,7 @@ def run(exe):
             w.board_sensor_location_input.setValue(10.5)
             before=(list(w.cut_list),w.current_cut_index,w.sim_next_piece_index)
             before_trigger_commands=sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)
-            assert d.can_start(), (d.message,p.x)
+            assert d.can_begin_auto(), (d.message,p.x)
             w.status_label.setText('OFFLINE TEST FIXTURE')
             w.resize(1280,900); w.tabs.setCurrentWidget(w.auto_tab); w.show(); app.processEvents()
             Path('tmp/ui-dry-run').mkdir(parents=True,exist_ok=True)
@@ -151,7 +149,7 @@ def run(exe):
             w.grab().save('tmp/ui-dry-run/native-manual.png')
             w.manual_pneumatics.grab().save('tmp/ui-dry-run/trigger-controls.png')
             w.tabs.setCurrentWidget(w.auto_tab)
-            assert d.start_sequence(); flush()
+            assert w.start_auto_cycle(); flush()
             until(lambda:d.sequence and d.sequence['stage']=='SEARCH')
             for _ in range(3): tick()
             assert p.edge_searching and wire.strokes==1
@@ -163,9 +161,16 @@ def run(exe):
             assert wire.strokes==4 and d.data['STATE']=='OFF' and not p.armed
             assert (w.cut_list,w.current_cut_index,w.sim_next_piece_index)==before
             assert 'XPROFILE 2' in wire.writes and any(c.startswith('XLOAD ') for c in wire.writes)
-            assert sum(c=='DCYCLE' for c in wire.writes)==4
+            assert sum(c=='DCUT' for c in wire.writes)==4
             assert sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)==before_trigger_commands
             assert any(c.startswith('XEDGE ') and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'
+            # Stop during the acknowledged preparation cannot later start motion.
+            assert w.start_auto_cycle()
+            w.cancel_auto_cycle(); flush(); tick()
+            assert d.auto_start is None and d.sequence is None and d.data['STATE']=='OFF'
+            count=len(wire.writes)
+            for _ in range(5): tick()
+            assert not any(c.startswith(('XARM 1','DARM','DMANUAL','DCUT','XEDGE')) for c in wire.writes[count:])
             # No silent timing changes; a fresh acknowledged snapshot is required.
             w.cylinder_timing.fields['main.engage_settle'].setValue(200)
             assert not d.settings_match() and not d.can_start()
@@ -177,6 +182,13 @@ def run(exe):
             count=len(wire.writes)
             for _ in range(10): tick()
             assert not any(c.startswith(('XARM 1','DARM','DCLAMP','DCYCLE','XMOVE','XEDGE')) for c in wire.writes[count:])
+            # Manual combined Stop retains clamp until UP/brake wait + explicit release.
+            assert d.enable_manual(); flush(); until(lambda:d.data.get('MANUAL')=='1' and not d.manual_start)
+            assert d.request('cycle'); flush(); until(lambda:d.data['STATE']=='DESCEND')
+            d.stop(); flush(); until(lambda:d.data['STATE']=='STOPPED' and d.data['RELEASE_READY']=='1')
+            assert d.data['CLAMP']=='1' and d.data['TRIGGER']=='0' and not d.can_begin_auto()
+            assert d.request('recover_release'); flush(); tick()
+            assert d.data['CLAMP']=='0' and d.data['STATE']=='OFF'
             # Lost feedback cancels pending actuation and never restores consent/arm.
             w.tabs.setCurrentWidget(w.legacy_tab); w.activateWindow(); app.processEvents()
             assert d.enable_manual(); flush(); until(lambda:d.data.get('MANUAL')=='1' and not d.manual_start)

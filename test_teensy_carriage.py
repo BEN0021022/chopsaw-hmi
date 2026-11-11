@@ -64,7 +64,7 @@ def run():
         assert p.connected
         assert w.legacy_tab.isEnabled() and w.auto_tab.isEnabled() and not w.full_auto_tab.isEnabled()
         assert not w.start_cycle_button.isEnabled() and not hasattr(w,'cut_complete_button')
-        assert not w.enable_chk.isHidden() and not w.enable_chk.isEnabled()
+        assert w.enable_chk.isHidden() and not w.enable_chk.isEnabled()
         assert not w.manual_home_button.isEnabled()
         for retired in ('pid_chk','near_cal_btn','target_input','manual_go','rel_input',
                         'manual_jog','calibrate_input','manual_motor_params','max_speed','acceleration'):
@@ -312,21 +312,17 @@ def run():
         packet(p, **dict(edge_fields,TRUING_MILLI=149738))
         assert p.local_fault == "Invalid board-edge telemetry"
 
-        # Manual tab shares consent/setup/Home/arm/stop and remains on that tab.
+        # Manual shows Home only; one Home gesture performs setup and full search.
         ready(p)
         w.tabs.setCurrentWidget(w.legacy_tab)
         assert w.position_label.text() == 'UNKNOWN'
-        assert not w.manual_home_button.isEnabled() and not w.keypad.isEnabled()
-        w.manual_isolation.setChecked(True)
-        assert p.consent.isChecked() and w.manual_configure.isEnabled()
-        w.manual_configure.click()
+        assert w.manual_home_button.isEnabled() and not w.keypad.isEnabled()
+        assert w.manual_teensy_setup.isHidden() and w.manual_teensy_actions.isHidden() and w.enable_chk.isHidden()
+        w.manual_home_button.click()
         assert wire.writes[-1] == 'XCONFIG 0 1'
         packet(p,CONFIGURED=1,READY=1,HOME_RAW=0)
-        assert w.manual_home_button.isEnabled(), 'Manual Home may release an already active sensor'
-        w.manual_home_search.setValue(0.5)
-        assert p.home_search.value() == 0.5
-        w.manual_home_button.click()
-        assert wire.writes[-1] == 'XHOME 64' and w.tabs.currentWidget() == w.legacy_tab
+        p.tick()
+        assert wire.writes[-1] == 'XHOME 20594' and w.tabs.currentWidget() == w.legacy_tab
         packet(p,ARMED=1,CONFIGURED=1,HOME_RAW=0,HOME_STATE='RELEASE',MOVE_ID=1,JOG_READY=0)
         assert not w.manual_home_button.isEnabled() and not w.manual_home_search.isEnabled()
         w.manual_stop.click(); assert wire.writes[-1] == 'OFF'
