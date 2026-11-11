@@ -19,6 +19,12 @@ older virtual-fixture animation is retained on its own page; native actuation
 is not enabled there. See [garage preparation](docs/GARAGE_COMMISSIONING.md).
 This is an app-only update; deployed firmware remains 0.19.0.
 
+Native confirmed cycles now append `cut_history.csv` beside the executable
+(source mode: beside `main.py`) for later metrics. Records include cut/starting
+stock lengths where known, board identity, timestamp, mode and remaining stock.
+Current unplugged cycles are labeled `dry_run`; simulator previews are excluded.
+See [cut history fields and limits](docs/CUT_HISTORY.md).
+
 Current **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** removes Manual's Controls
 frame, leaving Home. One Home gesture confirms the established driver setup and
 searches the full supported range (20594 pulses, approximately 162 inches), with

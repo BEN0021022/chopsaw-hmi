@@ -35,6 +35,7 @@ from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
 from machine_workbench import MachineWorkbench
+from cut_history import CutHistory
 from _version import __version__ as APP_VERSION
 from controller_backends import (
     CONTROLLER_MODES,
@@ -184,6 +185,7 @@ class MinimalHMI(QMainWindow):
         self.current_sensor_voltage = 0.0
         self.current_motor_state = "IDLE"
         self.current_log_path = os.path.join(get_app_dir(), "motor_current_log.csv")
+        self.cut_history = CutHistory(get_app_dir(), APP_VERSION)
         self.last_current_log_time = 0.0
         self.settings = QSettings("ChopSawHMI", "ChopSawHMI")
         self.selected_serial_port = self.settings.value("serial_port", SERIAL_PORT)
@@ -391,8 +393,19 @@ class MinimalHMI(QMainWindow):
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
         self.dry_run.changed.connect(self.manual_pneumatics.refresh)
         self.dry_run.changed.connect(self.machine_workbench.refresh)
+        self.cut_history_warning = QLabel()
+        self.cut_history_warning.setWordWrap(True)
+        self.cut_history_warning.setStyleSheet('color:#fbbf24;padding:4px;')
+        self.cut_history_warning.hide()
+        root.addWidget(self.cut_history_warning)
+        self.dry_run.changed.connect(self.refresh_cut_history_status)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
+
+    def refresh_cut_history_status(self):
+        warning = self.cut_history.warning
+        self.cut_history_warning.setText(warning)
+        self.cut_history_warning.setVisible(bool(warning))
 
     def create_migration_tab(self):
         tab = QWidget()
@@ -999,6 +1012,11 @@ class MinimalHMI(QMainWindow):
         self.supervision_settings = self.dry_run.supervision.controls()
         root.addWidget(self.supervision_settings)
         root.addWidget(self.cylinder_timing)
+        history_note = QLabel('Cut history: '+str(self.cut_history.path)+'\n'
+                             'Automatic CSV of confirmed cycles. Lengths are inches; unknown lengths stay blank. '
+                             'Current unplugged cycles are marked dry_run. Simulator exercises are excluded.')
+        history_note.setWordWrap(True); history_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        root.addWidget(history_note)
         self.auto_clamp_checkbox = QCheckBox('Automatic clamp/saw simulation')
         self.auto_clamp_checkbox.setToolTip('Simulator only. Live automatic clamp/saw operation remains unavailable until controller sequencing is commissioned.')
         self.auto_clamp_checkbox.toggled.connect(self._on_auto_clamp_toggled)
@@ -3056,6 +3074,7 @@ class MinimalHMI(QMainWindow):
         self.dry_run.timer.stop()
         self._save_settings()
         self._stop_listener()
+        self.cut_history.close()
         event.accept()
 
 if __name__ == "__main__":

@@ -59,6 +59,12 @@ def run():
             assert (coordinator.geometry, coordinator.material, coordinator.paused, list(coordinator.events)) == before
             assert {key:w.settings.value(key) for key in w.settings.allKeys()} == settings
             assert bench.export_report(path=Path(folder)/'missing'/'report.json') is False
+            w.cut_history.error = 'Cut history test: file is locked'
+            w.refresh_cut_history_status()
+            assert not w.cut_history_warning.isHidden()
+            assert 'file is locked' in w.cut_history_warning.text()
+            w.cut_history.error = ''; w.refresh_cut_history_status()
+            assert w.cut_history_warning.isHidden()
             bench.source.setCurrentIndex(1)
             w.tabs.setCurrentWidget(w.full_auto_tab)
             w.resize(1440,1000); w.show(); app.processEvents()

@@ -121,6 +121,8 @@ class SupervisionAdapter:
         rear=c.geometry.pusher(c.position).near
         if rear<=0: return False
         self.coordinator.locate_stock(Span(0,rear),source='operator')
+        # Registration locates infeed stock, not the original full board length.
+        self.owner.cut_history.new_board()
         self.owner.log.append('SUPERVISION: operator registered stock spanning blade plane and contacting pusher; not grip feedback.')
         self.review(); return True
 
@@ -134,7 +136,9 @@ class SupervisionAdapter:
             if p.x.get('EDGE_VALID')=='1' and key!=self.edge_key and self.coordinator.geometry.verified:
                 rear=self.coordinator.geometry.pusher(c.position).near
                 front=self.coordinator.geometry.sensor.near
-                if rear>=front: self.coordinator.locate_stock(Span(front,rear),'real edge acquisition')
+                if rear>=front:
+                    self.coordinator.locate_stock(Span(front,rear),'real edge acquisition')
+                    self.owner.cut_history.new_board(rear-front, 'edge_estimate')
                 else: self.coordinator.invalidate('Captured material extent is inconsistent.')
                 self.edge_key=key; self.position=c.position; return
             if self.position is not None and c.position is not None:
@@ -143,8 +147,13 @@ class SupervisionAdapter:
         elif kind=='BENCH_DRY':
             value=d.data.get('DONE')
             if self.done is not None and value!=self.done:
-                if (int(value)-int(self.done))&0xffffffff==1: self.coordinator.cut_completed()
+                delta=(int(value)-int(self.done))&0xffffffff
+                if delta==1: self.coordinator.cut_completed()
                 else: self.coordinator.invalidate('Unexpected completed-cycle counter change; reconcile material.')
+                stock=self.coordinator.material.stock
+                self.owner.cut_history.completed(int(value),delta,
+                    remaining=stock.far-stock.near if self.coordinator.material.located else None,
+                    position=c.position,board_preset=self.owner.get_active_board_length())
             self.done=value
 
     def reset_session(self):

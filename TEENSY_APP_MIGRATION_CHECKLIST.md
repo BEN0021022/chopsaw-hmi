@@ -78,6 +78,9 @@ Record outstanding physical responses in the [fault acceptance matrix](docs/TEEN
       first unsupported cut and predict minimum detector-zone cleanup.
 - [x] Passive native phase/decision diagnostics, acknowledged wait vs travel-limit
       labels, interrupted feedback handling and bounded JSON session export.
+- [x] Append-only cut-history CSV next to executable; background writes, confirmed
+      counter events, frozen cut targets/original stock estimates, explicit unknowns,
+      dry-run classification, board IDs and visible write-failure warning.
 - [x] Session checklist, measured geometry worksheet and current garage procedure;
       alternative-holding recovery design documents the remaining executor gap.
 - [x] Pure scenario/diagnostic tests, no-write Qt workbench tests and actual-sketch

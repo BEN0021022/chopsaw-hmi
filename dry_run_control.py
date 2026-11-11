@@ -93,6 +93,7 @@ class NativeDryRun(QObject):
     def sync(self):
         session = (self.owner.ser, self.native())
         if session != self.session:
+            self.owner.cut_history.new_session()
             self.diagnostics.note('SESSION_CHANGED', 'Connection/session changed; no previous phase or material reference is reused.', time.monotonic())
             self.diagnostics.observe({'fresh':False,'message':'Connection/session changed'}, {}, time.monotonic())
             self.session = session; self.compatible=False; self.data={}; self.received=None
@@ -251,6 +252,19 @@ class NativeDryRun(QObject):
             return False
         expected=(int(self.data.get('REQ','0'))+1)&0xffffffff
         if not self.owner.send_command(command): return False
+        if action == 'cycle':
+            s = self.sequence
+            index = s['index'] if s else None
+            self.owner.cut_history.prepare_cycle(
+                expected_done=(int(self.data['DONE'])+1)&0xffffffff,
+                mode='auto' if s else 'manual',
+                cut_type='truing' if index == -1 else 'cut',
+                cut_number=index+1 if index is not None and index >= 0 else None,
+                length=(self.owner.carriage_tab.trim_overlap.value() if index == -1 else
+                        s['cuts'][index] if s else None),
+                length_source='truing_setting' if index == -1 else 'cut_list_target' if s else 'unknown_manual_length',
+                board_preset=self.owner.get_active_board_length(),
+                kerf=s['kerf'] if s else self.owner.kerf_input.value())
         self.pending={'kind':'action','req':expected,'at':time.monotonic()}
         self.message='Waiting for controller acknowledgment.'; self.changed.emit(); return True
 
@@ -438,6 +452,7 @@ class NativeDryRun(QObject):
         cuts=[float(length) for _,length,_ in self.owner.cut_list]
         if any(not math.isfinite(x) or x<=0 for x in cuts): return False
         self.supervision.coordinator.invalidate('New board acquisition requested.')
+        self.owner.cut_history.clear_board()
         self.sequence={'stage':'SEARCH_ARM','at':time.monotonic(),'cuts':cuts,'kerf':self.owner.kerf_input.value(),
                        'index':-1,'move_id':int(p.x['MOVE_ID']),
                        'edge_command':f'XEDGE {int(math.floor(p.edge_search.value()*127.12+.5))} '

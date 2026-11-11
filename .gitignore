@@ -6,4 +6,5 @@ build/
 dist/
 *.zip
 motor_current_log*
+cut_history.csv
 tmp/

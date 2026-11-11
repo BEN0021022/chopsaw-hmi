@@ -58,6 +58,7 @@ def run(exe):
         app.setFont(QFont('Segoe UI',10))
     with tempfile.TemporaryDirectory() as folder:
         main.QSettings=lambda *a,**k: QSettings(folder+'/settings.ini',QSettings.Format.IniFormat)
+        main.get_app_dir=lambda: folder  # Metrics and other writable test data stay isolated.
         main.updater.check_for_update=lambda *a,**k: None
         wire=Sketch(exe)
         with patch('time.monotonic',lambda: wire.now):
@@ -171,6 +172,23 @@ def run(exe):
             until(lambda:d.sequence is None)
             assert d.message.startswith('Unloaded dry list complete'), d.message
             assert wire.strokes==4 and d.data['STATE']=='OFF' and not p.armed
+            import csv
+            assert w.cut_history.flush()
+            with w.cut_history.path.open(newline='',encoding='utf-8') as stream:
+                history=list(csv.DictReader(stream))
+            assert len(history)==4, history  # Manual, truing, then two list cuts.
+            assert [row['cut_type'] for row in history]==['cut','truing','cut','cut']
+            assert [row['cut_length_in'] for row in history[-2:]]==['2.0','3.0']
+            assert all(row['run_type']=='dry_run' for row in history)
+            assert history[0]['cut_length_in']=='' and history[0]['board_length_in']==''
+            assert all(row['board_length_source']=='edge_estimate' for row in history[1:])
+            assert len({row['board_id'] for row in history[1:]})==1
+            assert len({row['board_length_in'] for row in history[1:]})==1
+            assert all(float(row['board_length_in'])>3 for row in history[1:])
+            for _ in range(3): tick()
+            assert w.cut_history.flush()
+            with w.cut_history.path.open(newline='',encoding='utf-8') as stream:
+                assert len(list(csv.DictReader(stream)))==4, 'Repeated DONE must not duplicate a cut'
             assert (w.cut_list,w.current_cut_index,w.sim_next_piece_index)==before
             assert 'XPROFILE 2' in wire.writes and any(c.startswith('XLOAD ') for c in wire.writes)
             assert sum(c=='DCUT' for c in wire.writes)==4
@@ -255,6 +273,9 @@ def run(exe):
             d.handle('BENCH_DRY,'+','.join(f'{k}:{v}' for k,v in corrupt.items()))
             assert d.local_fault=='Invalid dry-run readback'
             flush()
+            assert w.cut_history.flush()
+            with w.cut_history.path.open(newline='',encoding='utf-8') as stream:
+                assert len(list(csv.DictReader(stream)))==4, 'Cancelled/faulted/rejected cycles are not completed cuts'
             w._stop_listener(); w.set_controls_enabled(False); w.close()
         wire.close()
     print('Native unloaded dry run: actual sketch + Qt manual controls, Home, real detector, 2-cut list, truing, return, ACK/hash, exclusion, stop/stale/readback guards OK')
