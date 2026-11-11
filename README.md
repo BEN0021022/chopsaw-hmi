@@ -5,7 +5,7 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-11)
 
-Prepared **0.20.0 / CARRIAGE_V14** fixes multi-board cut-list rejection and
+Flashed/read back **0.20.0 / CARRIAGE_V14** on COM4, 2026-11-11. It fixes multi-board cut-list rejection and
 corrects truing to advance sensor distance **plus** forward trim (Auto uses
 kerf). One next-cut capacity check replaces the whole-list fit check. At each
 board boundary the runner clears the detector when commissioned, returns to
@@ -32,7 +32,7 @@ stock lengths where known, board identity, timestamp, mode and remaining stock.
 Current unplugged cycles are labeled `dry_run`; simulator previews are excluded.
 See [cut history fields and limits](docs/CUT_HISTORY.md).
 
-Current **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** removes Manual's Controls
+The prior **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** baseline removed Manual's Controls
 frame, leaving Home. One Home gesture confirms the established driver setup and
 searches the full supported range (20594 pulses, approximately 162 inches), with
 finite failed-sensor/watchdog/guard stops retained. Individual pneumatic controls

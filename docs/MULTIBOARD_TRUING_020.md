@@ -4,6 +4,13 @@ Prepared/tested 2026-11-11. Matching firmware 0.20.0 / CARRIAGE_V14 advertises
 `TRUING:SENSOR_PLUS_TRIM_V1`. Prior 0.19 source/HEX remain archived. No pulse
 calibration, wiring, motion soft limits or pneumatic interlocks are changed.
 
+Flashed/read back on COM4, 2026-11-11 after operator closed the app and confirmed
+ready for flashing. Boot OFF/disarmed/unconfigured, Home unknown, no faults or
+queued motion. Captured RAM profiles were restored/verified using XPROFILE only:
+Gentle 600/600, Normal 2000/1500, Fast 3500/2000. No setup, enable, Home, motion or
+valve command was sent. Source checkpoint `08374d5`; HEX SHA256
+`7f0968e90c2a49efdad82dbc02446c59848c0a3d024a3b1279c765d53d184a6f`.
+
 ## Reported failure and correction
 
 The five listed lengths (57.75, 57.75, 24, 24, 17.5 inches) total 181 inches,

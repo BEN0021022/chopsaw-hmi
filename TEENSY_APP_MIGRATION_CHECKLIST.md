@@ -1,8 +1,8 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-11. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current prepared source/build: custom **0.20.0 / CARRIAGE_V14**; deployed baseline
-is **0.19.0 / CARRIAGE_V13** until the 0.20 readback below is recorded. Integrated saw-unplugged
+Current deployed source/build: custom **0.20.0 / CARRIAGE_V14**, flashed/read back
+on COM4, 2026-11-11. Integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
 0.18.0 was flashed/read back on 2026-11-10; individual mechanisms passed.
 Prior 0.16.0 was flashed/read back on COM4 on 2026-11-09 after isolation confirmation;
@@ -30,7 +30,11 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Actual-sketch regressions: reported five-cut/two-board list, intermediate
       cleanup, no sensor-triggered resume, long waiting interval, oversized first cut.
 - [x] Host interlock/edge/protocol suites and Teensy 4.1 compile.
-- [ ] Flash/read back 0.20, restore pre-flash profiles without arming or movement.
+- [x] Flash/read back 0.20 on COM4, 2026-11-11. OFF/disarmed/unconfigured,
+      unknown position, no faults/queued motion. Restore/verify captured profiles
+      (Gentle 600/600, Normal 2000/1500, Fast 3500/2000) without arming or movement.
+- [x] Save operator-supplied 16.75-inch physical rear extent, retain 160-inch
+      cleanup allowance; old truing/automatic-cleanup verification cleared.
 - [ ] Physically verify 10.8 + 0.12 = 10.92 inch truing advance, then combined dry runs.
 
 See [current correction procedure](docs/MULTIBOARD_TRUING_020.md).
