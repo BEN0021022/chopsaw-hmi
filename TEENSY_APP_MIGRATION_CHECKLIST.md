@@ -20,6 +20,19 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Auto acquisition correction - app patch 0.22.1
+
+- [x] Reproduce physical-board search failure at 254 pulses, EDGE_FAILED/NOT_FOUND.
+- [x] Separate Auto travel-derived acquisition bound from two-inch bench setting.
+- [x] Reserve sensor/kerf advance, pusher projection and blade keepout/soft limits.
+- [x] Show controller cause: not found, timeout, driver, guard or stale feedback.
+- [x] Regression: real detection after eight inches and complete bounded no-detect
+      stop; different start positions; no subsequent truing/valve command on failure.
+- [ ] Reopen corrected app for operator retest (firmware remains 0.22.0).
+- [ ] Physical acquisition/truing acceptance with real stock/detector.
+
+See [acquisition fix](docs/ACQUISITION_FIX_0221.md).
+
 ## Auto profiles / last-cut operator flow - 0.22
 
 - [x] Stored Gentle profile for acquisition and first truing; Normal for later

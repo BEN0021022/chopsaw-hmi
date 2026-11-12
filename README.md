@@ -5,6 +5,12 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-11)
 
+App patch **0.22.1** fixes Auto's leftover two-inch acquisition cap. The search
+now uses available referenced travel while reserving sensor-plus-kerf truing
+and blade clearance; specific controller faults replace the generic message.
+Firmware stays 0.22.0; no flash is needed. See
+[acquisition correction](docs/ACQUISITION_FIX_0221.md).
+
 **0.22.0 / CARRIAGE_V16** keeps acquisition and first truing on Gentle,
 uses Normal for later feeds and Fast for return. An unclampable pending piece
 uses an explicit operator-controlled unplugged stroke. Stay forward if another

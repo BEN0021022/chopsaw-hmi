@@ -39,7 +39,7 @@ class DirectControls(QObject):
     def can_motion(self, kind='move'):
         ready=self.free_for_carriage() and (kind=='home' or self.owner.carriage_tab.x.get('POS_KNOWN')=='1')
         if kind=='auto':
-            ready=ready and self.owner.dry_run.supervision.coordinator.geometry.verified and bool(self.owner.cut_list) and self.owner.carriage_tab.inputs.get('BOARD_EDGE')=='1'
+            ready=ready and self.owner.dry_run.supervision.coordinator.geometry.verified and bool(self.owner.cut_list) and self.owner.carriage_tab.inputs.get('BOARD_EDGE')=='1' and self.owner.dry_run.acquisition_command() is not None
         return bool(ready)
 
     def can_actuator(self, action):

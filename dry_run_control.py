@@ -386,12 +386,34 @@ class NativeDryRun(QObject):
         self.capture_diagnostics()
         self.changed.emit()
 
+    def feedback_problem(self):
+        """Keep the controller's cause instead of replacing it with a waiver."""
+        p=self.owner.carriage_tab
+        if p.local_fault:return p.local_fault
+        code=p.x.get('FAULT','NONE')
+        if code=='NONE':code=p.safety.get('FAULT','NONE')
+        if code=='EDGE_FAILED':
+            detail=p.x.get('EDGE_ERROR','UNKNOWN')
+            if detail=='NOT_FOUND':
+                distance=int(p.x.get('JOG_PULSES','0'))/127.12
+                return f'Board detector not found after {distance:.2f} in of search. Check stock/sensor; Home before retry.'
+            if detail=='TIMEOUT':return 'Board detector search timed out. Check stock/sensor and Gentle profile; Home before retry.'
+            return f'Board detector acquisition failed ({detail}). Home before retry.'
+        if code!='NONE':return f'Carriage fault: {code}. Home after resolving the cause.'
+        if self.data.get('FAULT','NONE')!='NONE':return 'Controller fault: '+self.data['FAULT']
+        if not self.fresh():return 'Controller cycle feedback missing or stale; action stopped.'
+        for record in ('X','SAFETY','INPUTS'):
+            if not p.fresh(record):return f'{record} feedback missing or stale; action stopped.'
+        if p.inputs.get('FENCE_DOOR')!='0':return 'Guard door opened; action stopped.'
+        if p.inputs.get('CL57T_ALM')!='1':return 'Driver alarm input active; action stopped.'
+        return 'Machine interlock changed; action stopped. Check live sensor status.'
+
     def tick(self):
         self.sync()
         now=time.monotonic()
         if self.native() and (self.data.get('ARMED')=='1' or self.sequence):
             if not self.safe_link():
-                if not self.local_fault: self.stop('Dry-run feedback/interlock lost; reset and re-confirm before retry.')
+                if not self.local_fault: self.stop(self.feedback_problem())
             elif not self.awaiting_stop and now-self.last_keepalive>=.25 and self.data.get('ARMED')=='1':
                 self.owner.send_command('KEEPALIVE'); self.last_keepalive=now
         if self.pending and now-self.pending['at']>2: self.stop('Dry-run acknowledgment timed out')
@@ -404,7 +426,7 @@ class NativeDryRun(QObject):
         if self.auto_start and not self.pending:
             self.issuing_sequence=True
             try:
-                if not self.safe_link(): self.stop('Auto setup feedback lost')
+                if not self.safe_link(): self.stop(self.feedback_problem())
                 elif self.auto_start=='off' and now-self.auto_start_at>2: self.stop('Auto stop acknowledgment timed out')
                 elif self.auto_start=='off' and self.data.get('STATE')=='OFF':
                     self.auto_start='config'
@@ -467,7 +489,26 @@ class NativeDryRun(QObject):
                 and self.data.get('STATE') in ('OFF','READY') and self.data.get('CLAMP')=='0'
                 and self.data.get('TRIGGER')=='0' and self.data.get('CYCLE')=='0'
                 and p.inputs.get('SAW_UP')=='0' and p.inputs.get('SAW_DOWN')=='1'
-                and p.inputs.get('BOARD_EDGE')=='1' and bool(self.owner.cut_list))
+                and p.inputs.get('BOARD_EDGE')=='1' and bool(self.owner.cut_list) and self.acquisition_command() is not None)
+
+    def acquisition_command(self):
+        """Auto gets a travel-derived bound, separate from the bench's 2 in.
+
+        Reserve space beyond the latest possible capture for sensor + kerf
+        truing and the pusher/blade keepout. Remain inside firmware soft limits.
+        """
+        p=self.owner.carriage_tab;g=self.supervision.coordinator.geometry
+        if not g.verified or p.x.get('POS_KNOWN')!='1':return None
+        try:
+            sensor=float(self.owner.board_sensor_location_input.value())
+            trim=float(self.owner.kerf_input.value())
+            if not all(math.isfinite(v) and 0<=v<=160.5 for v in (sensor,trim)):return None
+            minimum=max(g.physical_min,g.cut_keepout)+g.pusher_front_offset+1/127.12+sensor+trim
+            minimum_offset=max(int(p.x['SOFT_MIN_OFFSET']),math.ceil((minimum-160.5)*127.12))
+            count=min(int(p.x['MAX_MOVE']),int(p.x['HOME_OFFSET'])-minimum_offset)
+            if count<1:return None
+            return f'XEDGE {count} {int(math.floor(sensor*1000+.5))} {int(math.floor(trim*1000+.5))}'
+        except (ValueError,KeyError,OverflowError):return None
 
     def begin_auto(self):
         if not self.can_begin_auto(): return False
@@ -493,9 +534,7 @@ class NativeDryRun(QObject):
                        'list_snapshot':previous['list_snapshot'] if previous else tuple(self.owner.cut_list),
                        'reference_signature':self.supervision.current_reference_signature(),
                        'move_id':int(p.x['MOVE_ID']),
-                       'edge_command':f'XEDGE {int(math.floor(p.edge_search.value()*127.12+.5))} '
-                                      f'{int(math.floor(self.owner.board_sensor_location_input.value()*1000+.5))} '
-                                      f'{int(math.floor(self.owner.kerf_input.value()*1000+.5))}'}
+                       'edge_command':self.acquisition_command()}
         self.progress_batch=self.sequence['list_snapshot']; self.progress_index=self.sequence['next_index']
         # The explicit Run Dry List gesture authorizes this sequence's arming.
         self.issuing_sequence=True
@@ -514,14 +553,13 @@ class NativeDryRun(QObject):
                 self.data.get('STATE')!='OFF' or p.armed or p.x.get('POS_KNOWN')!='1'
                 or not p.consent.isChecked() or p.x.get('CONFIGURED')!='1'
                 or p.inputs.get('BOARD_EDGE')!='1' or not self.owner.cut_list
-                or not 0<=self.owner.board_sensor_location_input.value()<=160.5
-                or int(p.x.get('HOME_OFFSET','0'))-int(math.floor(p.edge_search.value()*127.12+.5))<int(p.x.get('SOFT_MIN_OFFSET','0')))
+                or self.acquisition_command() is None)
 
     def advance_sequence(self):
         # Implemented as ACK/state transitions, never PC timers commanding valve phases.
         s=self.sequence; p=self.owner.carriage_tab
         if not s or self.pending or p.profile_pending: return
-        if not self.safe_link(): self.stop('Dry-list feedback/interlock lost'); return
+        if not self.safe_link(): self.stop(self.feedback_problem()); return
         stage=s['stage']
         def next_stage(name): s['stage']=name; s['at']=time.monotonic()
         if stage=='SEARCH_PROFILE' and p.x.get('PROFILE_ID')=='1':
@@ -688,7 +726,8 @@ class NativeDryRun(QObject):
             self.message='OPERATOR REQUIRED — '+(decision.reason if decision else 'Reconcile material/holding and restart.')
             return  # Unenergized human pause has no arbitrary 180-second expiry.
         if self.sequence:
-            label = ('SEARCH — trip and hold the real board detector until truing starts' if s['stage']=='SEARCH' else s['stage'])
+            label = (f"SEARCH — Gentle approach, up to {int(s['edge_command'].split()[1])/127.12:.2f} in; waiting for board detector"
+                     if s['stage']=='SEARCH' else s['stage'])
             self.message=f"Dry list board {s['board']}: {label} — {'truing' if s['index']<0 else 'cut '+str(s['index']+1)}; saw mains MUST stay unplugged."
             if time.monotonic()-s['at']>180:
                 self.stop('Dry-list phase exceeded 180 seconds')
