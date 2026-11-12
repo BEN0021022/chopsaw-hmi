@@ -17,7 +17,7 @@ void descendDry() {
   fakePins[22]=HIGH; advanceDry(30); CHECK(!dry.failed());
 }
 int main() {
-  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V5,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1")!=std::string::npos);
+  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1")!=std::string::npos);
   command("DARM 23"); CHECK(!dry.armed);
   command("DSET 0 10"); command("DCOMMIT 23"); CHECK(!dry.configId);
   command("DSET 42949672960 0"); CHECK(!dry.configId);
@@ -147,5 +147,29 @@ int main() {
   command("DUP");fakePins[16]=HIGH;fakePins[22]=LOW;advanceDry(60);
   CHECK(dry.phase==unloaded::DryRun::Ready && !dry.saw && !dry.clamp);
   command("DOFF");CHECK(!dry.armed);
+  // Operator-controlled unplugged cycle is separately bound to config/request,
+  // never activates the main clamp, and cannot be replayed.
+  restart();configDry();command("DARM 23");
+  const uint32_t operatorReq=dry.requestId+1;
+  command("DOPCUT 22 "+std::to_string(operatorReq));CHECK(!dry.operatorCycle);
+  command("DOPCUT 23 "+std::to_string(operatorReq+1));CHECK(!dry.operatorCycle);
+  command("DOPCUT 23 "+std::to_string(operatorReq));CHECK(dry.operatorCycle && dry.cycleRunning && !dry.clamp);
+  command("DCLAMP 1");CHECK(!dry.clamp);
+  for (unsigned i=0;i<2000 && dry.cycleRunning;++i) {
+    fakePins[22]=dry.saw ? HIGH:LOW;fakePins[16]=dry.saw ? LOW:HIGH;
+    advanceDry(1);CHECK(!fakePins[32]);
+  }
+  CHECK(dry.completed==1 && !dry.operatorCycle && !dry.clamp && !dry.trigger && dry.phase==unloaded::DryRun::Ready);
+  command("DOPCUT 23 "+std::to_string(operatorReq));CHECK(!dry.cycleRunning && dry.completed==1);
+  command("DOFF");command("DOPCUT 23 "+std::to_string(dry.requestId+1));CHECK(!dry.cycleRunning);
+  command("DMANUAL 23");command("DOPCUT 23 "+std::to_string(dry.requestId+1));CHECK(!dry.cycleRunning);
+  for (unsigned cause=0;cause<3;++cause) {
+    restart();configDry();command("DARM 23");command("DOPCUT 23 "+std::to_string(dry.requestId+1));advanceDry(60);
+    CHECK(dry.trigger && !dry.clamp);
+    if (cause==0) command("OFF");
+    if (cause==1) { fakePins[29]=HIGH;loop(); }
+    if (cause==2) { fakeTime+=1510;loop(); }
+    CHECK(!dry.armed && !dry.trigger && !dry.clamp && !dry.operatorCycle && !dry.cycleRunning);
+  }
   printf("Unloaded dry-run sketch: %u checks passed\n",checks);
 }

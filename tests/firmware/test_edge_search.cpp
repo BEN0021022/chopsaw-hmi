@@ -37,6 +37,7 @@ int main() {
   fakePins[21]=HIGH; command("XPROFILE 3"); // must not alter while armed
   command("XEDGE 254 10800 250");
   CHECK(testMode==TestMode::Edge && xRemaining==254 && fakePins[3]==LOW);
+  CHECK(xProfile==1 && xRamp.parameters.maxRate==xProfiles[1].maxRate && xRamp.parameters.acceleration==xProfiles[1].acceleration);
   CHECK(!xEdgeValid && xMoveId==2);
   seekUntil(13); CHECK(xHomeOffset==-27);
   // A bouncing edge pauses immediately, but does not publish a false capture.
@@ -100,7 +101,7 @@ int main() {
   const uint32_t id=xMoveId;
   command("XJOG -1 13"); command("XMOVE 135000"); command("OUT 1 1");
   CHECK(testMode==TestMode::Edge && xMoveId==id && !outputStates[1]);
-  xHomeOffset=carriage::Positioning::MinOffset; fakeTime+=25; loop();
+  xHomeOffset=carriage::Positioning::MinOffset; fakeTime+=100; loop();
   CHECK(interlocks.fault==bench::Fault::SoftLimit && !outputsArmed && !xPositionKnown);
 
   edgeReady(); xHomeOffset=carriage::Positioning::MinOffset+10;

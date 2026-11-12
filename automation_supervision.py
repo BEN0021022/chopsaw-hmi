@@ -218,6 +218,36 @@ def assess_manual_cycle(ctx):
     return Decision(Outcome.PROCEED,'MANUAL_CYCLE_AVAILABLE','Manual cycle uses operator-positioned stock and the main clamp; grip is not measured.',('main',))
 
 
+def plan_operator_cut(ctx, next_length=None, kerf=0):
+    """Unplugged operator-controlled stroke; return only for last usable cut.
+
+    This decision never supplies holding proof or executes a stroke. A fresh
+    operator gesture is required after positioning/any early return finishes.
+    """
+    state=validate_next_action(ctx,'feed')
+    if not state.proceeds:return state
+    if not ctx.geometry.verified or not ctx.material.located or not ctx.material.contact:
+        return Decision(Outcome.BLOCK,'OPERATOR_REFERENCE_REQUIRED','Located contacting stock is required to plan operator intervention.')
+    if ctx.geometry.pusher(ctx.position).near<=ctx.geometry.cut_keepout:
+        return Decision(Outcome.BLOCK,'BLADE_KEEP_OUT','Pusher is inside the blade keepout.')
+    if not ctx.material.stock.near<=0<=ctx.material.stock.far:
+        return Decision(Outcome.BLOCK,'NO_STOCK_AT_CUT','Stock must span the cut plane.')
+    main=assess_main_clamp(ctx)
+    if main.code not in ('PUSHER_OVERLAP','NO_MATERIAL_COVERAGE'):
+        return Decision(Outcome.BLOCK,'OPERATOR_PATH_UNAVAILABLE','This path only handles an installed main clamp unable to hold this piece.')
+    if ctx.sensor_clear is None or ctx.material.stock.overlaps(ctx.geometry.sensor)==ctx.sensor_clear:
+        return Decision(Outcome.BLOCK,'MATERIAL_SENSOR_DISAGREEMENT','Detector and tracked material disagree; reconcile before returning or cutting.')
+    after=replace(ctx,material=replace(ctx.material,stock=Span(0,ctx.material.stock.far)))
+    if next_length is not None:
+        following=plan_board_feed(after,next_length,kerf)
+        if not following.proceeds:return following
+        if following.code=='FEED_TARGET_AVAILABLE':
+            return Decision(Outcome.ADAPT,'OPERATOR_CUT_STAY','Secure the unclamped wood and request this cut; carriage stays forward because another cut fits.',inhibited_clamps=('main',))
+    if ctx.sensor_clear:
+        return Decision(Outcome.ADAPT,'OPERATOR_CUT_RETURN','Last usable cut is positioned and detector is clear; return carriage, then wait for operator-secured cut.',inhibited_clamps=('main',))
+    return Decision(Outcome.ADAPT,'OPERATOR_CUT_STAY','Secure the unclamped wood and request this cut; detector clearance is needed before carriage return.',inhibited_clamps=('main',))
+
+
 def plan_sensor_clearance(ctx):
     state=validate_next_action(ctx,'clear_sensor')
     if not state.proceeds: return state
@@ -279,6 +309,7 @@ class AutomationCoordinator:
         # optimization. No individual function can write GPIO/serial.
         ctx=replace(ctx,geometry=self.geometry,material=self.material,config_revision=self.config_revision)
         d=(plan_sensor_clearance(ctx) if action=='clear_sensor' else
+           plan_operator_cut(ctx,length,kerf) if action=='operator_cut' else
            plan_board_feed(ctx,length,kerf) if action=='feed' else validate_next_action(ctx,action))
         d=replace(d,material_revision=self.material.revision,config_revision=self.config_revision)
         event=(d.code,d.reason)

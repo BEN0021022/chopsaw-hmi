@@ -14,6 +14,25 @@ def context(**changes):
 
 
 class Policies(unittest.TestCase):
+    def test_last_unclamped_cut_returns_only_when_detector_clear(self):
+        c=context(position=8,material=Material(Span(-20,8),'estimated',True),sensor_clear=True)
+        self.assertEqual(plan_operator_cut(c,None,.12).code,'OPERATOR_CUT_RETURN')
+        self.assertEqual(plan_operator_cut(c,20,.12).code,'OPERATOR_CUT_RETURN')
+        self.assertEqual(plan_operator_cut(c,2,.12).code,'OPERATOR_CUT_STAY')
+        # A long pusher can overlap the clamp while wood still blocks detector.
+        blocked=context(position=8,geometry=geometry(pusher_front_offset=0,pusher_rear_extent=6),
+                        material=Material(Span(-20,20),'estimated',True),sensor_clear=False)
+        self.assertEqual(plan_operator_cut(blocked,None,.12).code,'OPERATOR_CUT_STAY')
+
+    def test_operator_cut_unknowns_and_real_constraints(self):
+        c=context(position=8,material=Material(Span(-20,8),'estimated',True),sensor_clear=True)
+        for changes in ({'fresh':False},{'door_closed':False},{'reference_known':False},
+                        {'clamps_off':False},{'saw_up':False},{'trigger_off':False},
+                        {'material':Material()},{'material':replace(c.material,contact=False)},
+                        {'sensor_clear':False},{'sensor_clear':None},{'position':.5}):
+            with self.subTest(changes=changes):self.assertFalse(plan_operator_cut(replace(c,**changes)).proceeds)
+        self.assertFalse(plan_operator_cut(context()).proceeds) # normal clamp still available
+
     def test_manual_cycle_operator_positioned_stock(self):
         c=context(material=Material())
         self.assertTrue(assess_manual_cycle(c).proceeds)

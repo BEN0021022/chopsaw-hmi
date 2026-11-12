@@ -26,8 +26,8 @@ def main():
             saw_capture |= panel.x.get("EDGE_VALID") == "1"
     assert panel.compatible and panel.ready_link()
     assert count > 10 and saw_capture
-    assert panel.x["PROFILE_ID"] == "2" and panel.x["POS_KNOWN"] == "1"
-    assert panel.x['RATE_PPS']=='1750' and panel.profile_values[2]==(1750,2400)
+    assert panel.x["PROFILE_ID"] == "1" and panel.x["POS_KNOWN"] == "1"
+    assert panel.x['RATE_PPS']=='150' and panel.profile_values[2]==(1750,2400)
     assert panel.x["MOVE_KIND"] == "ABSOLUTE" and panel.x["EDGE_VALID"] == "0"
     assert not writes, "Read-only replay cannot generate motion commands"
     panel.session(False)

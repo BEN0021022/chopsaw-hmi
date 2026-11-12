@@ -1,3 +1,17 @@
+# Current automation supervision
+
+For the current executable behavior use [0.22 operator return](OPERATOR_RETURN_022.md)
+and [0.21 direct controls](DIRECT_CONTROLS_021.md). Saved physical dimensions no
+longer require verification checkboxes or stock registration. The separate
+unplugged operator-cut executor now implements an explicit one-shot stroke with
+the main clamp inhibited; ordinary automatic cuts still use the holding policy.
+
+The original design below is historical. Its old executor, checklist and
+registration restrictions have been superseded by those versions.
+
+<details>
+<summary>Original 0.19 design notes</summary>
+
 # Automation supervision - prepared app integration, 2026-11-11
 
 This is an app-side planning layer for the current **saw-unplugged** commissioning
@@ -126,3 +140,5 @@ See [garage commissioning](GARAGE_COMMISSIONING.md) and
 - No running machine/app was updated. Measured geometry, physical coordinator
   acceptance, selected-clamp/approved-fixture executor support and powered-machine
   safeguarding remain separate unfinished steps.
+
+</details>

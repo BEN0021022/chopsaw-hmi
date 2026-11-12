@@ -237,7 +237,7 @@ class ManualPneumatics(QGroupBox):
             self.buttons['press'].setText('HOLD to press trigger')
             self.labels['trigger'].setText(('PRESSED commanded' if native.data.get('TRIGGER')=='1' else
                                            'RELEASED') if fresh else 'UNKNOWN')
-            self.status.setText((self.owner.direct_controls.message or native.message) if native.compatible else 'Connect matching 0.21.0 firmware.')
+            self.status.setText((self.owner.direct_controls.message or native.message) if native.compatible else 'Connect matching 0.22.0 firmware.')
             self.note.setText('Manual Cycle: clamp → trigger → saw down/up → trigger release → clamp release. Saw unplugged for testing.')
             self.recover_release.hide()
             actual_fault=bool(native.local_fault or self.owner.carriage_tab.local_fault or native.data.get('FAULT','NONE')!='NONE'

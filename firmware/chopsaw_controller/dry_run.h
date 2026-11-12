@@ -15,7 +15,7 @@ class DryRun {
   Phase phase = Off;
   bool armed = false, clamp = false, saw = false;
   bool manualMode = false, trigger = false;
-  bool cycleRunning = false;
+  bool cycleRunning = false, operatorCycle = false;
   uint32_t completed = 0;
   uint32_t configId = 0, requestId = 0, timingHash = 0;
   const char *fault = "NONE";
@@ -57,8 +57,16 @@ class DryRun {
   bool combinedCycle(uint32_t now) {
     if (!armed || failed() || cycleRunning || trigger || saw || !up.stable || !rawUp ||
         rawDown || !rawDoor || !alarm || !(phase==Ready || phase==Clamped)) return false;
-    cycleRunning=true; automaticReturn=true;
+    operatorCycle=false; cycleRunning=true; automaticReturn=true;
     enter(phase==Ready ? ClampDelay : TriggerDelay,now); ++requestId; return true;
+  }
+  // One explicit unplugged operator stroke, main clamp inhibited throughout.
+  // Config/request binding rejects stale or repeated commands after any action.
+  bool operatorCut(uint32_t id, uint32_t expectedRequest, uint32_t now) {
+    if (!armed || manualMode || phase!=Ready || clamp || id!=configId ||
+        expectedRequest!=static_cast<uint32_t>(requestId+1)) return false;
+    if (!combinedCycle(now)) return false;
+    operatorCycle=true; enter(TriggerDelay,now); return true;
   }
   bool returnUp(uint32_t now) {
     if (!armed || (!clamp && !manualMode) || !(phase == DownDelay || phase == Descend || phase == Down ||
@@ -79,7 +87,7 @@ class DryRun {
   void releaseTrigger() { trigger = false; ++requestId; }
   void stop(uint32_t now) {
     if (armed || cycleRunning || trigger) stoppedAt=now;
-    armed = saw = trigger = manualMode = cycleRunning = false; automaticReturn = false;
+    armed = saw = trigger = manualMode = cycleRunning = operatorCycle = false; automaticReturn = false;
     if (!failed()) enter(up.stable && !rawDown ? (clamp ? Stopped : Off) : StopReturn, now);
     ++requestId;
   }
@@ -94,11 +102,11 @@ class DryRun {
   }
   bool reset(uint32_t now) {
     if (active() || !door.stable || !up.stable || rawDown || !alarm) return false;
-    trigger = manualMode = cycleRunning = false; fault = "NONE"; enter(Off,now); return true;
+    trigger = manualMode = cycleRunning = operatorCycle = false; fault = "NONE"; enter(Off,now); return true;
   }
   void trip(const char *reason, uint32_t now) {
     if (!failed()) { fault = reason; stoppedAt=now; }
-    armed = saw = trigger = manualMode = cycleRunning = false; automaticReturn = false; enter(Failed,now);
+    armed = saw = trigger = manualMode = cycleRunning = operatorCycle = false; automaticReturn = false; enter(Failed,now);
   }
   void tick(bool d, bool u, bool n, bool a, uint32_t now) {
     rawDoor=d; rawUp=u; rawDown=n; alarm=a;
@@ -132,7 +140,12 @@ class DryRun {
       case Spinup: if (elapsed >= timing[12]) enter(DownDelay,now); break;
       case TriggerReleaseDelay:
         if (elapsed >= timing[13]) { trigger=false; enter(BrakeWait,now); } break;
-      case BrakeWait: if (elapsed >= timing[14]) enter(ReleaseDelay,now); break;
+      case BrakeWait:
+        if (elapsed >= timing[14]) {
+          if (operatorCycle) { cycleRunning=operatorCycle=false; ++completed; enter(Ready,now); }
+          else enter(ReleaseDelay,now);
+        }
+        break;
       case DownDelay:
         if (elapsed >= timing[5]) { saw=true; sawAt=now; enter(Descend,now); } break;
       case Descend:

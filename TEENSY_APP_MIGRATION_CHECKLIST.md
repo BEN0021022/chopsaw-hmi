@@ -20,6 +20,23 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Auto profiles / last-cut operator flow - 0.22
+
+- [x] Stored Gentle profile for acquisition and first truing; Normal for later
+      feeds, Fast for Load/early return, Gentle for bounded scrap clearing.
+- [x] Keep carriage forward if another cut fits; early return only for last
+      usable positioned cut with clear, consistent board detector.
+- [x] Amber Auto operator button/dashboard; explicit one-shot unclamped dry-run
+      stroke with main clamp inhibited; no sensor-triggered resume or timeout.
+- [x] Continue next board with pending list index retained and fresh acquisition.
+- [x] Active-cut highlight/scroll follows controller DONE without consuming list.
+- [x] Real-sketch/Qt regression, host suites and Teensy 4.1 compile.
+- [ ] Flash/read back matching 0.22 and restore captured motion profiles.
+- [ ] Operator physical acceptance of profile / early-return / pending-cut flow.
+
+See [0.22 workflow](docs/OPERATOR_RETURN_022.md). This supersedes the older
+executor restriction that prevented any operator-controlled unclamped dry stroke.
+
 ## Direct operation ? 0.21 (supersedes earlier UI preparation steps)
 
 - [x] One-gesture Home, carriage Enter/jog/load, individual actuators and Start Auto.

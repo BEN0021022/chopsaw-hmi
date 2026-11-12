@@ -1,13 +1,11 @@
 # Next bench session - current procedure
 
-Use [Garage commissioning - 2026-11-11](GARAGE_COMMISSIONING.md). It covers the
-prepared geometry supervisor, Full Auto layout/scenarios, real measurements,
-combined-cycle/cleanup tests and diagnostic report. The board is already on
-0.19.0; this workbench requires an app restart, not a firmware flash.
+Use [0.22 operator return and profiles](OPERATOR_RETURN_022.md) and
+[direct controls](DIRECT_CONTROLS_021.md). Connect, Home, then Start Auto. Saw
+mains remain unplugged for these tests. The active cut stays highlighted during
+operator pauses; the amber operator button requests one clamp-inhibited stroke.
 
-The older notes below are retained as history. Their trigger-lock,
-release-on-fault and repeated-arming descriptions do not describe the current
-0.19 build. Do not use them as today's test instructions.
+The older notes below are historical and do not describe the current workflow.
 
 <details>
 <summary>Historical bench notes (superseded)</summary>

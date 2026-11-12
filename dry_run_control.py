@@ -20,7 +20,7 @@ STATES = {'OFF','READY','CLAMP_DELAY','CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','
           'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN','FAULT',
           'TRIGGER_DELAY','SPINUP','TRIGGER_RELEASE_DELAY','BRAKE_WAIT','STOPPED'}
 TRAVEL = {'DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN'}
-COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DMANUAL ([0-9]+)|DTHOLD|DTPRESS|DTRELEASE|DCUT|DRELEASE)')
+COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DMANUAL ([0-9]+)|DTHOLD|DTPRESS|DTRELEASE|DCUT|DRELEASE|DOPCUT [0-9]+ [0-9]+)')
 
 
 def timing_hash(values):
@@ -56,7 +56,8 @@ class NativeDryRun(QObject):
         self.auto_start_at = 0
         self.trigger_held = False
         self.last_trigger_hold = 0
-        self.message = 'Connect matching 0.21.0 firmware.'
+        self.progress_index=None; self.progress_batch=None
+        self.message = 'Connect matching 0.22.0 firmware.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
 
     def controls(self):
@@ -211,6 +212,13 @@ class NativeDryRun(QObject):
             return (self.settings_match() and state in ('READY','CLAMPED') and self.data.get('CYCLE')=='0'
                     and self.data.get('TRIGGER')=='0' and (self.supervision.review().proceeds if self.sequence else
                                                          assess_manual_cycle(self.supervision.context()).proceeds))
+        if command.startswith('DOPCUT '):
+            s=self.sequence
+            return bool(s and s['stage']=='OPERATOR_ARMED' and s.get('operator_confirmed')
+                        and self.operator_snapshot_valid() and self.settings_match()
+                        and state=='READY' and self.data.get('MANUAL')=='0' and self.data.get('CLAMP')=='0'
+                        and self.data.get('TRIGGER')=='0' and self.data.get('CYCLE')=='0'
+                        and command==f"DOPCUT {self.token} {(int(self.data['REQ'])+1)&0xffffffff}")
         if self.data.get('CYCLE')=='1': return command=='DUP'
         if self.data.get('TRIGGER')!='0': return False
         if command=='DCLAMP 0': return state=='CLAMPED'
@@ -249,7 +257,7 @@ class NativeDryRun(QObject):
         commands={'arm':f'DARM {self.token}','engage':'DCLAMP 1','release':'DCLAMP 0',
                   'lower':'DDOWN','up':'DUP','cycle':'DCUT','manual_arm':f'DMANUAL {self.token}',
                   'press':'DTPRESS','unpress':'DTRELEASE','recover_release':'DRELEASE'}
-        command=commands.get(action,'')
+        command=(f"DOPCUT {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff}" if action=='operator_cycle' else commands.get(action,''))
         if not self.allowed(command):
             if action=='cycle' and self.supervision.last_decision:
                 self.message=self.supervision.last_decision.reason
@@ -257,7 +265,7 @@ class NativeDryRun(QObject):
             return False
         expected=(int(self.data.get('REQ','0'))+1)&0xffffffff
         if not self.owner.send_command(command): return False
-        if action == 'cycle':
+        if action in ('cycle','operator_cycle'):
             s = self.sequence
             index = s['index'] if s else None
             self.owner.cut_history.prepare_cycle(
@@ -280,15 +288,16 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.21.0'
-                        and f.get('DRY_RUN')=='UNLOADED_V5' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
-                        and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1')
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.22.0'
+                        and f.get('DRY_RUN')=='UNLOADED_V6' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
+                        and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1'
+                        and f.get('OPERATOR_CUT')=='UNCLAMPED_ONESHOT_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
         elif message.kind=='BENCH_DRY':
             try:
-                valid=(f.get('PROTO')=='5' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
-                       and f.get('MANUAL') in ('0','1')
+                valid=(f.get('PROTO')=='6' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
+                       and f.get('MANUAL') in ('0','1') and f.get('OPERATOR') in ('0','1')
                        and f.get('CYCLE') in ('0','1') and f.get('RELEASE_READY') in ('0','1')
                        and f.get('STATE') in STATES and f.get('ARMED') in ('0','1')
                        and f.get('CLAMP') in ('0','1') and f.get('SAW') in ('0','1') and bool(f.get('FAULT'))
@@ -299,11 +308,14 @@ class NativeDryRun(QObject):
                 clamped=phase in {'CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','TRIGGER_DELAY','SPINUP','TRIGGER_RELEASE_DELAY','BRAKE_WAIT'}
                 lowered=phase in {'DESCEND','DOWN','DWELL','UP_DELAY'}
                 recovering=phase in ('STOP_RETURN','STOPPED','FAULT')
-                cycle_trigger=phase in {'SPINUP','DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','TRIGGER_RELEASE_DELAY'}
+                cycle_phases={'SPINUP','DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','TRIGGER_RELEASE_DELAY'}
+                cycle_trigger=phase in cycle_phases
                 manual_travel=(f['MANUAL']=='1' and f['CYCLE']=='0' and phase in
                                {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE'})
+                operator_cycle=f['OPERATOR']=='1'
                 valid=(f['ARMED']==('0' if phase in {'OFF','STOP_RETURN','STOPPED','FAULT'} else '1')
-                       and (recovering or manual_travel or f['CLAMP']==str(int(clamped))) and f['SAW']==str(int(lowered))
+                       and (not operator_cycle or (f['CYCLE']=='1' and f['CLAMP']=='0' and f['MANUAL']=='0' and phase in cycle_phases|{'TRIGGER_DELAY','BRAKE_WAIT'}))
+                       and (recovering or manual_travel or operator_cycle or f['CLAMP']==str(int(clamped))) and f['SAW']==str(int(lowered))
                        and (f['FAULT']!='NONE')==(phase=='FAULT')
                        and f['LOCK']==('0' if f['MANUAL']=='1' or f['CYCLE']=='1' else '1')
                        and (f['MANUAL']=='0' or f['ARMED']=='1')
@@ -475,7 +487,7 @@ class NativeDryRun(QObject):
         if any(not math.isfinite(x) or x<=0 for x in cuts): return False
         self.supervision.coordinator.invalidate('New board acquisition requested.')
         self.owner.cut_history.clear_board()
-        self.sequence={'stage':'SEARCH_ARM','at':time.monotonic(),'cuts':cuts,'kerf':self.owner.kerf_input.value(),
+        self.sequence={'stage':'SEARCH_PROFILE','at':time.monotonic(),'cuts':cuts,'kerf':self.owner.kerf_input.value(),
                        'index':-1,'next_index':previous['next_index'] if previous else 0,
                        'board':previous['board']+1 if previous else 1,
                        'list_snapshot':previous['list_snapshot'] if previous else tuple(self.owner.cut_list),
@@ -484,12 +496,13 @@ class NativeDryRun(QObject):
                        'edge_command':f'XEDGE {int(math.floor(p.edge_search.value()*127.12+.5))} '
                                       f'{int(math.floor(self.owner.board_sensor_location_input.value()*1000+.5))} '
                                       f'{int(math.floor(self.owner.kerf_input.value()*1000+.5))}'}
+        self.progress_batch=self.sequence['list_snapshot']; self.progress_index=self.sequence['next_index']
         # The explicit Run Dry List gesture authorizes this sequence's arming.
         self.issuing_sequence=True
-        try: sent=self.owner.send_command('XARM 1')
+        try: sent=p.select_profile(1)
         finally: self.issuing_sequence=False
         if not sent:
-            self.stop('Cannot arm board acquisition'); return False
+            self.stop('Cannot select Gentle acquisition profile'); return False
         self.message='Dry list: arming acquisition; keep board detector clear until SEARCH.'
         return True
 
@@ -511,7 +524,10 @@ class NativeDryRun(QObject):
         if not self.safe_link(): self.stop('Dry-list feedback/interlock lost'); return
         stage=s['stage']
         def next_stage(name): s['stage']=name; s['at']=time.monotonic()
-        if stage=='SEARCH_ARM' and p.armed and p.x.get('JOG_READY')=='1':
+        if stage=='SEARCH_PROFILE' and p.x.get('PROFILE_ID')=='1':
+            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm board acquisition');return
+            next_stage('SEARCH_ARM')
+        elif stage=='SEARCH_ARM' and p.armed and p.x.get('JOG_READY')=='1':
             if not p.request_move(s['edge_command']): self.stop('Board detector must be clear before acquisition'); return
             next_stage('SEARCH')
         elif stage=='SEARCH' and p.x.get('EDGE_VALID')=='1' and p.x.get('EDGE_STATE')=='FOUND' and not p.armed:
@@ -528,9 +544,9 @@ class NativeDryRun(QObject):
                 next_stage('BOARD_TOO_SHORT')
                 self.message=decision.reason+' Load suitable stock and start acquisition again; no truing stroke was sent.'
                 return
-            if not p.select_profile(2): self.stop('Cannot select stored Normal profile'); return
+            if not p.select_profile(1): self.stop('Cannot retain Gentle truing profile'); return
             next_stage('TRUE_PROFILE')
-        elif stage=='TRUE_PROFILE' and p.x.get('PROFILE_ID')=='2':
+        elif stage=='TRUE_PROFILE' and p.x.get('PROFILE_ID')=='1':
             if not self.owner.send_command('XARM 1'): self.stop('Cannot arm truing move'); return
             next_stage('TRUE_ARM')
         elif stage=='TRUE_ARM' and p.armed and p.x.get('JOG_READY')=='1':
@@ -546,6 +562,24 @@ class NativeDryRun(QObject):
             # Do not fabricate a new material origin to hide a truing mismatch.
             decision=self.supervision.review()
             if not decision.proceeds:
+                if s['index']>=0:
+                    following=s['cuts'][s['index']+1] if s['index']+1<len(s['cuts']) else None
+                    plan=self.supervision.review('operator_cut',length=following,kerf=s['kerf'])
+                    if plan.proceeds:
+                        s['operator_stock']=self.supervision.coordinator.material.stock
+                        s['operator_cut_position']=self.supervision.context().position
+                        s['operator_config']=self.supervision.coordinator.config_revision
+                        s['early_return']=plan.code=='OPERATOR_CUT_RETURN'
+                        s['operator_confirmed']=False
+                        if s['early_return']:
+                            s['operator_position']=self.owner.native_load_target()
+                            if s['operator_position']<=s['operator_cut_position']:
+                                self.stop('Load position must be behind the positioned cut for early return.');return
+                            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm early return');return
+                            next_stage('EARLY_RETURN_ARM')
+                        else:
+                            s['operator_position']=s['operator_cut_position'];next_stage('WAIT_OPERATOR_CUT')
+                        return
                 next_stage('OPERATOR_REQUIRED')
                 self.message='Operator intervention required: '+decision.reason
                 self.changed.emit(); return
@@ -562,8 +596,15 @@ class NativeDryRun(QObject):
         elif stage=='SAW_WAIT' and self.data.get('STATE')=='READY' and int(self.data['DONE'])!=s['done']:
             self.owner.send_command('DOFF'); next_stage('PNEU_OFF')
         elif stage=='PNEU_OFF' and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0':
+            early=s.get('early_return',False)
             s['index']=s['next_index'] if s['index']==-1 else s['index']+1
             s['next_index']=s['index']
+            self.progress_index=s['next_index']
+            s.pop('operator_confirmed',None)
+            if early:
+                # Carriage is already at Load. Never push/cut again using a
+                # material reference whose contact was lost on early return.
+                s['early_return']=False;next_stage('DONE');return
             if s['index']>=len(s['cuts']):
                 self.finish_board(next_stage); return
             else:
@@ -573,8 +614,35 @@ class NativeDryRun(QObject):
                 if not decision.proceeds:
                     self.stop(decision.reason); return
                 s['target']=decision.target
-                if not self.owner.send_command('XARM 1'): self.stop('Cannot arm dry-list feed'); return
-                next_stage('FEED_ARM')
+                if not p.select_profile(2): self.stop('Cannot select Normal feed profile'); return
+                next_stage('FEED_PROFILE')
+        elif stage=='FEED_PROFILE' and p.x.get('PROFILE_ID')=='2':
+            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm dry-list feed');return
+            next_stage('FEED_ARM')
+        elif stage=='EARLY_RETURN_ARM' and p.armed and p.x.get('JOG_READY')=='1':
+            if not p.move_load_to(s['operator_position']):self.stop('Early return rejected');return
+            s['move_id']=int(p.x['MOVE_ID']);next_stage('EARLY_RETURN_WAIT')
+        elif stage=='EARLY_RETURN_WAIT' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
+            self.owner.send_command('XARM 0');next_stage('EARLY_RETURN_DISARM')
+        elif stage=='EARLY_RETURN_DISARM' and not p.armed and not p.stopping:
+            if not self.operator_snapshot_valid():self.stop('Early-return stock/detector reference changed.');return
+            next_stage('WAIT_OPERATOR_CUT')
+        elif stage=='WAIT_OPERATOR_CUT':
+            if s['early_return'] and self.supervision.context().sensor_clear is not True:
+                self.message='PENDING CUT — detector is blocked. Finish this cut before loading the next board; no stroke will start.'
+                return
+            self.message=('WAITING FOR OPERATOR — secure unclamped wood, then press Wood secured / run cut. '
+                          +('Carriage is at Load. Load the next board after this cut finishes.' if s['early_return'] else
+                            'Carriage stays forward; more cuts fit this board.')+' Saw mains stay unplugged.')
+            return
+        elif stage=='OPERATOR_ARM' and not p.armed:
+            if not self.operator_snapshot_valid():self.stop('Operator cut reference changed; action cancelled.');return
+            if not self.request('arm'):self.stop('Cannot prepare operator-controlled stroke');return
+            next_stage('OPERATOR_ARMED')
+        elif stage=='OPERATOR_ARMED' and self.data.get('STATE')=='READY':
+            s['done']=int(self.data['DONE'])
+            if not self.request('operator_cycle'):self.stop('Operator-controlled stroke rejected');return
+            s['operator_confirmed']=False;next_stage('SAW_ACK')
         elif stage=='CLEAR_PROFILE' and not p.profile_pending and p.x.get('PROFILE_ID')=='1':
             decision=self.supervision.review('clear_sensor')
             if (not decision.proceeds or decision.target!=s['clear_target'] or
@@ -638,3 +706,30 @@ class NativeDryRun(QObject):
         else:
             if not self.owner.send_command('XARM 1'): self.stop('Cannot arm carriage return'); return
             next_stage('LOAD_ARM')
+
+    def operator_snapshot_valid(self):
+        s=self.sequence;p=self.owner.carriage_tab;c=self.supervision.context()
+        if not s or 'operator_stock' not in s:return False
+        return (self.safe_link(False) and self.batch_unchanged() and c.reference_known and c.carriage_idle
+                and c.saw_up and c.trigger_off and c.clamps_off and c.fault_free and c.door_closed
+                and c.config_revision==s['operator_config'] and c.material.located
+                and c.material.stock==s['operator_stock']
+                and c.sensor_clear is not None and c.material.stock.overlaps(c.geometry.sensor)!=c.sensor_clear
+                and abs(c.position-s['operator_position'])<.02
+                and (not s['early_return'] or c.sensor_clear is True)
+                and self.data.get('CLAMP')=='0' and self.data.get('SAW')=='0' and self.data.get('TRIGGER')=='0')
+
+    def can_confirm_operator_cut(self):
+        return bool(self.sequence and self.sequence['stage']=='WAIT_OPERATOR_CUT' and not self.pending
+                    and not self.owner.carriage_tab.armed and self.operator_snapshot_valid()
+                    and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0')
+
+    def confirm_operator_cut(self):
+        if not self.can_confirm_operator_cut():return False
+        self.sequence.update(operator_confirmed=True,stage='OPERATOR_ARM',at=time.monotonic())
+        self.supervision.coordinator.paused=None
+        self.diagnostics.note('OPERATOR_CUT_REQUEST','One unplugged stroke requested; main clamp inhibited, grip not measured.',time.monotonic(),
+                              {'cut_index':self.sequence['index'],'early_return':self.sequence['early_return'],
+                               'cut_position':self.sequence['operator_cut_position'],'carriage_position':self.supervision.context().position})
+        self.message='Operator requested one unplugged stroke; main clamp inhibited.'
+        self.changed.emit();return True

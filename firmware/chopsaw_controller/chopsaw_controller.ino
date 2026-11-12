@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.21.0";
+constexpr char FIRMWARE_VERSION[] = "0.22.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -245,9 +245,9 @@ void publishHello() {
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
   Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,"
-    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V15,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
+    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V16,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
     "PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,"
-    "DRY_RUN:UNLOADED_V5,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1");
+    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1");
 }
 
 void publishPinMap() {
@@ -276,7 +276,7 @@ void publishOutputs() {
 
 void publishDry() {
   if (!telemetryRoom(256)) return;
-  Serial.print("BENCH_DRY,PROTO:5,CFG:"); Serial.print(dry.configId);
+  Serial.print("BENCH_DRY,PROTO:6,CFG:"); Serial.print(dry.configId);
   Serial.print(",HASH:"); Serial.print(dry.timingHash);
   Serial.print(",REQ:"); Serial.print(dry.requestId);
   Serial.print(",ARMED:"); Serial.print(dry.armed ? 1 : 0);
@@ -287,6 +287,7 @@ void publishDry() {
   Serial.print(",LOCK:"); Serial.print(dry.manualMode || dry.cycleRunning ? 0 : 1);
   Serial.print(",MANUAL:"); Serial.print(dry.manualMode ? 1 : 0);
   Serial.print(",CYCLE:"); Serial.print(dry.cycleRunning ? 1 : 0);
+  Serial.print(",OPERATOR:"); Serial.print(dry.operatorCycle ? 1 : 0);
   Serial.print(",DONE:"); Serial.print(dry.completed);
   Serial.print(",RELEASE_READY:"); Serial.print(dry.releaseReady(millis()) ? 1 : 0);
   Serial.print(",FAULT:"); Serial.print(dry.fault);
@@ -492,7 +493,7 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
       startsWith(command,"DARM ") || startsWith(command,"DCLAMP ") || strcmp(command,"DCYCLE")==0 ||
       strcmp(command,"DDOWN")==0 || strcmp(command,"DUP")==0 || strcmp(command,"DOFF")==0 ||
       startsWith(command,"DMANUAL ") || strcmp(command,"DTHOLD")==0 || strcmp(command,"DTPRESS")==0 || strcmp(command,"DTRELEASE")==0 ||
-      strcmp(command,"DCUT")==0 || strcmp(command,"DRELEASE")==0;
+      strcmp(command,"DCUT")==0 || startsWith(command,"DOPCUT ") || strcmp(command,"DRELEASE")==0;
   if (!dryCommand) return false;
   bool accepted=false;
   uint32_t args[2]={0,0};
@@ -513,6 +514,7 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
   }
   else if (strcmp(command,"DTPRESS")==0) accepted=dry.pressTrigger(millis());
   else if (strcmp(command,"DCUT")==0) accepted=dry.combinedCycle(millis());
+  else if (startsWith(command,"DOPCUT ")) accepted=unsignedArgs(command,"DOPCUT ",2,args) && dry.operatorCut(args[0],args[1],millis());
   if (!accepted) Serial.println("BENCH_ERROR,CODE:DRY_REQUEST_REJECTED");
   applyOutputs(); publishDry(); publishSafety(); publishX();
   return true;
@@ -693,8 +695,9 @@ void __attribute__((noinline)) handleCommand(char *command) {
       xEdge.start(pulses, millis()); testMode = TestMode::Edge; ++xMoveId;
       xRemaining = pulses; xAbsoluteMove = false; xDirection = -1;
       digitalWrite(X_DIR_PIN, LOW);
-      // Search is fixed 40pps regardless of the selected jog profile.
-      xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
+      // Acquisition always uses stored Gentle, including its acceleration.
+      xProfile=1; xRamp.start(xRemaining,xProfiles[1]); xTiming=carriage::PulseTiming{};
+      xNextPulseUs = micros() + xRamp.intervalUs();
     }
     publishX();
   } else if (startsWith(command, "XTRUING ")) {
@@ -867,10 +870,11 @@ void __attribute__((noinline)) serviceXEdge() {
     interlocks.trip(bench::Fault::SoftLimit, millis());
     updateSafety(); publishOutputs(); publishSafety(); publishX(); return;
   }
+  const uint32_t pulseAt=micros(); xTiming.pulse(pulseAt,xNextPulseUs);
   digitalWrite(X_STEP_PIN, HIGH); delayMicroseconds(5); digitalWrite(X_STEP_PIN, LOW);
   --xCommandedSteps; --xHomeOffset; --xRemaining;
-  xEdge.pulsed(millis()); xLastStepAt = millis();
-  xNextPulseUs = micros() + X_PULSE_INTERVAL_US;
+  xEdge.pulsed(millis()); xRamp.pulsed(); xLastStepAt = millis();
+  xNextPulseUs = pulseAt + xRamp.intervalUs();
 }
 
 void __attribute__((noinline)) serviceXHome() {

@@ -8,6 +8,7 @@ import time
 import threading
 from math import sqrt
 import re
+import html as html_text
 from datetime import datetime
 from PyQt6.QtWidgets import QSizePolicy
 
@@ -926,6 +927,11 @@ class MinimalHMI(QMainWindow):
             QPushButton:disabled { background-color: #166534; color: #4ade80; }
         """)
         cyc.addWidget(self.start_cycle_button)
+        self.operator_cut_button=QPushButton('Wood secured / run cut\nSaw unplugged')
+        self.operator_cut_button.setMinimumHeight(66)
+        self.operator_cut_button.setStyleSheet('QPushButton { background:#f59e0b; color:#111827; font-size:19px; font-weight:bold; } QPushButton:disabled { background:#92400e; color:#fcd34d; }')
+        self.operator_cut_button.clicked.connect(self.dry_run.confirm_operator_cut)
+        self.operator_cut_button.hide();cyc.addWidget(self.operator_cut_button)
 
             
             
@@ -965,7 +971,7 @@ class MinimalHMI(QMainWindow):
         self.auto_dry_run.clicked.connect(self.dry_run.start_sequence)
         self.auto_dry_stop=QPushButton('Stop dry run / release clamp')
         self.auto_dry_stop.clicked.connect(lambda: self.dry_run.stop())
-        self.auto_dry_status=QLabel('Requires matching 0.21.0 firmware.'); self.auto_dry_status.setWordWrap(True)
+        self.auto_dry_status=QLabel('Requires matching 0.22.0 firmware.'); self.auto_dry_status.setWordWrap(True)
         for widget in (self.auto_dry_configure,self.auto_dry_run,self.auto_dry_stop,self.auto_dry_status): dry_layout.addWidget(widget)
         right_col.insertWidget(0, self.auto_dry_group)
 
@@ -1801,9 +1807,14 @@ class MinimalHMI(QMainWindow):
             cut_groups.append(gi)
         group_used_map[gi] = gu
 
-        # The active board group is the one containing current_cut_index
-        if self.current_cut_index < len(cut_groups):
-            active_group = cut_groups[self.current_cut_index]
+        active_index=self.current_cut_index
+        d=self.dry_run
+        if self.active_controller().key==TEENSY_CARRIAGE and d.progress_batch==tuple(self.cut_list) and d.progress_index is not None:
+            active_index=d.progress_index
+        self._displayed_cut_index=active_index
+        # Native progress follows acknowledged cuts without consuming the list.
+        if active_index < len(cut_groups):
+            active_group = cut_groups[active_index]
         else:
             active_group = cut_groups[-1]
 
@@ -1818,9 +1829,9 @@ class MinimalHMI(QMainWindow):
         html_lines = []
         for i, (num, length, desc) in enumerate(self.cut_list):
             color = group_colors[cut_groups[i] % len(group_colors)]
-            line_text = f"Cut {num}: {length:<9.4f}\" {desc}"
+            line_text = html_text.escape(f"Cut {num}: {length:<9.4f}\" {desc}")
 
-            if i == self.current_cut_index:
+            if i == active_index:
                 html_lines.append(
                     f"<div style='background-color:#334155;'><b><span style='color:{color};'>&gt; {line_text}</span></b></div>"
                 )
@@ -1834,8 +1845,8 @@ class MinimalHMI(QMainWindow):
         if hasattr(self, 'fa_cut_list_display'):
             self.fa_cut_list_display.setHtml(html)
 
-        if self.current_cut_index < len(self.cut_list):
-            current_num = self.cut_list[self.current_cut_index][0]
+        if active_index < len(self.cut_list):
+            current_num = self.cut_list[active_index][0]
             self._center_cut_in_display(self.cut_list_display, current_num)
             if hasattr(self, 'fa_cut_list_display'):
                 self._center_cut_in_display(self.fa_cut_list_display, current_num)
@@ -2564,6 +2575,14 @@ class MinimalHMI(QMainWindow):
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto() or self.direct_controls.can_motion('auto'))
         self.start_cycle_button.setText('Start next board — dry run' if self.dry_run.waiting_for_board() else 'Start Auto — dry run')
+        waiting=bool(self.dry_run.sequence and self.dry_run.sequence['stage']=='WAIT_OPERATOR_CUT')
+        self.operator_cut_button.setVisible(waiting)
+        self.operator_cut_button.setEnabled(self.dry_run.can_confirm_operator_cut())
+        if self.dry_run.waiting_for_board():self.start_cycle_button.setText('Continue cut list / next board')
+        progress=(self.dry_run.progress_batch,self.dry_run.progress_index)
+        if getattr(self,'_native_progress_rendered',None)!=progress:
+            self._native_progress_rendered=progress
+            self.update_cut_list_display()
         self.fa_start_cycle_button.setEnabled(False)
         self.auto_status_label.setText(self.dry_run.supervision.summary()+' '+self.dry_run.message)
         self.load_button.setEnabled(self.direct_controls.can_motion('load'))
@@ -2690,13 +2709,15 @@ class MinimalHMI(QMainWindow):
                                   local_fault=p.local_fault or self.dry_run.local_fault, stale_seconds=p.stale_seconds,
                                   allow_saw_travel=self.dry_run.fresh() and self.dry_run.data.get('STATE') in DRY_TRAVEL)
             receipt = p.received.get("X") if connected and p.connected and p.compatible else None
+            if state.level=='healthy' and self.dry_run.sequence and self.dry_run.sequence['stage']=='WAIT_OPERATOR_CUT':
+                state=HealthState('waiting','Waiting for operator — secure unclamped wood',('No clamp grip is measured. One explicit unplugged stroke is required.',))
         elif mode == "sim":
             state = simulator_health(connected=connected, fields=self._sim_health_fields,
                                      received=self._sim_health_received, started=self._health_started, now=now)
             receipt = self._sim_activity_received if connected else None
         else:
             state = HealthState("neutral", "Health unavailable in this mode")
-        color = {"healthy":"#22c55e", "fault":"#ef4444", "neutral":"#64748b"}[state.level]
+        color = {"healthy":"#22c55e", "fault":"#ef4444", "neutral":"#64748b", "waiting":"#f59e0b"}[state.level]
         if self.auto_live_status.property("healthState") != state.level:
             self.auto_live_status.setProperty("healthState", state.level)
             self.auto_live_status.setStyleSheet(f"QGroupBox#autoLiveStatus {{ border: 2px solid {color}; }}")

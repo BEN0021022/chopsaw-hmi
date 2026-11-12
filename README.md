@@ -5,6 +5,14 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-11)
 
+**0.22.0 / CARRIAGE_V16** keeps acquisition and first truing on Gentle,
+uses Normal for later feeds and Fast for return. An unclampable pending piece
+uses an explicit operator-controlled unplugged stroke. Stay forward if another
+cut fits; otherwise return early when the detector is clear, then wait for
+Wood secured / run cut. Continue the cut list on a new board afterward.
+The active cut highlight follows confirmed completions. See
+[operator cut and early return](docs/OPERATOR_RETURN_022.md).
+
 **0.21.0 / CARRIAGE_V15** simplifies operation to **Connect ? Home ? use the
 controls**. Manual carriage entry accepts a physical keyboard or touch keypad.
 Clamp, saw travel, held trigger and Manual Cycle handle their mode setup
