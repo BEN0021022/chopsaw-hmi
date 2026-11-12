@@ -1,7 +1,7 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-11. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current deployed source/build: custom **0.21.0 / CARRIAGE_V15**, flashed/read back
+Current deployed source/build: custom **0.22.0 / CARRIAGE_V16**, flashed/read back
 on COM4, 2026-11-11. Integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
 0.18.0 was flashed/read back on 2026-11-10; individual mechanisms passed.
@@ -31,7 +31,8 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Continue next board with pending list index retained and fresh acquisition.
 - [x] Active-cut highlight/scroll follows controller DONE without consuming list.
 - [x] Real-sketch/Qt regression, host suites and Teensy 4.1 compile.
-- [ ] Flash/read back matching 0.22 and restore captured motion profiles.
+- [x] Flash/read back matching 0.22 on COM4, restore captured motion profiles;
+      matching app opened on Auto, outputs OFF, no queued action, Home unknown.
 - [ ] Operator physical acceptance of profile / early-return / pending-cut flow.
 
 See [0.22 workflow](docs/OPERATOR_RETURN_022.md). This supersedes the older

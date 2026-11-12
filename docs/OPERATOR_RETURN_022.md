@@ -70,3 +70,9 @@ Host suites, existing Manual/Auto tests and a Teensy 4.1 compile also pass.
 Local source/HEX/readback/profile archive: `tmp/commissioning/0.22.0`.
 Previous 0.21 archive is retained for rollback. Physical operator acceptance
 of this new workflow remains pending.
+
+Deployment verified 2026-11-11 on COM4 after operator isolation confirmation.
+Source `57ba1e018755ebc24706bfe7d9abf5420edd632a`; HEX SHA256
+`0d97a7b1893fac03f951910553323ef934e95f0d192a4794a7cbcd9e77b402e8`. Captured Gentle 600/600, Normal
+2000/1500 and Fast 3500/2000 restored. Matching app opened on Auto; startup
+outputs OFF, Home unknown, no queued motion. Physical tests left to operator.
