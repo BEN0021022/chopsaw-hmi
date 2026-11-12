@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from .protocol import ParsedMessage, parse_int, parse_line
 from .serial_link import SerialLink
+from wheel_guard import install_wheel_guard
 
 
 GREEN = "#22c55e"
@@ -136,6 +137,7 @@ class SensorBenchWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Chop Saw Sensor Bench")
+        install_wheel_guard()
         self.resize(1280, 850)
         self.settings = QSettings("ChopSawHMI", "SensorBench")
         self.link = SerialLink(self)

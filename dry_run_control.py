@@ -293,7 +293,7 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.22.0'
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW') in ('0.22.0','0.23.0')
                         and f.get('DRY_RUN')=='UNLOADED_V6' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
                         and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1'
                         and f.get('OPERATOR_CUT')=='UNCLAMPED_ONESHOT_V1')

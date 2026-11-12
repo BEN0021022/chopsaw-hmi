@@ -20,6 +20,22 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Homing parameters / wheel protection - prepared 0.23
+
+- [x] Settings approach speed and acceleration, saved on PC, controller readback.
+- [x] Load/acknowledge saved Home settings before the explicit Home command.
+- [x] Configurable ramped seek; preserve slow latch/release and bounded interlocks.
+- [x] App supports existing 0.22 fixed Home speed without unsupported commands.
+- [x] App-wide wheel guard for focused/unfocused/new spin/combo/value controls
+      and tab bars, including Sensor Bench. Panel/popup scrolling still works.
+- [x] C++ Home/profile tests, actual-sketch preferences/ACK/fallback tests, wheel
+      behavior tests, existing app regressions and Teensy 4.1 compilation.
+- [ ] Flash/read back 0.23 when the Teensy is connected with actuator power isolated.
+- [ ] Physical homing speed/acceleration acceptance by operator.
+
+Prepared offline on 2026-11-12. Current deployed controller remains 0.22.0.
+See [0.23 workflow](docs/HOMING_AND_WHEEL_023.md).
+
 ## Auto intervention / production patterns - app patch 0.22.2
 
 - [x] Home, Confirm/Clear Error, Cancel, Pause and Resume in Auto.

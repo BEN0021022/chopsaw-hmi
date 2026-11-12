@@ -35,6 +35,7 @@ PROFILE_DEFAULTS = {0:(40,0),1:(150,200),2:(1000,500),3:(2500,1500)}
 PROFILE_FIELDS = tuple(f"PROFILE_{kind}{id}" for id in range(4) for kind in ("RATE","ACCEL"))
 ABSOLUTE = re.compile(r"(?:XMOVE|XLOAD) (0|[1-9][0-9]{0,5})")
 HOME = re.compile(r"XHOME ([1-9][0-9]{0,4})")
+HOME_PROFILE = re.compile(r"XHOMEPROFILE ([1-9][0-9]{0,4}) ([1-9][0-9]{0,4})")
 HOME_STAGES = {"SEEK", "RELEASE", "BACKOFF", "LATCH", "PULL_RELEASE", "PULL_OFF"}
 JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
 
@@ -55,6 +56,8 @@ class TeensyCarriagePanel(QWidget):
         self.pending = None
         self.full_home_pending = None
         self.profile_pending = None
+        self.home_profile_supported=False
+        self.home_preferences=lambda:(40,200)
         self.profile_values = dict(PROFILE_DEFAULTS)
         self._profiles_initialized = False
         self.stopping = False
@@ -316,6 +319,7 @@ class TeensyCarriagePanel(QWidget):
     def session(self, connected):
         self.connected = connected
         self.compatible = False
+        self.home_profile_supported=False
         self.x, self.safety, self.inputs, self.received = {}, {}, {}, {}
         self.pending = None
         self.full_home_pending = None
@@ -367,6 +371,10 @@ class TeensyCarriagePanel(QWidget):
             return False
         if self.profile_pending:
             return False
+        home_profile=HOME_PROFILE.fullmatch(command)
+        if home_profile:
+            return (self.home_profile_supported and 1<=int(home_profile[1])<=20000 and 1<=int(home_profile[2])<=50000
+                    and not self.armed and not self.pending and self.x.get('REMAINING')=='0')
         profile = PROFILE.fullmatch(command)
         if profile:
             if profile[2] and (profile[1] == "0" or not 1 <= int(profile[2]) <= 20000 or not 1 <= int(profile[3]) <= 50000):
@@ -424,7 +432,9 @@ class TeensyCarriagePanel(QWidget):
         f = message.fields
         if message.kind == "BENCH_HELLO":
             self.received["HELLO"] = time.monotonic()
-            compatible = all(f.get(k) == value for k, value in IDENTITY.items())
+            compatible = all((f.get(k) in ('CARRIAGE_V16','CARRIAGE_V17') if k=='X_APP' else f.get(k)==value) for k,value in IDENTITY.items())
+            compatible=compatible and (f.get('X_APP')!='CARRIAGE_V17' or f.get('HOME_PROFILE')=='EDITABLE_V1')
+            self.home_profile_supported=compatible and f.get('HOME_PROFILE')=='EDITABLE_V1'
             if self.compatible and not compatible:
                 self.trip_local("Controller identity changed")
             self.compatible = compatible
@@ -444,6 +454,9 @@ class TeensyCarriagePanel(QWidget):
                 self.trip_local("Invalid homing telemetry")
                 return
             profiles = {id:(int(f[f"PROFILE_RATE{id}"]),int(f[f"PROFILE_ACCEL{id}"])) for id in range(4)}
+            if self.home_profile_supported and (not 1<=parse_int(f.get('HOME_RATE_PPS'),0)<=20000 or
+                                                not 1<=parse_int(f.get('HOME_ACCEL_PPS2'),0)<=50000):
+                self.trip_local('Invalid homing profile telemetry');return
             if (profiles[0] != (40,0) or any(not 1 <= profiles[id][0] <= 20000 or not 1 <= profiles[id][1] <= 50000 for id in range(1,4))
                     or f["MAX_JOG"] != "254" or
                     profiles.get(int(f["PROFILE_ID"])) != (int(f["RATE_PPS"]),int(f["ACCEL_PPS2"]))
@@ -484,7 +497,9 @@ class TeensyCarriagePanel(QWidget):
                 self._profiles_initialized = True
                 self.profile_combo.setCurrentIndex(self.profile_combo.findData(int(f["PROFILE_ID"])))
                 self.load_profile_values()
-            if self.profile_pending and self.profile_pending[:3] == (int(f["PROFILE_ID"]),int(f["RATE_PPS"]),int(f["ACCEL_PPS2"])):
+            if self.profile_pending and self.profile_pending[0]=='HOME' and self.profile_pending[1:3]==(int(f.get('HOME_RATE_PPS','0')),int(f.get('HOME_ACCEL_PPS2','0'))):
+                self.profile_pending=None
+            elif self.profile_pending and self.profile_pending[:3] == (int(f["PROFILE_ID"]),int(f["RATE_PPS"]),int(f["ACCEL_PPS2"])):
                 self.profile_pending = None
                 self.profile_combo.setCurrentIndex(self.profile_combo.findData(int(f["PROFILE_ID"])))
                 self.load_profile_values()
@@ -574,6 +589,9 @@ class TeensyCarriagePanel(QWidget):
         return self.request_profile(f"XPROFILE {profile} {int(rate)} {int(acceleration)}",
                                     profile,int(rate),int(acceleration))
 
+    def edit_home_profile(self,rate,accel):
+        return self.request_profile(f'XHOMEPROFILE {int(rate)} {int(accel)}','HOME',int(rate),int(accel))
+
     def request_profile(self,command,profile,rate,accel):
         if self.allowed(command) and self.send(command):
             self.profile_pending = (profile,rate,accel,time.monotonic())
@@ -617,7 +635,8 @@ class TeensyCarriagePanel(QWidget):
     def home(self):
         count = int(math.floor(self.home_search.value() * STEPS_PER_INCH + 0.5))
         command = f"XHOME {count}"
-        return self.request_move(command)
+        if not self.allowed(command):return False
+        return self.prepare_home(command)
 
     def can_full_home(self):
         return (self.ready_link() and self.fresh('INPUTS') and not self.local_fault and not self.stopping
@@ -633,8 +652,17 @@ class TeensyCarriagePanel(QWidget):
         # One deliberate Home gesture authorizes setup + this bounded move, not
         # movement on connect or a later automatic retry.
         self.consent.setChecked(True)
-        if self.x.get('CONFIGURED')=='1': return self.request_move('XHOME 20594')
-        self.full_home_pending=time.monotonic()
+        return self.prepare_home('XHOME 20594')
+
+    def prepare_home(self,command):
+        desired=tuple(int(v) for v in self.home_preferences())
+        actual=(int(self.x.get('HOME_RATE_PPS','40')),int(self.x.get('HOME_ACCEL_PPS2','200')))
+        if self.x.get('CONFIGURED')=='1' and (not self.home_profile_supported or desired==actual):
+            return self.request_move(command)
+        self.full_home_pending={'at':time.monotonic(),'command':command,'profile':desired}
+        if self.x.get('CONFIGURED')=='1':
+            if self.edit_home_profile(*desired):return True
+            self.full_home_pending=None;return False
         if self.send('XCONFIG 0 1'): return True
         self.full_home_pending=None; return False
 
@@ -651,11 +679,16 @@ class TeensyCarriagePanel(QWidget):
         if self.full_home_pending is not None:
             if not self.ready_link() or self.local_fault or not self.consent.isChecked():
                 self.trip_local('Home setup feedback lost')
-            elif time.monotonic()-self.full_home_pending>2:
+            elif time.monotonic()-self.full_home_pending['at']>3:
                 self.trip_local('Home setup acknowledgment timed out')
             elif self.x.get('CONFIGURED')=='1':
-                self.full_home_pending=None
-                if not self.request_move('XHOME 20594'): self.trip_local('Home request rejected')
+                desired=self.full_home_pending['profile']
+                actual=(int(self.x.get('HOME_RATE_PPS','40')),int(self.x.get('HOME_ACCEL_PPS2','200')))
+                if not self.profile_pending and self.home_profile_supported and desired!=actual:
+                    if not self.edit_home_profile(*desired):self.trip_local('Homing profile rejected')
+                elif not self.profile_pending:
+                    command=self.full_home_pending['command'];self.full_home_pending=None
+                    if not self.request_move(command): self.trip_local('Home request rejected')
         if self.connected and self.armed:
             if not self.ready_link():
                 self.trip_local("Controller telemetry stale; motion stopped")

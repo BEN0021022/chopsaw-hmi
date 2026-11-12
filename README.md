@@ -5,6 +5,11 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-11)
 
+Prepared **0.23** adds saved homing approach speed/acceleration and application-wide
+wheel protection for option/value controls. The wheel fix works after app restart;
+adjustable hardware homing needs firmware 0.23.0. Existing 0.22 firmware remains
+compatible with other app features. See [homing and wheel policy](docs/HOMING_AND_WHEEL_023.md).
+
 App patch **0.22.2** adds Automatic/Semi-Auto sub-tabs, per-cut approval,
 Pause/Resume with manual carriage adjustment, Auto Home/error/cancel controls,
 earlier operator-button visibility and repeat/finite-list scrap options.

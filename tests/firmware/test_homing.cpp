@@ -80,5 +80,35 @@ int main() {
   policy.observe(false, 41); policy.observe(false, 61);
   CHECK(policy.stage == carriage::Homing::Stage::Backoff);
   policy.observe(true, 62); CHECK(policy.failed() && std::string(policy.error) == "RETRIGGERED");
+  // Configuration is motion-free, bounded, immutable during Home, and retained
+  // independently of Gentle/Normal/Fast. Approach ramps; precision stays slow.
+  restart();physicalPosition=-1000;sensorMode=0;sensor();command("XCONFIG 0 1");
+  command("XHOMEPROFILE 1200 1500");
+  CHECK(xHoming.approach.maxRate==1200 && xHoming.approach.acceleration==1500 && !outputsArmed && fakePulses==0);
+  CHECK(Serial.outgoing.find("HOME_RATE_PPS:1200,HOME_ACCEL_PPS2:1500")!=std::string::npos);
+  command("XHOME 20594");
+  const uint32_t seekAt=fakeTime;
+  command("XHOMEPROFILE 2000 3000");CHECK(xHoming.approach.maxRate==1200 && xHoming.active());
+  while (xHoming.stage==carriage::Homing::Stage::Seek && fakeTime-seekAt<5000) stepHome();
+  CHECK(xHoming.stage==carriage::Homing::Stage::Release && fakeTime-seekAt<5000);
+  CHECK(xHoming.ramp.parameters.maxRate==40);
+  while (xHoming.active() && xHoming.stage!=carriage::Homing::Stage::Latch) stepHome();
+  CHECK(xHoming.ramp.parameters.maxRate==10);
+  runHome();CHECK(xHoming.done() && xPositionKnown && xHomeOffset==-14 && physicalPosition==86);
+  CHECK(xProfiles[1].maxRate==150 && xProfiles[2].maxRate==1000 && xProfiles[3].maxRate==2500);
+  carriage::Homing tuned;
+  CHECK(tuned.configure(1200,1000));CHECK(tuned.start(20594,false,0));
+  const uint32_t firstInterval=tuned.intervalUs();tuned.pulsed(25);
+  CHECK(firstInterval>tuned.intervalUs() && tuned.intervalUs()>1000000u/1200);
+  CHECK(!tuned.configure(2000,1500));tuned.cancel();
+  CHECK(tuned.configure(20000,1) && tuned.start(20594,false,0));
+  tuned.observe(false,100000);CHECK(tuned.active()); // acceleration-aware fixed deadline
+  tuned.observe(false,600001);CHECK(tuned.failed());
+  const char *badProfiles[]={"XHOMEPROFILE 0 1","XHOMEPROFILE 20001 1","XHOMEPROFILE 1 0", "XHOMEPROFILE 1 50001",
+                             "XHOMEPROFILE -1 100", "XHOMEPROFILE 40 200 EXTRA","XHOMEPROFILE 42949672960 200"};
+  for (const char *request:badProfiles) {
+    restart();command(request);
+    CHECK(!outputsArmed && fakePulses==0 && xHoming.approach.maxRate==40 && xHoming.approach.acceleration==200);
+  }
   printf("Homing policy and sketch integration: %u checks passed\n", checks);
 }

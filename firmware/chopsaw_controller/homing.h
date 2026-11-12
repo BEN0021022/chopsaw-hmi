@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "motion_profile.h"
 
 namespace carriage {
 // Nonblocking homing policy. Caller owns GPIO, pulse timing and global interlocks.
@@ -14,6 +15,13 @@ class Homing {
   static constexpr uint16_t ReleaseLimit = 127;
   static constexpr uint16_t BackoffPulses = 32;
   static constexpr uint16_t PullOffPulses = 13;
+  MotionProfile approach = {40,200};
+  MotionRamp ramp;
+
+  bool configure(uint16_t rate, uint16_t acceleration) {
+    if (active() || !rate || rate>MotionProfile::MaxRate || !acceleration || acceleration>MotionProfile::MaxAcceleration) return false;
+    approach={rate,acceleration};return true;
+  }
 
   bool active() const {
     return stage >= Stage::Seek && stage <= Stage::PullOff;
@@ -21,7 +29,7 @@ class Homing {
   bool failed() const { return stage == Stage::Failed; }
   bool done() const { return stage == Stage::Done; }
   int direction() const { return stage == Stage::Seek || stage == Stage::Latch ? 1 : -1; }
-  uint32_t intervalUs() const { return stage == Stage::Latch ? 100000 : 25000; }
+  uint32_t intervalUs() const { return ramp.intervalUs(); }
   uint16_t limit() const {
     if (stage == Stage::Seek) return searchLimit;
     if (stage == Stage::Backoff) return BackoffPulses;
@@ -58,9 +66,8 @@ class Homing {
     if (!active()) return;
     if (raw != activeInput) { raw = activeInput; rawSince = now; }
     const bool stable = static_cast<uint32_t>(now - rawSince) >= 20;
-    const uint32_t phaseTimeout = static_cast<uint32_t>(limit()) * (intervalUs() / 1000) + 2000;
     if (static_cast<uint32_t>(now - startedAt) >= 600000 ||
-        static_cast<uint32_t>(now - phaseAt) >= phaseTimeout) { fail("TIMEOUT"); return; }
+        static_cast<uint32_t>(now - phaseAt) >= phaseTimeoutMs) { fail("TIMEOUT"); return; }
     switch (stage) {
       case Stage::Seek:
         if (raw && stable) enter(Stage::Release, now);
@@ -94,16 +101,25 @@ class Homing {
     if (stage == Stage::Release || stage == Stage::PullRelease) return activeInput;
     return !activeInput;
   }
-  void pulsed(uint32_t now) { if (active()) { ++pulses; lastPulseAt = now; } }
+  void pulsed(uint32_t now) { if (active()) { ++pulses; ramp.pulsed(); lastPulseAt = now; } }
 
  private:
   uint16_t searchLimit = 0;
   bool raw = false;
   uint32_t rawSince = 0, startedAt = 0, phaseAt = 0, lastPulseAt = 0;
+  uint32_t phaseTimeoutMs = 0;
   bool exhausted(uint32_t now) const {
     return pulses >= limit() && static_cast<uint32_t>(now - lastPulseAt) >= intervalUs() / 1000 + 20;
   }
-  void enter(Stage next, uint32_t now) { stage = next; phaseAt = now; pulses = 0; }
+  void enter(Stage next, uint32_t now) {
+    stage = next; phaseAt = now; pulses = 0;
+    const MotionProfile profile=stage==Stage::Seek ? approach : MotionProfile{static_cast<uint16_t>(stage==Stage::Latch ? 10:40),200};
+    ramp.start(limit(),profile);
+    const double count=limit(), rate=profile.maxRate, acceleration=profile.acceleration;
+    const double seconds=count>=rate*rate/acceleration ? count/rate+rate/acceleration : 2*sqrt(count/acceleration);
+    const double budget=ceil(seconds*1000)+2000;
+    phaseTimeoutMs=static_cast<uint32_t>(budget>600000 ? 600000:budget);
+  }
   void fail(const char *reason) { stage = Stage::Failed; error = reason; }
 };
 }  // namespace carriage

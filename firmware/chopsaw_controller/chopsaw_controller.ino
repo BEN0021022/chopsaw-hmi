@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.22.0";
+constexpr char FIRMWARE_VERSION[] = "0.23.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -245,7 +245,7 @@ void publishHello() {
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
   Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,"
-    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V16,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
+    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V17,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
     "PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,"
     "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1");
 }
@@ -343,6 +343,8 @@ void publishX() {
   Serial.print(",HOME_OFFSET:"); Serial.print(xHomeOffset);
   Serial.print(",HOME_REF:160.5,HOME_STATE:"); Serial.print(xHoming.name());
   Serial.print(",HOME_ERROR:"); Serial.print(xHoming.error);
+  Serial.print(",HOME_RATE_PPS:"); Serial.print(xHoming.approach.maxRate);
+  Serial.print(",HOME_ACCEL_PPS2:"); Serial.print(xHoming.approach.acceleration);
   Serial.print(",SOFT_MIN_OFFSET:"); Serial.print(carriage::Positioning::MinOffset);
   Serial.print(",SOFT_MAX_OFFSET:"); Serial.print(xSoftMaxOffset);
   Serial.print(",SOFT_MAX_MILLI:"); Serial.print(carriage::Positioning::milliForOffset(xSoftMaxOffset));
@@ -655,6 +657,15 @@ void __attribute__((noinline)) handleCommand(char *command) {
       xProfile = id;  // RAM only; selecting a profile never enables or moves
     }
     publishX();
+  } else if (startsWith(command,"XHOMEPROFILE ")) {
+    uint32_t values[2]={0,0};
+    if (!unsignedArgs(command,"XHOMEPROFILE ",2,values) || values[0]<1 || values[0]>carriage::MotionProfile::MaxRate ||
+        values[1]<1 || values[1]>carriage::MotionProfile::MaxAcceleration) {
+      commandFault();Serial.println("BENCH_ERROR,CODE:BAD_HOME_PROFILE");
+    } else if (outputsArmed || xRemaining || testMode!=TestMode::None || dry.active() || dry.failed() || interlocks.fault!=bench::Fault::None) {
+      Serial.println("BENCH_ERROR,CODE:DISARM_FIRST");
+    } else xHoming.configure(static_cast<uint16_t>(values[0]),static_cast<uint16_t>(values[1]));
+    publishX();
   } else if (startsWith(command, "XHOME ")) {
     int pulses = 0; char extra = '\0';
     if (sscanf(command + 6, "%d %c", &pulses, &extra) != 1 || pulses < 1 || pulses > carriage::Homing::MaxSearch) {
@@ -669,7 +680,8 @@ void __attribute__((noinline)) handleCommand(char *command) {
       xArmAt = xLastStepAt = millis();
       digitalWrite(X_ENABLE_PIN, xEnableLevel);
       digitalWrite(X_DIR_PIN, xHoming.direction() == 1 ? HIGH : LOW);
-      xNextPulseUs = micros() + 200000;
+      const uint32_t firstInterval=xHoming.intervalUs();
+      xNextPulseUs = micros() + (firstInterval>200000 ? firstInterval:200000);
     }
     publishOutputs(); publishSafety(); publishX();
   } else if (startsWith(command, "XEDGE ")) {
@@ -896,18 +908,19 @@ void __attribute__((noinline)) serviceXHome() {
   }
   if (previousStage != xHoming.stage) {
     digitalWrite(X_DIR_PIN, xHoming.direction() == 1 ? HIGH : LOW);
-    const uint32_t directionReady = micros() + 10;
+    const uint32_t directionReady = micros() + xHoming.intervalUs();
     if (static_cast<int32_t>(xNextPulseUs - directionReady) < 0) xNextPulseUs = directionReady;
     publishX();
   }
   if (static_cast<uint32_t>(millis() - xArmAt) < 200 ||
       !xHoming.wantsPulse(digitalRead(HOME_PIN) == LOW) ||
       static_cast<int32_t>(micros() - xNextPulseUs) < 0) return;
+  const uint32_t pulseAt=micros();
   digitalWrite(X_STEP_PIN, HIGH); delayMicroseconds(5); digitalWrite(X_STEP_PIN, LOW);
   xCommandedSteps += xHoming.direction();
   if (xHoming.referenceLatched) xHomeOffset += xHoming.direction();
   xHoming.pulsed(millis()); xLastStepAt = millis();
-  xNextPulseUs = micros() + xHoming.intervalUs();
+  xNextPulseUs = pulseAt + xHoming.intervalUs();
 }
 
 void readSerialCommands() {

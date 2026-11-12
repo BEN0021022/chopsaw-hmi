@@ -109,6 +109,9 @@ def run(exe):
             assert sup.register_stock(), 'Explicit operator material registration, no actuator write'
             for key in TIMING_KEYS:
                 if 'timeout' not in key: w.cylinder_timing.fields[key].setValue(100)
+            # Observed phase coverage needs a spin-up longer than the 100ms
+            # host sample interval; do not depend on Home's clock alignment.
+            w.cylinder_timing.fields['trigger.spinup'].setValue(300)
             d.consent.setChecked(True)
             assert d.configure(); flush(); tick()
             assert not d.pending and d.settings_match()

@@ -153,6 +153,11 @@ class DirectControls(QObject):
                 if not self.owner.send_command('XCONFIG 0 1'):self.fail('Driver setup rejected.')
                 return
             if kind=='home':
+                desired=tuple(int(v) for v in p.home_preferences())
+                actual=(int(p.x.get('HOME_RATE_PPS','40')),int(p.x.get('HOME_ACCEL_PPS2','200')))
+                if p.home_profile_supported and desired!=actual:
+                    if not p.edit_home_profile(*desired):self.fail('Homing settings could not be loaded.')
+                    return
                 if not p.full_home():self.fail('Home is blocked by current machine feedback.');return
                 s['phase']='running';return
             profile=3 if kind=='load' else 2

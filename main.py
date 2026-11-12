@@ -38,6 +38,7 @@ from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
 from machine_workbench import MachineWorkbench
 from cut_history import CutHistory
 from direct_controls import DirectControls
+from wheel_guard import install_wheel_guard
 from _version import __version__ as APP_VERSION
 from controller_backends import (
     CONTROLLER_MODES,
@@ -98,6 +99,7 @@ def get_icon_path():
 class MinimalHMI(QMainWindow):
     def __init__(self):
         super().__init__()
+        install_wheel_guard()
         icon_path = get_icon_path()
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
@@ -366,6 +368,7 @@ class MinimalHMI(QMainWindow):
         self.preset_tab = self.create_preset_tab()
 
         self.carriage_tab = TeensyCarriagePanel(self.send_command, lambda line: self.log.append(line), self)
+        self.carriage_tab.home_preferences=self.saved_homing_settings
         self.carriage_tab.profile_changed.connect(self.update_teensy_profile)
         self.carriage_tab.homed_changed.connect(self.update_homed_status)
         self.carriage_tab.machine_position_changed.connect(self.update_position_label_from_device)
@@ -1117,6 +1120,24 @@ class MinimalHMI(QMainWindow):
         self.settings_profile_feedback.setWordWrap(True)
         pg.addWidget(self.settings_profile_feedback,4,0,1,6)
         root.addWidget(profiles)
+
+        homing=QGroupBox('Homing approach — Teensy')
+        self.homing_group=homing
+        hf=QFormLayout(homing)
+        saved_rate,saved_accel=self.saved_homing_settings()
+        self.homing_speed=QDoubleSpinBox();self.homing_speed.setDecimals(0);self.homing_speed.setRange(1,20000);self.homing_speed.setValue(saved_rate)
+        self.homing_accel=QDoubleSpinBox();self.homing_accel.setDecimals(0);self.homing_accel.setRange(1,50000);self.homing_accel.setValue(saved_accel)
+        hf.addRow('Approach speed (pulses/s)',self.homing_speed)
+        hf.addRow('Acceleration (pulses/s²)',self.homing_accel)
+        home_note=QLabel('Approach uses these settings. Final latch remains 10 pulses/s; release/backoff/pull-off remain 40 pulses/s for repeatability.')
+        home_note.setWordWrap(True);hf.addRow(home_note)
+        self.save_homing_button=QPushButton('Save / apply homing settings')
+        self.save_homing_button.clicked.connect(self.save_homing_settings);hf.addRow(self.save_homing_button)
+        self.homing_feedback=QLabel('Saved on this PC. Adjustable homing requires controller firmware 0.23.0 or newer.')
+        self.homing_feedback.setWordWrap(True);hf.addRow(self.homing_feedback)
+        self.homing_speed.valueChanged.connect(self.refresh_homing_settings)
+        self.homing_accel.valueChanged.connect(self.refresh_homing_settings)
+        root.addWidget(homing)
 
         # Software updates
         updates_group = QGroupBox("Software")
@@ -2553,6 +2574,7 @@ class MinimalHMI(QMainWindow):
         if not hasattr(self,"carriage_tab") or not hasattr(self,"settings_profile_combo"):
             return
         p = self.carriage_tab
+        self.refresh_homing_settings()
         self.refresh_live_health()
         if self.active_controller().key != TEENSY_CARRIAGE:
             self.settings_profile_feedback.setText("Simulator profile values; apply the selected profile explicitly.")
@@ -2716,6 +2738,39 @@ class MinimalHMI(QMainWindow):
                 ("Waiting for parameter acknowledgment. " if p.profile_pending else ""))
         self.settings_profile_feedback.setText(note+f"Motion status: {p.status.text()}. "
                                               "Disarm to apply. Values are controller RAM settings and reset on reboot.")
+
+    def saved_homing_settings(self):
+        def value(key,default,maximum):
+            try:result=int(self.settings.value(key,default))
+            except (TypeError,ValueError):return default
+            return result if 1<=result<=maximum else default
+        return value('homing/rate_pps',40,20000),value('homing/accel_pps2',200,50000)
+
+    def save_homing_settings(self):
+        rate,accel=int(self.homing_speed.value()),int(self.homing_accel.value())
+        self.settings.setValue('homing/rate_pps',rate);self.settings.setValue('homing/accel_pps2',accel);self.settings.sync()
+        p=self.carriage_tab
+        if (p.ready_link() and p.home_profile_supported and self.dry_run.safe_link(False)
+                and not self.dry_run.sequence and not self.direct_controls.intent and not p.armed
+                and all(self.dry_run.data.get(k)=='0' for k in ('ARMED','CLAMP','SAW','TRIGGER'))):
+            p.consent.setChecked(True)
+            p.edit_home_profile(rate,accel)
+        self.refresh_homing_settings()
+
+    def refresh_homing_settings(self,*_args):
+        if not hasattr(self,'homing_feedback') or not hasattr(self,'carriage_tab'):return
+        p=self.carriage_tab
+        busy=p.connected and bool(p.armed or p.homing or p.edge_searching or p.pending or p.profile_pending or p.full_home_pending
+                                 or self.direct_controls.intent or self.dry_run.data.get('ARMED')=='1')
+        for widget in (self.homing_speed,self.homing_accel,self.save_homing_button):widget.setEnabled(not busy)
+        saved=self.saved_homing_settings();draft=(int(self.homing_speed.value()),int(self.homing_accel.value()))
+        prefix='Unsaved edits. ' if draft!=saved else f'Saved: {saved[0]} pulses/s, {saved[1]} pulses/s². '
+        if not p.ready_link():text='Offline. Firmware 0.23+ loads the saved values before Home.'
+        elif not p.home_profile_supported:text='Connected firmware has fixed homing speed. Flash 0.23.0 to activate these settings.'
+        elif p.profile_pending and p.profile_pending[0]=='HOME':text='Waiting for controller acknowledgment.'
+        else:text=f"Controller: {p.x.get('HOME_RATE_PPS')} pulses/s, {p.x.get('HOME_ACCEL_PPS2')} pulses/s². Saved values load automatically before Home."
+        self.homing_feedback.setText(prefix+text)
+        self.homing_feedback.setStyleSheet('color:#fbbf24;' if p.ready_link() and not p.home_profile_supported else 'color:#94a3b8;')
 
     def update_teensy_profile(self, profile):
         self.active_profile_name = {0:"COMMISSIONING",1:"GENTLE",2:"NORMAL",3:"FAST"}.get(profile,"COMMISSIONING")
