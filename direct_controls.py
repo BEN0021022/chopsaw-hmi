@@ -25,7 +25,7 @@ class DirectControls(QObject):
 
     def base_ready(self):
         d=self.owner.dry_run; p=self.owner.carriage_tab
-        return (d.safe_link(False) and not d.sequence and not d.auto_start and not d.awaiting_stop
+        return (d.safe_link(False) and (not d.sequence or d.intervention.manual_window()) and not d.auto_start and not d.awaiting_stop
                 and not p.pending and not p.profile_pending and not p.stopping
                 and not p.homing and not p.edge_searching and not p.full_home_pending and p.x.get('REMAINING')=='0')
 
@@ -39,12 +39,12 @@ class DirectControls(QObject):
     def can_motion(self, kind='move'):
         ready=self.free_for_carriage() and (kind=='home' or self.owner.carriage_tab.x.get('POS_KNOWN')=='1')
         if kind=='auto':
-            ready=ready and self.owner.dry_run.supervision.coordinator.geometry.verified and bool(self.owner.cut_list) and self.owner.carriage_tab.inputs.get('BOARD_EDGE')=='1' and self.owner.dry_run.acquisition_command() is not None
+            ready=ready and not self.owner.dry_run.sequence and self.owner.dry_run.supervision.coordinator.geometry.verified and bool(self.owner.cut_list) and self.owner.carriage_tab.inputs.get('BOARD_EDGE')=='1' and self.owner.dry_run.acquisition_command() is not None
         return bool(ready)
 
     def can_actuator(self, action):
         d=self.owner.dry_run; p=self.owner.carriage_tab
-        if not self.base_ready() or self.intent or d.pending or d.manual_start:return False
+        if d.sequence or not self.base_ready() or self.intent or d.pending or d.manual_start:return False
         state=d.data.get('STATE')
         if action=='unpress':return d.data.get('TRIGGER')=='1'
         if action=='release' and d.data.get('RELEASE_READY')=='1':return True
@@ -76,6 +76,12 @@ class DirectControls(QObject):
             if not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=maximum:
                 self.message=f'Enter a carriage target from 0 to {maximum:.3f} inches.';return False
         if kind=='jog' and (not math.isfinite(value) or not 0<abs(value)<=2):return False
+        if kind in ('home','move','load','jog') and self.owner.dry_run.sequence:
+            intervention=self.owner.dry_run.intervention
+            if not intervention.paused():
+                if not intervention.pause():return False
+                self.intent={'kind':kind,'value':value,'phase':'wait_pause','at':time.monotonic(),'session':self.owner.ser}
+                self.message='Pausing before the requested manual adjustment.';return True
         self.intent={'kind':kind,'value':value,'phase':'prepare','at':time.monotonic(),'session':self.owner.ser}
         self.message='Preparing '+(str(value) if kind=='actuator' else kind)+'…'
         self.tick()
@@ -93,6 +99,9 @@ class DirectControls(QObject):
             self.fail('Control feedback/interlock lost; action cancelled.');return
         if s['phase'] not in ('running','finish') and time.monotonic()-s['at']>10:
             self.fail('Control preparation did not complete; action cancelled.');return
+        if s['phase']=='wait_pause':
+            if not d.intervention.paused() or d.awaiting_stop:return
+            s['phase']='prepare'
         if self.dispatch_ready_move():return
         old=d.issuing_sequence;d.issuing_sequence=True
         try:

@@ -51,6 +51,8 @@ def main():
     subprocess.run([sys.executable, str(root / "test_direct_controls.py"), str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_operator_return.py"), str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_auto_acquisition.py"), str(server)], check=True, cwd=root)
+    subprocess.run([sys.executable, str(root / "test_cycle_intervention.py"), str(server)], check=True, cwd=root)
+    subprocess.run([sys.executable, str(root / "test_pause_checkpoints.py"), str(server)], check=True, cwd=root)
 
 
 if __name__ == "__main__":

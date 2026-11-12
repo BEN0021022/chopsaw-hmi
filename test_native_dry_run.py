@@ -148,6 +148,7 @@ def run(exe):
             assert not d.motion_locked()
             # One truing stroke plus one stroke per list item, then stored FAST Load.
             w.load_cut_list_lines(['2 A','3 B'])
+            w.clear_at_list_end.setChecked(True) # explicit end-of-list clearing mode
             w.board_sensor_location_input.setValue(10.5)
             sup.fields['sensor_near'].setValue(10.5); sup.fields['sensor_far'].setValue(10.5)
             records(wire.exchange('@SENSOR_ZONE 10.5'))

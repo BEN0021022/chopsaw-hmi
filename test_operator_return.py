@@ -81,13 +81,20 @@ def run(exe):
             assert not any(c.startswith(('DOPCUT','DARM','XLOAD')) for c in wire.writes[count:])
             assert d.confirm_operator_cut();assert not d.confirm_operator_cut()
             flush();until(lambda:d.sequence and d.sequence['stage']=='EARLY_RETURN_ARM')
+            assert not w.operator_cut_button.isHidden() and not w.operator_cut_button.isEnabled()
             assert d.sequence['index']==1 and w._displayed_cut_index==1
             assert not d.can_confirm_operator_cut()
+            assert d.intervention.pause();flush();until(lambda:d.intervention.paused())
+            assert d.intervention.resume_plan()[0]=='early_return'
+            assert d.intervention.resume();flush()
             until(lambda:d.sequence and d.sequence['stage']=='WAIT_OPERATOR_CUT')
             assert d.sequence['early_return'] and p.x['PROFILE_ID']=='3'
             assert abs(sup.context().position-w.native_load_target())<.02
             assert not sup.coordinator.material.contact and d.data['CLAMP']=='0'
             assert w._displayed_cut_index==1 and '> Cut 2:' in w.cut_list_display.toPlainText()
+            assert d.intervention.pause();flush();until(lambda:d.intervention.paused())
+            assert d.intervention.resume_plan()[0]=='returned_operator'
+            assert d.intervention.resume();tick();assert d.can_confirm_operator_cut()
             w.refresh_teensy_tabs();app.processEvents()
             assert not w.operator_cut_button.isHidden() and w.operator_cut_button.isEnabled()
             assert 'Waiting for operator' in w.live_health_label.text()

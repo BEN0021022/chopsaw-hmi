@@ -5,6 +5,12 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-11)
 
+App patch **0.22.2** adds Automatic/Semi-Auto sub-tabs, per-cut approval,
+Pause/Resume with manual carriage adjustment, Auto Home/error/cancel controls,
+earlier operator-button visibility and repeat/finite-list scrap options.
+Prepared and tested offline against existing 0.22 firmware; physical acceptance
+pending. See [Auto intervention workflow](docs/AUTO_INTERVENTION_0222.md).
+
 App patch **0.22.1** fixes Auto's leftover two-inch acquisition cap. The search
 now uses available referenced travel while reserving sensor-plus-kerf truing
 and blade clearance; specific controller faults replace the generic message.

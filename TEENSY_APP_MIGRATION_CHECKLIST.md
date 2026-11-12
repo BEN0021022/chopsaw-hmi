@@ -20,6 +20,24 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Auto intervention / production patterns - app patch 0.22.2
+
+- [x] Home, Confirm/Clear Error, Cancel, Pause and Resume in Auto.
+- [x] Show unclamped-cut approval at the start of early return; enable on stop.
+- [x] Automatic/Semi-Auto sub-tabs share list, status and progress; approve each
+      stroke in Semi-Auto, with truing separately labeled.
+- [x] Controlled paused manual jog/absolute/Load/Home; preserve pending index.
+- [x] Resume interrupted targets or use deliberate adjusted position as baseline;
+      reacquire after Home/lost stock reference rather than inventing contact.
+- [x] Pause after an issued saw stroke completes; Cancel interrupts immediately.
+- [x] Repeat list, clear-between-boards and finite-list-end clearing preferences.
+- [x] Actual-sketch tests for manual overrides, mode handoff, pause checkpoints,
+      early-return pauses, repeat/finite scrap behavior, cut history and Cancel.
+- [ ] Operator physical acceptance with saw mains unplugged.
+
+Prepared offline on 2026-11-12; firmware stays 0.22.0, no connection/flash needed.
+See [0.22.2 workflow](docs/AUTO_INTERVENTION_0222.md).
+
 ## Auto acquisition correction - app patch 0.22.1
 
 - [x] Reproduce physical-board search failure at 254 pulses, EDGE_FAILED/NOT_FOUND.

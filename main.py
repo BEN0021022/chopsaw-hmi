@@ -396,6 +396,7 @@ class MinimalHMI(QMainWindow):
         self.log.document().setMaximumBlockCount(500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
         self.dry_run.changed.connect(self.manual_pneumatics.refresh)
+        self.dry_run.changed.connect(self.refresh_teensy_tabs)
         self.dry_run.changed.connect(self.machine_workbench.refresh)
         self.cut_history_warning = QLabel()
         self.cut_history_warning.setWordWrap(True)
@@ -927,11 +928,35 @@ class MinimalHMI(QMainWindow):
             QPushButton:disabled { background-color: #166534; color: #4ade80; }
         """)
         cyc.addWidget(self.start_cycle_button)
+        actions=QGridLayout()
+        self.auto_home_button=QPushButton('Home')
+        self.auto_home_button.clicked.connect(self.home_motor)
+        self.auto_clear_error=QPushButton('Confirm / Clear Error')
+        self.auto_clear_error.clicked.connect(self.dry_run.acknowledge)
+        self.auto_cancel_button=QPushButton('Cancel Cycle')
+        self.auto_cancel_button.clicked.connect(self.dry_run.cancel_cycle)
+        self.auto_pause_button=QPushButton('Pause Cycle')
+        self.auto_pause_button.clicked.connect(lambda:self.dry_run.intervention.pause())
+        self.auto_resume_button=QPushButton('Resume Cycle')
+        self.auto_resume_button.setToolTip('Use the adjusted board position, with stock against the pusher. After Home, reacquire the board and retain the pending cut.')
+        self.auto_resume_button.clicked.connect(lambda:self.dry_run.intervention.resume())
+        for index,button in enumerate((self.auto_home_button,self.auto_clear_error,self.auto_cancel_button,self.auto_pause_button,self.auto_resume_button)):
+            button.setMinimumHeight(42);actions.addWidget(button,index//2,index%2)
+        cyc.insertLayout(1,actions)
+        self.repeat_pattern=QCheckBox('Repeat cut list on each new board')
+        self.clear_between_boards=QCheckBox('Clear sensor zone between boards')
+        self.clear_at_list_end=QCheckBox('Clear sensor zone at end of finite list')
+        self.clear_at_list_end.setToolTip('Repeat mode uses the between-boards option at each pattern boundary.')
+        for key,checkbox,default in (('repeat_pattern',self.repeat_pattern,False),('clear_between',self.clear_between_boards,True),('clear_end',self.clear_at_list_end,False)):
+            checkbox.setChecked(self.settings.value('auto/'+key,default,type=bool))
+            checkbox.toggled.connect(lambda checked,k=key:self.settings.setValue('auto/'+k,checked))
+            cyc.addWidget(checkbox)
+        self.repeat_pattern.toggled.connect(self.refresh_teensy_tabs)
         self.operator_cut_button=QPushButton('Wood secured / run cut\nSaw unplugged')
         self.operator_cut_button.setMinimumHeight(66)
         self.operator_cut_button.setStyleSheet('QPushButton { background:#f59e0b; color:#111827; font-size:19px; font-weight:bold; } QPushButton:disabled { background:#92400e; color:#fcd34d; }')
-        self.operator_cut_button.clicked.connect(self.dry_run.confirm_operator_cut)
-        self.operator_cut_button.hide();cyc.addWidget(self.operator_cut_button)
+        self.operator_cut_button.clicked.connect(self.approve_auto_cut)
+        self.operator_cut_button.hide();cyc.insertWidget(1,self.operator_cut_button)
 
             
             
@@ -981,13 +1006,41 @@ class MinimalHMI(QMainWindow):
         right_wrap.setObjectName('autoCycleColumn')
         right_wrap.setStyleSheet('QWidget#autoCycleColumn { background:#0b1222; }')
         right_scroll = QScrollArea(); right_scroll.setWidgetResizable(True)
+        self.auto_right_scroll=right_scroll
         right_scroll.setStyleSheet('QScrollArea { background:#0b1222; border:0; }')
         right_scroll.setWidget(right_wrap)
         top_row.addWidget(right_scroll)
         root.addLayout(top_row)
 
         # Profiles moved to Speed Settings tab
-        return w
+        self._auto_shared_panel=w
+        outer=QWidget();outer_layout=QVBoxLayout(outer);outer_layout.setContentsMargins(0,0,0,0)
+        self.auto_modes=QTabWidget();self.auto_mode_pages=[]
+        for name in ('Automatic','Semi-Auto / approve each cut'):
+            page=QWidget();layout=QVBoxLayout(page);layout.setContentsMargins(0,0,0,0)
+            self.auto_modes.addTab(page,name);self.auto_mode_pages.append(page)
+        self.auto_mode_pages[0].layout().addWidget(w)
+        self.auto_modes.currentChanged.connect(self.change_auto_page)
+        outer_layout.addWidget(self.auto_modes)
+        return outer
+
+    def change_auto_page(self,index):
+        d=self.dry_run
+        if d.sequence:
+            if not d.intervention.manual_window():
+                index=int(d.sequence['semi'])
+                self.auto_modes.blockSignals(True);self.auto_modes.setCurrentIndex(index);self.auto_modes.blockSignals(False)
+            else:
+                if not d.intervention.paused():d.intervention.pause()
+                d.sequence['semi']=index==1
+        self.auto_mode_pages[index].layout().addWidget(self._auto_shared_panel)
+        self.refresh_teensy_tabs()
+
+    def approve_auto_cut(self):
+        d=self.dry_run
+        if d.sequence and d.sequence['stage'] in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM'):
+            return d.confirm_operator_cut()
+        return d.approve_cut()
 
     def create_speed_tab(self):
         w = QWidget(); outer = QVBoxLayout(w)
@@ -2310,11 +2363,12 @@ class MinimalHMI(QMainWindow):
                 self.direct_controls.cancel()
                 dry.auto_start=None; dry.manual_start=None; dry.trigger_held=False
             if dry.sequence and not dry.issuing_sequence:
-                if stopping:
+                if dry.intervention.paused() and cmd=='XARM 0':pass
+                elif stopping:
                     dry.sequence=None; dry.pending=None; dry.message='Unloaded dry list stopped.'
-                elif cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE'):
+                elif not dry.intervention.paused() and cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE'):
                     self.log.append('BLOCKED: unloaded list owns machine sequencing.'); return False
-            if (dry.motion_locked() and not dry.issuing_sequence and not stopping and
+            if (dry.motion_locked() and not dry.intervention.paused() and not dry.issuing_sequence and not stopping and
                     cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE') and not DRY_COMMAND.fullmatch(cmd)):
                 self.log.append('BLOCKED: unloaded pneumatics own machine control.'); return False
             if cmd=='XDISABLE' and dry.motion_locked():
@@ -2570,21 +2624,44 @@ class MinimalHMI(QMainWindow):
         self.auto_isolation.setChecked(p.consent.isChecked()); self.auto_isolation.blockSignals(False)
         self.auto_configure.setEnabled(p.allowed("XCONFIG 0 1"))
         self.auto_home.setEnabled(self.direct_controls.can_motion('home'))
+        self.auto_home_button.setEnabled(self.direct_controls.can_motion('home'))
+        self.auto_clear_error.setEnabled(p.ready_link() and not p.armed and not self.dry_run.sequence and p.safety.get('RESET_READY')=='1')
+        self.auto_cancel_button.setEnabled(p.connected and bool(self.dry_run.sequence or self.dry_run.auto_start or self.direct_controls.intent))
+        self.auto_pause_button.setEnabled(bool(self.dry_run.sequence and self.dry_run.sequence['stage'] not in ('PAUSED','PAUSING') and not self.dry_run.intervention.after_cut))
+        self.auto_pause_button.setText('Pausing after cut...' if self.dry_run.intervention.after_cut else 'Pause Cycle')
+        self.auto_resume_button.setEnabled(self.dry_run.intervention.resume_plan() is not None)
+        self.auto_modes.tabBar().setEnabled((not self.dry_run.sequence or self.dry_run.intervention.manual_window()) and not self.dry_run.auto_start)
+        for checkbox in (self.repeat_pattern,self.clear_between_boards,self.clear_at_list_end):
+            checkbox.setEnabled(not self.dry_run.sequence and not self.dry_run.auto_start
+                                and (checkbox is not self.clear_at_list_end or not self.repeat_pattern.isChecked()))
         self.auto_arm.setText("DISARM" if p.armed else "ARM")
         self.auto_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto() or self.direct_controls.can_motion('auto'))
         self.start_cycle_button.setText('Start next board — dry run' if self.dry_run.waiting_for_board() else 'Start Auto — dry run')
-        waiting=bool(self.dry_run.sequence and self.dry_run.sequence['stage']=='WAIT_OPERATOR_CUT')
-        self.operator_cut_button.setVisible(waiting)
-        self.operator_cut_button.setEnabled(self.dry_run.can_confirm_operator_cut())
+        stage=self.dry_run.sequence['stage'] if self.dry_run.sequence else ''
+        waiting=stage in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM')
+        semi_wait=stage=='WAIT_CUT_APPROVAL' or (self.dry_run.intervention.paused() and bool(self.dry_run.sequence.get('semi')))
+        show_approval=waiting or semi_wait
+        was_hidden=self.operator_cut_button.isHidden()
+        self.operator_cut_button.setVisible(show_approval)
+        if show_approval and was_hidden:
+            self.operator_cut_button.parentWidget().layout().activate()
+            self.auto_right_scroll.widget().layout().activate()
+            self.auto_right_scroll.ensureWidgetVisible(self.operator_cut_button)
+        self.operator_cut_button.setEnabled(self.dry_run.can_confirm_operator_cut() if waiting else self.dry_run.can_approve_cut())
+        truing=bool(self.dry_run.sequence and self.dry_run.sequence['index']<0)
+        self.operator_cut_button.setText('Wood secured / run cut\nSaw unplugged' if waiting else
+                                        'True-up / advance\nSaw unplugged' if truing else 'Clamp / Cut / Advance\nSaw unplugged')
+        self.operator_cut_button.setToolTip('Available once the carriage stops. No saw stroke is queued during return.' if waiting else
+                                            'At an adjusted position, ensure the board is against the pusher. Uses this position as the next-cut baseline.')
         if self.dry_run.waiting_for_board():self.start_cycle_button.setText('Continue cut list / next board')
         progress=(self.dry_run.progress_batch,self.dry_run.progress_index)
         if getattr(self,'_native_progress_rendered',None)!=progress:
             self._native_progress_rendered=progress
             self.update_cut_list_display()
         self.fa_start_cycle_button.setEnabled(False)
-        self.auto_status_label.setText(self.dry_run.supervision.summary()+' '+self.dry_run.message)
+        self.auto_status_label.setText(self.dry_run.message if self.dry_run.sequence else self.dry_run.supervision.summary()+' '+self.dry_run.message)
         self.load_button.setEnabled(self.direct_controls.can_motion('load'))
         self.load_button.setToolTip("Return to Load using the stored FAST profile.")
         jogs=((self.auto_jog_left_btn,self.auto_jog_input.value()),(self.auto_jog_right_btn,-self.auto_jog_input.value()),
@@ -2709,8 +2786,11 @@ class MinimalHMI(QMainWindow):
                                   local_fault=p.local_fault or self.dry_run.local_fault, stale_seconds=p.stale_seconds,
                                   allow_saw_travel=self.dry_run.fresh() and self.dry_run.data.get('STATE') in DRY_TRAVEL)
             receipt = p.received.get("X") if connected and p.connected and p.compatible else None
-            if state.level=='healthy' and self.dry_run.sequence and self.dry_run.sequence['stage']=='WAIT_OPERATOR_CUT':
-                state=HealthState('waiting','Waiting for operator — secure unclamped wood',('No clamp grip is measured. One explicit unplugged stroke is required.',))
+            if state.level=='healthy' and self.dry_run.sequence:
+                if self.dry_run.sequence['stage']=='WAIT_OPERATOR_CUT':
+                    state=HealthState('waiting','Waiting for operator — secure unclamped wood',('No clamp grip is measured. One explicit unplugged stroke is required.',))
+                elif self.dry_run.sequence['stage'] in ('PAUSED','PAUSING','WAIT_CUT_APPROVAL'):
+                    state=HealthState('waiting','Cycle paused' if self.dry_run.sequence['stage']!='WAIT_CUT_APPROVAL' else 'Position ready — approve cut')
         elif mode == "sim":
             state = simulator_health(connected=connected, fields=self._sim_health_fields,
                                      received=self._sim_health_received, started=self._health_started, now=now)

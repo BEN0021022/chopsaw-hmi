@@ -1,9 +1,9 @@
 # Next bench session - current procedure
 
-Use [0.22 operator return and profiles](OPERATOR_RETURN_022.md) and
-[direct controls](DIRECT_CONTROLS_021.md). Connect, Home, then Start Auto. Saw
-mains remain unplugged for these tests. The active cut stays highlighted during
-operator pauses; the amber operator button requests one clamp-inhibited stroke.
+Use [Auto/Semi-Auto and intervention](AUTO_INTERVENTION_0222.md). App patch
+0.22.2 uses existing 0.22 firmware; no flash is needed. Connect and Home, then
+choose Automatic or Semi-Auto. Start with saw mains unplugged. Exercise Pause,
+manual adjustment and Resume, and the selected repeat/scrap policy.
 
 The older notes below are historical and do not describe the current workflow.
 
