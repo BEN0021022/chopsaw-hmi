@@ -955,10 +955,14 @@ class MinimalHMI(QMainWindow):
             checkbox.toggled.connect(lambda checked,k=key:self.settings.setValue('auto/'+k,checked))
             cyc.addWidget(checkbox)
         self.repeat_pattern.toggled.connect(self.refresh_teensy_tabs)
+        self.auto_mode_label=QLabel('AUTOMATIC — positions, clamps and cycles each cut.')
+        self.auto_mode_label.setWordWrap(True)
+        cyc.insertWidget(0,self.auto_mode_label)
         self.operator_cut_button=QPushButton('Wood secured / run cut\nSaw unplugged')
         self.operator_cut_button.setMinimumHeight(66)
-        self.operator_cut_button.setStyleSheet('QPushButton { background:#f59e0b; color:#111827; font-size:19px; font-weight:bold; } QPushButton:disabled { background:#92400e; color:#fcd34d; }')
+        self.operator_cut_button.setStyleSheet('QPushButton { background:#f59e0b; color:#111827; font-size:19px; font-weight:bold; } QPushButton:disabled { background:#1e293b; color:#94a3b8; border:1px solid #475569; }')
         self.operator_cut_button.clicked.connect(self.approve_auto_cut)
+        self.operator_cut_button.setEnabled(False)
         self.operator_cut_button.hide();cyc.insertWidget(1,self.operator_cut_button)
 
             
@@ -2576,6 +2580,7 @@ class MinimalHMI(QMainWindow):
         p = self.carriage_tab
         self.refresh_homing_settings()
         self.refresh_live_health()
+        self.refresh_auto_approval()
         if self.active_controller().key != TEENSY_CARRIAGE:
             self.settings_profile_feedback.setText("Simulator profile values; apply the selected profile explicitly.")
             self.settings_profile_combo.setEnabled(True)
@@ -2660,23 +2665,8 @@ class MinimalHMI(QMainWindow):
         self.auto_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto() or self.direct_controls.can_motion('auto'))
-        self.start_cycle_button.setText('Start next board — dry run' if self.dry_run.waiting_for_board() else 'Start Auto — dry run')
-        stage=self.dry_run.sequence['stage'] if self.dry_run.sequence else ''
-        waiting=stage in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM')
-        semi_wait=stage=='WAIT_CUT_APPROVAL' or (self.dry_run.intervention.paused() and bool(self.dry_run.sequence.get('semi')))
-        show_approval=waiting or semi_wait
-        was_hidden=self.operator_cut_button.isHidden()
-        self.operator_cut_button.setVisible(show_approval)
-        if show_approval and was_hidden:
-            self.operator_cut_button.parentWidget().layout().activate()
-            self.auto_right_scroll.widget().layout().activate()
-            self.auto_right_scroll.ensureWidgetVisible(self.operator_cut_button)
-        self.operator_cut_button.setEnabled(self.dry_run.can_confirm_operator_cut() if waiting else self.dry_run.can_approve_cut())
-        truing=bool(self.dry_run.sequence and self.dry_run.sequence['index']<0)
-        self.operator_cut_button.setText('Wood secured / run cut\nSaw unplugged' if waiting else
-                                        'True-up / advance\nSaw unplugged' if truing else 'Clamp / Cut / Advance\nSaw unplugged')
-        self.operator_cut_button.setToolTip('Available once the carriage stops. No saw stroke is queued during return.' if waiting else
-                                            'At an adjusted position, ensure the board is against the pusher. Uses this position as the next-cut baseline.')
+        self.start_cycle_button.setText('Start next board — dry run' if self.dry_run.waiting_for_board() else
+                                        'Start Semi-Auto — dry run' if self.auto_modes.currentIndex()==1 else 'Start Auto — dry run')
         if self.dry_run.waiting_for_board():self.start_cycle_button.setText('Continue cut list / next board')
         progress=(self.dry_run.progress_batch,self.dry_run.progress_index)
         if getattr(self,'_native_progress_rendered',None)!=progress:
@@ -2738,6 +2728,33 @@ class MinimalHMI(QMainWindow):
                 ("Waiting for parameter acknowledgment. " if p.profile_pending else ""))
         self.settings_profile_feedback.setText(note+f"Motion status: {p.status.text()}. "
                                               "Disarm to apply. Values are controller RAM settings and reset on reboot.")
+
+    def refresh_auto_approval(self):
+        semi=self.auto_modes.currentIndex()==1
+        native=self.active_controller().key==TEENSY_CARRIAGE
+        d=self.dry_run
+        stage=d.sequence['stage'] if d.sequence else ''
+        waiting=stage in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM')
+        semi_wait=stage=='WAIT_CUT_APPROVAL' or (d.intervention.paused() and bool(d.sequence.get('semi')))
+        if getattr(self,'_rendered_auto_mode',None)!=semi:
+            self.auto_mode_label.setText('SEMI-AUTO — positions each cut; waits for your cut button.' if semi else
+                                         'AUTOMATIC — positions, clamps and cycles each cut.')
+            self.auto_mode_label.setStyleSheet('font-weight:bold; padding:8px; border-left:3px solid '+
+                                              ('#f59e0b; color:#fcd34d;' if semi else '#38bdf8; color:#7dd3fc;'))
+            self._rendered_auto_mode=semi
+        self.operator_cut_button.setVisible(semi or waiting or semi_wait)
+        self.operator_cut_button.setEnabled(native and (d.can_confirm_operator_cut() if waiting else d.can_approve_cut()))
+        truing=bool(d.sequence and d.sequence['index']<0)
+        self.operator_cut_button.setText('Wood secured / run cut\nSaw unplugged' if waiting else
+                                        'True-up / advance\nSaw unplugged' if truing else 'Clamp / Cut / Advance\nSaw unplugged')
+        self.operator_cut_button.setToolTip('Available once the carriage stops. No saw stroke is queued during return.' if waiting else
+                                            'Enabled when the cycle is waiting for cut approval. You can jog to adjust the positioned cut first.')
+        approval_wait=waiting or semi_wait
+        if approval_wait and not getattr(self,'_cut_approval_waiting',False):
+            self.operator_cut_button.parentWidget().layout().activate()
+            self.auto_right_scroll.widget().layout().activate()
+            self.auto_right_scroll.ensureWidgetVisible(self.operator_cut_button)
+        self._cut_approval_waiting=approval_wait
 
     def saved_homing_settings(self):
         def value(key,default,maximum):

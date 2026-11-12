@@ -55,17 +55,25 @@ def run(exe):
                                   keepout=1,margin=.5,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():sup.fields[key].setValue(value)
             assert sup.save();w.kerf_input.setValue(.12)
             w.auto_modes.setCurrentIndex(1);w.tabs.setCurrentWidget(w.auto_tab);w.resize(1440,1000);w.show();app.processEvents()
+            assert not w.operator_cut_button.isHidden() and not w.operator_cut_button.isEnabled()
+            assert w.operator_cut_button.text().startswith('Clamp / Cut / Advance')
+            assert w.auto_mode_label.text().startswith('SEMI-AUTO')
+            assert w.start_cycle_button.text().startswith('Start Semi-Auto')
             w.load_cut_list_lines(['20 first','20 second','20 third'])
             def acquire():
                 assert w.start_auto_cycle();flush();until(lambda:stage('SEARCH'))
+                if d.sequence['semi']:
+                    assert not w.operator_cut_button.isHidden() and not w.operator_cut_button.isEnabled()
                 records(wire.exchange('@PIN 21 0'));until(lambda:stage('MOVE'))
                 records(wire.exchange('@AUTO_SENSOR 1'))
             acquire();until(lambda:stage('WAIT_CUT_APPROVAL'))
             assert wire.strokes==0 and w.operator_cut_button.isEnabled(),(wire.strokes,d.can_approve_cut(),d.supervision.last_decision,d.data,p.x,w.operator_cut_button.isEnabled(),w.auto_modes.currentIndex())
+            assert w.operator_cut_button.text().startswith('True-up / advance')
             # Semi-Auto waits even at truing and does not run a stroke on timers.
             tick(181000);assert wire.strokes==0 and stage('WAIT_CUT_APPROVAL')
             assert d.approve_cut();flush();until(lambda:stage('WAIT_CUT_APPROVAL') and d.sequence['index']==0)
             assert wire.strokes==1 and w._displayed_cut_index==0
+            assert w.operator_cut_button.text().startswith('Clamp / Cut / Advance')
             position=sup.context().position
             # A jog is itself enough to enter the paused manual adjustment mode.
             assert w.auto_jog(-1);flush();until(lambda:d.intervention.paused() and w.direct_controls.intent is None)
@@ -110,6 +118,7 @@ def run(exe):
             # Continue instead of automatically launching the next board.
             records(wire.exchange('@AUTO_SENSOR 0'));tick()
             w.auto_modes.setCurrentIndex(0);w.repeat_pattern.setChecked(True)
+            assert w.auto_mode_label.text().startswith('AUTOMATIC') and w.operator_cut_button.isHidden()
             assert not w.clear_at_list_end.isChecked() and w.clear_between_boards.isChecked()
             w.board_size_radios[1][0].setChecked(True)
             assert w.load_position();flush();until(lambda:w.direct_controls.intent is None)

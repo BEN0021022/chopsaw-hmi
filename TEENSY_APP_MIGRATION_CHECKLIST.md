@@ -42,6 +42,8 @@ See [0.23 workflow](docs/HOMING_AND_WHEEL_023.md).
 - [x] Show unclamped-cut approval at the start of early return; enable on stop.
 - [x] Automatic/Semi-Auto sub-tabs share list, status and progress; approve each
       stroke in Semi-Auto, with truing separately labeled.
+- [x] Semi-Auto cut button remains visible while idle/moving, disabled until
+      approval is available; distinct mode heading and Start Semi-Auto label.
 - [x] Controlled paused manual jog/absolute/Load/Home; preserve pending index.
 - [x] Resume interrupted targets or use deliberate adjusted position as baseline;
       reacquire after Home/lost stock reference rather than inventing contact.

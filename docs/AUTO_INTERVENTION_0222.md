@@ -17,7 +17,10 @@ also works while the list is paused. No separate arming/waiver controls return.
 
 - Automatic retains normal clamp/cut/feed scheduling.
 - Semi-Auto positions each cut, then waits with a highlighted **Clamp / Cut /
-  Advance** button. Truing is labeled **True-up / advance** separately. No
+  Advance** button. The button stays visible in Semi-Auto while idle/moving,
+  muted and disabled until the controller is waiting for approval. The mode
+  heading identifies Semi-Auto in amber and Automatic in blue, and the start
+  button names the selected mode. Truing is labeled **True-up / advance** separately. No
   completion is assumed from pressing either button; only controller DONE
   advances the index and history.
 - Jog/position/Home from a Semi-Auto approval checkpoint automatically enters
