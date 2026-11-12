@@ -14,6 +14,17 @@ def context(**changes):
 
 
 class Policies(unittest.TestCase):
+    def test_manual_cycle_operator_positioned_stock(self):
+        c=context(material=Material())
+        self.assertTrue(assess_manual_cycle(c).proceeds)
+        self.assertTrue(assess_manual_cycle(replace(c,clamps_off=False)).proceeds)
+        self.assertFalse(assess_cut_holding(c).proceeds)
+        for changes in ({'position':.5},{'position':9},{'fresh':False},
+                        {'door_closed':False},{'reference_known':False},{'saw_up':False},
+                        {'trigger_off':False},{'carriage_idle':False},{'fault_free':False}):
+            with self.subTest(changes=changes):
+                self.assertFalse(assess_manual_cycle(replace(c,**changes)).proceeds)
+
     def test_geometry_validation(self):
         for value in (float('nan'),float('inf'),-1):
             with self.subTest(value=value), self.assertRaises(ValueError): geometry(margin=value)

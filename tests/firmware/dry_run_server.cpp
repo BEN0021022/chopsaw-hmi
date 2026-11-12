@@ -32,7 +32,7 @@ void step() {
                         fakePins[29]==LOW && fakePins[14]==HIGH));
   CHECK(!dry.cycleRunning || !fakePins[19] || fakePins[32]);
   CHECK(!fakePins[19] || xCommandedSteps == before);
-  CHECK(!fakePins[33] || fakePins[32]);
+  CHECK(!dry.cycleRunning || !fakePins[33] || fakePins[32]);
   CHECK(!fakePins[32] || xCommandedSteps == before);
 }
 

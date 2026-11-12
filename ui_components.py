@@ -5,6 +5,7 @@ from collections import deque
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLineEdit, QPushButton, QFrame, QLabel, QHBoxLayout
 from PyQt6.QtCore import pyqtSignal, Qt, QEvent
 from PyQt6.QtGui import QColor, QPainter, QPen, QPainterPath
+from PyQt6.QtGui import QDoubleValidator
 
 class KeypadWidget(QWidget):
     """A reusable numeric keypad widget for data entry."""
@@ -17,7 +18,10 @@ class KeypadWidget(QWidget):
     def init_ui(self):
         layout = QVBoxLayout(self)
         self.display = QLineEdit()
-        self.display.setReadOnly(True)
+        self.display.setReadOnly(False)
+        self.display.setValidator(QDoubleValidator(0,10000,4,self.display))
+        self.display.textEdited.connect(lambda text:setattr(self,'current_input',text))
+        self.display.returnPressed.connect(self.enter_value)
         self.display.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.display.setMaxLength(10)
         self.display.setStyleSheet("font-size: 20px; padding: 10px; border-radius: 10px;")
@@ -31,18 +35,21 @@ class KeypadWidget(QWidget):
             b.clicked.connect(lambda _, t=txt: self.button_clicked(t))
             grid.addWidget(b, i, j)
         enter = QPushButton("ENTER"); enter.setProperty("role","touch"); enter.clicked.connect(self.enter_value)
+        self.enter_button=enter
         grid.addWidget(enter, 4, 0, 1, 3)
         layout.addLayout(grid)
         
     def button_clicked(self, c):
-        if c == 'CLR': self.current_input = ""
-        elif c == '.':
-            if '.' not in self.current_input:
-                self.current_input += c if self.current_input else "0."
-        else: self.current_input += c
-        self.display.setText(self.current_input)
+        if c=='CLR':self.display.clear()
+        elif c=='.':
+            if '.' not in self.display.text() or '.' in self.display.selectedText():
+                self.display.insert('.' if self.display.text() else '0.')
+        else:self.display.insert(c)
+        self.current_input=self.display.text()
         
     def enter_value(self):
+        if not self.enter_button.isEnabled():return
+        self.current_input=self.display.text()
         if not self.current_input: return
         try:
             self.value_entered.emit(float(self.current_input))

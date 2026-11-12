@@ -48,6 +48,7 @@ def main():
                    "-o", str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_native_dry_run.py"), str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_native_multiboard.py"), str(server)], check=True, cwd=root)
+    subprocess.run([sys.executable, str(root / "test_direct_controls.py"), str(server)], check=True, cwd=root)
 
 
 if __name__ == "__main__":

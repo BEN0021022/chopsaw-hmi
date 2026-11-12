@@ -5,83 +5,32 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-11)
 
-Flashed/read back **0.20.0 / CARRIAGE_V14** on COM4, 2026-11-11. It fixes multi-board cut-list rejection and
-corrects truing to advance sensor distance **plus** forward trim (Auto uses
-kerf). One next-cut capacity check replaces the whole-list fit check. At each
-board boundary the runner clears the detector when commissioned, returns to
-Load and waits for **Start next board** without losing the next cut. Old 0.19
-truing signatures must be reconfirmed. See [0.20 commissioning](docs/MULTIBOARD_TRUING_020.md).
+**0.21.0 / CARRIAGE_V15** simplifies operation to **Connect ? Home ? use the
+controls**. Manual carriage entry accepts a physical keyboard or touch keypad.
+Clamp, saw travel, held trigger and Manual Cycle handle their mode setup
+internally. Auto starts from its Start Auto button. Session checklists,
+confirmations, stock registration and separate arming are removed from the
+normal workflow. Saved valid machine dimensions persist across startup.
 
-Prepared app-side update (2026-11-11): small geometry/material policies and one
-automation coordinator, measured-geometry settings, operator-required pause/review
-UI and bounded detector-zone cleanup. Not deployed; firmware remains 0.19. New
-automatic cycles require geometry commissioning. No generic no-clamp override:
-0.19 cannot execute an inhibited-main-clamp cycle. See
-[automation supervision](docs/AUTOMATION_SUPERVISION.md) for scope and next steps.
+Real feedback/interlocks, existing motion limits, Stop and the automatic
+material/holding coordinator remain. Saw mains must remain physically
+unplugged for this build. See [direct controls and deployment](docs/DIRECT_CONTROLS_021.md).
 
-Full Auto now opens an offline-capable **Machine layout & commissioning**
-workbench: measured/live layout, isolated coordinator scenarios, next-cut-list
-lookahead, passive cycle diagnostics and an exportable session checklist. The
-older virtual-fixture animation is retained on its own page; native actuation
-is not enabled there. See [garage preparation](docs/GARAGE_COMMISSIONING.md).
-This is an app-only update; deployed firmware remains 0.19.0.
+The 0.20 multi-board and forward-trim corrections are retained: assess one
+next cut per board; advance detector distance plus kerf for truing; clear the
+acquisition zone when required; return and wait for Start next board while
+retaining the next cut. See [truing correction](docs/MULTIBOARD_TRUING_020.md).
 
-Native confirmed cycles now append `cut_history.csv` beside the executable
-(source mode: beside `main.py`) for later metrics. Records include cut/starting
-stock lengths where known, board identity, timestamp, mode and remaining stock.
-Current unplugged cycles are labeled `dry_run`; simulator previews are excluded.
-See [cut history fields and limits](docs/CUT_HISTORY.md).
+Full Auto provides the machine layout, isolated scenarios and passive cycle
+diagnostics. Native confirmed cuts append `cut_history.csv` beside the app
+for later metrics; unplugged tests are labeled `dry_run`. See
+[cut history](docs/CUT_HISTORY.md) and the
+[migration checklist](TEENSY_APP_MIGRATION_CHECKLIST.md).
 
-The prior **0.19.0 / CARRIAGE_V13 / UNLOADED_V4** baseline removed Manual's Controls
-frame, leaving Home. One Home gesture confirms the established driver setup and
-searches the full supported range (20594 pulses, approximately 162 inches), with
-finite failed-sensor/watchdog/guard stops retained. Individual pneumatic controls
-remain. Manual Cycle and native Start Auto now use controller-owned clamp →
-trigger → DOWN/UP → trigger release → brake wait → clamp release sequencing.
-**Saw mains must stay physically unplugged.** Guard is currently a Teensy input,
-not an independent shutdown path; this is integrated commissioning, not powered
-production authorization. Stop/fault retains clamp and releases trigger; recover
-clamp explicitly only after UP/brake interval. See [integrated procedure](docs/INTEGRATED_DRY_RUN.md).
-0.18.0 was flashed/read back and individual mechanisms were operator-confirmed
-working. 0.19 flashed/read back on COM4 on 2026-11-10 with isolation confirmed:
-no faults, outputs OFF, disarmed/unconfigured, Home unknown, zero queued motion.
-Matching Manual app reopened connected, without setup/arming. Physical combined
-acceptance remains pending.
+The board uses custom firmware, not stock grblHAL. Connecting sends only
+identity/status requests; it never starts motion or energizes a valve.
+Prior source/HEX archives remain available for rollback.
 
-Prior build **0.18.0 / CARRIAGE_V12 / UNLOADED_V3** simplified Manual
-to one session-enable button (loads/acknowledges settings automatically), then
-direct controls and repeated hold-to-test trigger on Flood/D19. Two-second pulse
-and per-action rearm are removed; guard/UP/alarm/watchdog/fault checks remain.
-Flashed/read back on COM4. No simultaneous held-trigger/travel or carriage motion.
-Saw mains MUST remain physically unplugged. Auto dry lists never press the
-trigger. See [trigger procedure](docs/TRIGGER_TEST.md). Physical acceptance pending;
-prior 0.16.0 hard-trigger-locked source/HEX are preserved for rollback.
-Prior 0.17.0 flashed/read back on COM4 on 2026-11-10 with isolation confirmed; outputs
-OFF, no faults, disarmed, no queued motion. Matching Manual app reopened.
-
-The main app now has a **Teensy Carriage** controller mode and native CARRIAGE
-tab. Select COM4 (or the actual Teensy port) and connect. Connection sends only
-identity/status requests; it never configures, arms or moves the driver.
-
-Previous app/firmware was **0.16.0 / CARRIAGE_V10**, compiled/tested offline, then
-flashed/read back on COM4 on 2026-11-09 with operator isolation confirmed.
-Startup disarmed, outputs OFF, position unknown, no queued motion. Physical
-unloaded acceptance remains pending; **0.15.0** rollback is preserved.
-The new build adds Manual unloaded clamp/saw controls and a separate AUTO
-**Run unloaded cut-list test**: real detector acquisition, truing, feed/stroke
-per item and FAST return. Manually trip/hold the real board detector until truing
-starts. Blade trigger D19 is hard locked OFF. Saw mains stay physically unplugged;
-no stock. Normal stroke retains clamp; unloaded Stop/fault releases it and
-requests UP. Physical acceptance is pending. Follow [the dry-run procedure](docs/TONIGHT_DRY_RUN.md).
-AUTO now exposes cut-list planning, live sensor status, bounded jogs and
-FAST-profile load moves. Cycle Start/Resume stay disabled; Cut Complete is removed.
-See [Auto tab commissioning](docs/AUTO_TAB_COMMISSIONING.md).
-This adds bounded motion profiles and board-edge acquisition with a separate
-truing move; new physical acceptance remains pending. See
-[motion profiles](docs/MOTION_PROFILES.md) and [board-edge plan](docs/BOARD_EDGE_COMMISSIONING.md).
-Matching stable 0.11.0 source remains at checkpoint `cab3a16` for rollback.
-0.14.0 adds editable pulse rates/acceleration and MEGA V2.5 defaults;
-see [speed tuning](docs/SPEED_TUNING.md). 0.13.0 is preserved at `8602038`.
 Controller source:
 `firmware/chopsaw_controller/chopsaw_controller.ino`. The separate Sensor Bench
 0.6.0 sketch is preserved for diagnostics. The active controller keeps those

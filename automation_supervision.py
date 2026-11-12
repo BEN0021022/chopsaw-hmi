@@ -203,6 +203,21 @@ def plan_board_feed(ctx, length, kerf):
     return Decision(Outcome.PROCEED,'FEED_TARGET_AVAILABLE','Next cut fits this referenced board; holding is reviewed after positioning.',target=target)
 
 
+def assess_manual_cycle(ctx):
+    """Operator-positioned Manual stock; do not invent a contacting-board model."""
+    state=validate_next_action(replace(ctx,clamps_off=True),'feed')
+    if not state.proceeds:return state
+    if not ctx.geometry.verified:
+        return Decision(Outcome.OPERATOR_REQUIRED,'GEOMETRY_REQUIRED','Save the machine dimensions first.')
+    if ctx.geometry.pusher(ctx.position).near<=ctx.geometry.cut_keepout:
+        return Decision(Outcome.BLOCK,'BLADE_KEEP_OUT','Pusher is inside the blade keepout.')
+    main=next((c for c in ctx.geometry.clamps if c.key=='main' and c.installed and c.commissioned),None)
+    if main is None:return Decision(Outcome.BLOCK,'CLAMP_UNAVAILABLE','Main clamp is unavailable.')
+    if ctx.geometry.pusher(ctx.position).overlaps(main.footprint.expanded(ctx.geometry.margin)):
+        return Decision(Outcome.OPERATOR_REQUIRED,'PUSHER_OVERLAP','Pusher overlaps the main clamp; reposition before cycling.')
+    return Decision(Outcome.PROCEED,'MANUAL_CYCLE_AVAILABLE','Manual cycle uses operator-positioned stock and the main clamp; grip is not measured.',('main',))
+
+
 def plan_sensor_clearance(ctx):
     state=validate_next_action(ctx,'clear_sensor')
     if not state.proceeds: return state

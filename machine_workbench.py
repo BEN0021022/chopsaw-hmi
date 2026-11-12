@@ -14,17 +14,6 @@ from machine_preview import example_scenarios, evaluate, preview_cut_list
 
 COLORS = {'PROCEED': '#22c55e', 'ADAPT': '#38bdf8',
           'OPERATOR_REQUIRED': '#fbbf24', 'BLOCK': '#f87171'}
-CHECKS = (
-    ('geometry', 'Measure pad edges, pusher envelope, blade keepout and detector zone'),
-    ('datum', 'Verify native sensor offset / trim and actual truing position'),
-    ('inputs', 'Check guard, Home, board detector, saw UP/DOWN and driver alarm'),
-    ('cycle', 'Run one normal combined cycle with saw physically unplugged'),
-    ('list', 'Run a short cut list; verify feed, completed strokes and FAST return'),
-    ('overlap', 'Verify clamp-overlap pause occurs before pneumatic arm'),
-    ('clearance', 'Accept one bounded detector-clearance push, then return'),
-    ('mismatch', 'Verify detector mismatch / failed clearance pauses without another push'),
-    ('recovery', 'Check Stop, trigger release, saw return and retained-clamp recovery'),
-)
 
 
 def table(headers):
@@ -180,7 +169,7 @@ class MachineWorkbench(QWidget):
         self.lookahead.setMinimumHeight(135); layout.addWidget(self.lookahead, 1)
         self.pages.addTab(self.scrolled(layout_page), 'Layout / scenarios')
         self.build_diagnostics()
-        self.build_checklist()
+        self.build_report_fields()
         self.pages.addTab(legacy, 'Legacy animation')
         self.source.currentIndexChanged.connect(self.refresh)
         self.scenario.currentIndexChanged.connect(self.load_scenario)
@@ -328,26 +317,11 @@ class MachineWorkbench(QWidget):
         event_bar = self.event_log.verticalScrollBar()
         event_bar.setValue(event_bar.maximum() if self.follow_trace.isChecked() else event_scroll)
 
-    def build_checklist(self):
-        page = QWidget(); layout = QVBoxLayout(page)
-        note = QLabel('Garage session record — check items after observing them. These marks record operator results; '
-                      'they do not commission geometry, arm outputs or grant cycle permission. Start a new record for each session.')
-        note.setWordWrap(True); layout.addWidget(note)
+    def build_report_fields(self):
+        # Legacy report fields stay readable; no operating checklist page.
         self.checks = {}
-        for key, title in CHECKS:
-            box = QCheckBox(title); box.setMinimumHeight(36); self.checks[key] = box; layout.addWidget(box)
-        self.session_notes = QLineEdit(); self.session_notes.setPlaceholderText('Session notes / measurements / first failed step')
-        self.session_notes.setMinimumHeight(40); layout.addWidget(self.session_notes)
-        reset = QPushButton('Clear checklist marks / notes'); reset.clicked.connect(self.reset_checklist); layout.addWidget(reset)
-        export = QPushButton('Export checklist with cycle diagnostics (JSON)')
-        export.clicked.connect(self.export_report); layout.addWidget(export)
-        boundary = QLabel('Combined cycles currently operate the main clamp. '
-                          'When that clamp is inhibited, Manual Cycle reviews conditions and stays paused. '
-                          'Recovery stays paused until the second clamp is installed, mapped and commissioned.')
-        boundary.setWordWrap(True); boundary.setStyleSheet('color:#fbbf24;'); layout.addWidget(boundary)
-        self.checklist_export_feedback = QLabel(); self.checklist_export_feedback.setWordWrap(True)
-        layout.addWidget(self.checklist_export_feedback)
-        layout.addStretch(); self.pages.addTab(self.scrolled(page), 'Session checklist')
+        self.session_notes=QLineEdit(self);self.session_notes.hide()
+        self.checklist_export_feedback=QLabel(self);self.checklist_export_feedback.hide()
 
     def reset_checklist(self):
         for box in self.checks.values(): box.setChecked(False)

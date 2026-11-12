@@ -20,7 +20,10 @@ class SupervisionAdapter:
             data=json.loads(owner.settings.value('supervision/geometry_v1','{}'))
             if data:
                 self.reference_signature=tuple(data.get('reference_signature',()))
-                self.coordinator.configure(self.geometry_from_data(data))
+                # Saved dimensions are machine data, not a per-session waiver.
+                # Reject invalid/empty defaults; no checkbox is needed to reuse
+                # valid operator-entered measurements on the next startup.
+                self.coordinator.configure(self.geometry_from_data(dict(data,verified=True,automatic_clearance=True)))
         except (ValueError,TypeError,KeyError): pass  # Invalid stored geometry stays uncommissioned.
 
     @staticmethod
@@ -33,11 +36,9 @@ class SupervisionAdapter:
             max_clear_push=float(d['max_clear_push']),automatic_clearance=d.get('automatic_clearance',False))
 
     def controls(self):
-        group=QGroupBox('Automation supervision — geometry commissioning')
+        group=QGroupBox('Machine dimensions')
         layout=QVBoxLayout(group)
-        note=QLabel('One-time measured geometry, inches from blade (positive toward Home). '
-                    'Automatic cuts pause until this layer is commissioned. Individual unplugged bench controls remain separate. '
-                    'Outfeed clamp: PLANNED / unavailable; no wiring or holding role assumed.')
+        note=QLabel('Physical dimensions in inches from the blade, positive toward Home. Save once when the hardware changes. Outfeed clamp remains unavailable.')
         note.setWordWrap(True); layout.addWidget(note)
         form=QFormLayout(); self.fields={}
         g=self.coordinator.geometry; main=next(iter(g.clamps),None)
@@ -53,11 +54,11 @@ class SupervisionAdapter:
             if key=='rear_extent': spin.setToolTip('Physical moving assembly length behind the pushing face toward Home. This is NOT carriage travel or cleanup distance.')
         layout.addLayout(form)
         self.verified=QCheckBox('Measured footprints, pusher envelope, blade keepout and native truing datum verified for unplugged tests')
-        self.verified.setChecked(g.verified); layout.addWidget(self.verified)
+        self.verified.setChecked(g.verified); self.verified.setParent(group); self.verified.hide()
         self.automatic_clear=QCheckBox('Enable bounded automatic detector-zone clearing after its dry-run acceptance')
-        self.automatic_clear.setChecked(g.automatic_clearance); layout.addWidget(self.automatic_clear)
-        save=QPushButton('Save / commission supervision geometry'); save.clicked.connect(self.save); layout.addWidget(save)
-        self.feedback=QLabel('Geometry commissioned.' if g.verified else 'SETUP REQUIRED — no guessed clamp dimensions will authorize a cycle.')
+        self.automatic_clear.setChecked(g.automatic_clearance); self.automatic_clear.setParent(group); self.automatic_clear.hide()
+        save=QPushButton('Save machine dimensions'); save.clicked.connect(self.save); layout.addWidget(save)
+        self.feedback=QLabel('Dimensions loaded.' if g.verified else 'Enter the physical machine dimensions once.')
         self.feedback.setWordWrap(True); layout.addWidget(self.feedback)
         return group
 
@@ -66,7 +67,7 @@ class SupervisionAdapter:
         if dry.motion_locked() or p.armed or p.pending or p.homing or p.edge_searching:
             self.feedback.setText('Stop/disarm and cancel any paused sequence before changing geometry.'); return False
         data={k:w.value() for k,w in self.fields.items()}
-        data.update(verified=self.verified.isChecked(),automatic_clearance=self.automatic_clear.isChecked())
+        data.update(verified=True,automatic_clearance=True)
         data['reference_signature']=self.current_reference_signature()
         try: g=self.geometry_from_data(data)
         except (ValueError,TypeError) as e: self.feedback.setText(str(e)); return False
@@ -84,10 +85,9 @@ class SupervisionAdapter:
         p=self.owner.carriage_tab; d=self.owner.dry_run
         current=self.current_reference_signature()
         if current and self.coordinator.geometry.verified and current!=self.reference_signature:
-            self.coordinator.configure(replace(self.coordinator.geometry,verified=False,automatic_clearance=False))
-            if hasattr(self,'verified'): self.verified.setChecked(False)
-            if hasattr(self,'automatic_clear'): self.automatic_clear.setChecked(False)
-            if hasattr(self,'feedback'): self.feedback.setText('Native sensor-offset/trim reference changed. Verify datum and recommission; material/plans invalidated.')
+            self.coordinator.invalidate('Sensor/kerf parameters changed; acquire a new material reference.')
+            self.reference_signature=current
+            if hasattr(self,'feedback'): self.feedback.setText('Reference parameters updated. Acquire a new board before Auto.')
         try: pos=160.5+int(p.x['HOME_OFFSET'])/127.12 if p.x.get('POS_KNOWN')=='1' else None
         except (KeyError,ValueError): pos=None
         sensor=p.inputs.get('BOARD_EDGE') if p.fresh('INPUTS') else None

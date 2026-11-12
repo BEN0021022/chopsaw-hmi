@@ -36,6 +36,7 @@ from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
 from machine_workbench import MachineWorkbench
 from cut_history import CutHistory
+from direct_controls import DirectControls
 from _version import __version__ as APP_VERSION
 from controller_backends import (
     CONTROLLER_MODES,
@@ -204,6 +205,7 @@ class MinimalHMI(QMainWindow):
         self._sim_health_received = self._sim_activity_received = None
         self._health_activity = TelemetryActivity()
         self.dry_run = NativeDryRun(self)
+        self.direct_controls = DirectControls(self)
         self.init_ui()
         self.apply_theme()
         self._load_settings()
@@ -386,6 +388,7 @@ class MinimalHMI(QMainWindow):
         self.tabs.addTab(self.preset_tab, "CUT LISTS")
         self.migration_tab = self.create_migration_tab()
         self.tabs.addTab(self.migration_tab, "MIGRATION")
+        self.tabs.setTabVisible(self.tabs.indexOf(self.migration_tab),False)
 
         # Log (hidden — keep object so log.append() calls don't crash)
         self.log = QTextBrowser()
@@ -962,7 +965,7 @@ class MinimalHMI(QMainWindow):
         self.auto_dry_run.clicked.connect(self.dry_run.start_sequence)
         self.auto_dry_stop=QPushButton('Stop dry run / release clamp')
         self.auto_dry_stop.clicked.connect(lambda: self.dry_run.stop())
-        self.auto_dry_status=QLabel('Requires matching 0.20.0 firmware.'); self.auto_dry_status.setWordWrap(True)
+        self.auto_dry_status=QLabel('Requires matching 0.21.0 firmware.'); self.auto_dry_status.setWordWrap(True)
         for widget in (self.auto_dry_configure,self.auto_dry_run,self.auto_dry_stop,self.auto_dry_status): dry_layout.addWidget(widget)
         right_col.insertWidget(0, self.auto_dry_group)
 
@@ -1670,7 +1673,7 @@ class MinimalHMI(QMainWindow):
                 widget.setEnabled(True)
         self.auto_tab.setEnabled(auto_ready or native_manual)  # offline list planning remains available
         self.current_group.setVisible(not native_manual)
-        self.auto_teensy_setup.setVisible(native_manual)
+        self.auto_teensy_setup.hide()
         self.cancel_cycle_button.setText("STOP / DISARM" if native_manual else "CANCEL CYCLE")
         self.resume_on_reset_button.setEnabled(auto_ready)
         self.resume_on_reset_button.setVisible(not native_manual)
@@ -1705,6 +1708,11 @@ class MinimalHMI(QMainWindow):
 
     def refresh_manual_motion_locks(self):
         if not isinstance(self.ser, VirtualController):
+            if hasattr(self,'direct_controls'):
+                self.manual_home_button.setEnabled(self.direct_controls.can_motion('home'))
+                self.keypad.setEnabled(self.carriage_tab.ready_link())
+                self.keypad.enter_button.setEnabled(self.direct_controls.can_motion())
+                return
             if self.dry_run.motion_locked():
                 for widget in (self.manual_home_button,self.keypad,self.enable_chk,self.manual_configure,
                                self.manual_arm,self.manual_release,self.load_button,self.auto_arm,self.auto_home,
@@ -2011,7 +2019,7 @@ class MinimalHMI(QMainWindow):
 
     def start_auto_cycle(self):
         if self.active_controller().key == TEENSY_CARRIAGE:
-            return self.dry_run.begin_auto()
+            return self.dry_run.begin_auto() if self.dry_run.waiting_for_board() else self.direct_controls.request('auto')
         if self.manual_pneumatics.motion_locked():
             return False
         if getattr(self, '_simulation_pneumatic_pending', False):
@@ -2288,6 +2296,7 @@ class MinimalHMI(QMainWindow):
             dry = self.dry_run
             stopping = cmd in ('OFF','XARM 0','XDISABLE','RESET','DOFF')
             if stopping and not dry.issuing_sequence:
+                self.direct_controls.cancel()
                 dry.auto_start=None; dry.manual_start=None; dry.trigger_held=False
             if dry.sequence and not dry.issuing_sequence:
                 if stopping:
@@ -2333,12 +2342,11 @@ class MinimalHMI(QMainWindow):
 
     def home_motor(self):
         if self.active_controller().key == TEENSY_CARRIAGE:
-            if self.dry_run.motion_locked(): return False
-            return self.carriage_tab.full_home()
+            return self.direct_controls.request('home')
         self.send_backend_commands(self.active_controller().home(), "home the carriage")
     def load_position(self):
         if self.active_controller().key == TEENSY_CARRIAGE:
-            return self.carriage_tab.move_load_to(self.native_load_target())
+            return self.direct_controls.request('load',self.native_load_target())
         self.switch_profile("FAST", True)
 
         # The selected radio determines the load position; None means home position
@@ -2374,7 +2382,7 @@ class MinimalHMI(QMainWindow):
     def set_length(self, length):
         target = length
         if self.active_controller().key == TEENSY_CARRIAGE:
-            return self.carriage_tab.move_to(target)
+            return self.direct_controls.request('move',target)
 
         # --- THIS IS THE GATEKEEPER CHECK ---
         if 0.0 <= target <= self.home_position:
@@ -2388,7 +2396,7 @@ class MinimalHMI(QMainWindow):
     # AUTO jog helper: move by a relative delta from current position
     def auto_jog(self, delta):
         if self.active_controller().key == TEENSY_CARRIAGE:
-            return self.carriage_tab.jog_distance(float(delta))
+            return self.direct_controls.request('jog',float(delta))
         target = self.current_position + float(delta)
         self.set_length(target)
     def toggle_current_settings(self, visible):
@@ -2496,7 +2504,7 @@ class MinimalHMI(QMainWindow):
         self.manual_configure.setEnabled(p.allowed("XCONFIG 0 1"))
         self.manual_arm.setText("DISARM MANUAL CONTROL" if p.armed else "ARM MANUAL CONTROL")
         self.manual_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
-        self.manual_home_button.setEnabled(p.can_full_home() and not self.dry_run.motion_locked())
+        self.manual_home_button.setEnabled(self.direct_controls.can_motion('home'))
         self.manual_home_search.blockSignals(True)
         self.manual_home_search.setValue(p.home_search.value())
         self.manual_home_search.blockSignals(False)
@@ -2550,27 +2558,30 @@ class MinimalHMI(QMainWindow):
         self.auto_isolation.blockSignals(True)
         self.auto_isolation.setChecked(p.consent.isChecked()); self.auto_isolation.blockSignals(False)
         self.auto_configure.setEnabled(p.allowed("XCONFIG 0 1"))
-        self.auto_home.setEnabled(p.can_full_home() and not self.dry_run.motion_locked())
+        self.auto_home.setEnabled(self.direct_controls.can_motion('home'))
         self.auto_arm.setText("DISARM" if p.armed else "ARM")
         self.auto_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
         self.cancel_cycle_button.setEnabled(p.connected)
-        self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto())
+        self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto() or self.direct_controls.can_motion('auto'))
         self.start_cycle_button.setText('Start next board — dry run' if self.dry_run.waiting_for_board() else 'Start Auto — dry run')
         self.fa_start_cycle_button.setEnabled(False)
         self.auto_status_label.setText(self.dry_run.supervision.summary()+' '+self.dry_run.message)
-        self.load_button.setEnabled(p.allowed(f"XLOAD {int(self.native_load_target()*1000+0.5)}"))
-        self.load_button.setToolTip("Uses stored FAST profile. Requires Home, explicit arm and a clear path.")
+        self.load_button.setEnabled(self.direct_controls.can_motion('load'))
+        self.load_button.setToolTip("Return to Load using the stored FAST profile.")
         jogs=((self.auto_jog_left_btn,self.auto_jog_input.value()),(self.auto_jog_right_btn,-self.auto_jog_input.value()),
               (self.qjog_left_01,0.1),(self.qjog_right_01,-0.1),(self.qjog_left_025,0.25),(self.qjog_right_025,-0.25),
               (self.qjog_left_1,1),(self.qjog_right_1,-1),(self.qjog_left_2,2),(self.qjog_right_2,-2))
         for button,delta in jogs:
-            button.setEnabled(p.allowed(f"XJOG {1 if delta>0 else -1} {int(abs(delta)*127.12+0.5)}"))
+            button.setEnabled(self.direct_controls.can_motion('jog'))
             button.setToolTip("Toward Home" if delta>0 else "Toward saw")
         self.auto_jog_input.setEnabled(not busy)
         self.auto_jog_left_btn.setText("Home")
         self.auto_jog_right_btn.setText("Saw")
         for radio,_,_ in self.board_size_radios: radio.setEnabled(not busy)
-        self.keypad.setEnabled(known and not busy)
+        self.keypad.setEnabled(link)
+        self.keypad.enter_button.setEnabled(self.direct_controls.can_motion())
+        self.keypad.enter_button.setToolTip('Move to this position.' if self.direct_controls.can_motion() else
+                                          'Home first.' if not known else 'Return saw UP and release clamp/trigger before moving.')
 
         edit = link and not p.armed and not busy
         if not link:

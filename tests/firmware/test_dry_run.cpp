@@ -17,7 +17,7 @@ void descendDry() {
   fakePins[22]=HIGH; advanceDry(30); CHECK(!dry.failed());
 }
 int main() {
-  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V4,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1")!=std::string::npos);
+  restart(); CHECK(Serial.outgoing.find("DRY_RUN:UNLOADED_V5,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1")!=std::string::npos);
   command("DARM 23"); CHECK(!dry.armed);
   command("DSET 0 10"); command("DCOMMIT 23"); CHECK(!dry.configId);
   command("DSET 42949672960 0"); CHECK(!dry.configId);
@@ -139,5 +139,13 @@ int main() {
     CHECK(fakePins[32]==HIGH && fakePins[19]==LOW && fakePins[33]==LOW);
     command("KEEPALIVE"); command("DCUT"); CHECK(!dry.cycleRunning && fakePins[19]==LOW);
   }
+  // Individual unplugged Manual travel does not energize an unrelated clamp.
+  restart();configDry();command("DMANUAL 23");CHECK(dry.manualMode && !dry.clamp);
+  command("DDOWN");advanceDry(20);CHECK(dry.saw && !dry.clamp && !dry.cycleRunning);
+  fakePins[22]=HIGH;fakePins[16]=LOW;advanceDry(30);
+  CHECK(dry.phase==unloaded::DryRun::Down && !dry.clamp);
+  command("DUP");fakePins[16]=HIGH;fakePins[22]=LOW;advanceDry(60);
+  CHECK(dry.phase==unloaded::DryRun::Ready && !dry.saw && !dry.clamp);
+  command("DOFF");CHECK(!dry.armed);
   printf("Unloaded dry-run sketch: %u checks passed\n",checks);
 }

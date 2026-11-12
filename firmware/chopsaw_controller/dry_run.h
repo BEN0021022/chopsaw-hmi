@@ -50,7 +50,8 @@ class DryRun {
     enter(on ? ClampDelay : ReleaseDelay, now); ++requestId; return true;
   }
   bool stroke(bool cycle, uint32_t now) {
-    if (!armed || phase != Clamped || !clamp || !up.stable || rawDown || trigger || cycleRunning) return false;
+    const bool supported = (phase==Clamped && clamp) || (manualMode && phase==Ready && !clamp);
+    if (!armed || !supported || !up.stable || rawDown || trigger || cycleRunning) return false;
     automaticReturn = cycle; enter(DownDelay, now); ++requestId; return true;
   }
   bool combinedCycle(uint32_t now) {
@@ -60,7 +61,7 @@ class DryRun {
     enter(phase==Ready ? ClampDelay : TriggerDelay,now); ++requestId; return true;
   }
   bool returnUp(uint32_t now) {
-    if (!armed || !clamp || !(phase == DownDelay || phase == Descend || phase == Down ||
+    if (!armed || (!clamp && !manualMode) || !(phase == DownDelay || phase == Descend || phase == Down ||
                               phase == Dwell || phase == UpDelay)) return false;
     saw = false; enter(Returning, now); ++requestId; return true;
   }
@@ -146,7 +147,7 @@ class DryRun {
         break;
       case UpSettle:
         if (!u || n) trip("DRY_POSITION_LOST",now);
-        else if (elapsed >= timing[10]) { automaticReturn=false; enter(cycleRunning ? TriggerReleaseDelay : Clamped,now); }
+        else if (elapsed >= timing[10]) { automaticReturn=false; enter(cycleRunning ? TriggerReleaseDelay : clamp ? Clamped : Ready,now); }
         break;
       case StopReturn:
         if (up.stable && !n) enter(clamp ? Stopped : Off,now);

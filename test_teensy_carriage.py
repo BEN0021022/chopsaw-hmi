@@ -218,7 +218,7 @@ def run():
                    HOME_STATE="DONE", MOVE_ID=index+10)
         assert not p.move_to(160.5) and not p.move_to(float("nan")) and not p.move_to(-1)
         assert not w.send_command("XMOVE 160500") and not w.send_command("XMOVE 1 EXTRA")
-        assert w.set_length(135)
+        assert p.move_to(135)  # Low-level protocol; direct-gesture path has its own actual-sketch test.
         assert wire.writes[-1] == "XMOVE 135000"
         packet(p, ARMED=1, CONFIGURED=1, POS_KNOWN=1, HOME_OFFSET=-200, HOME_STATE="DONE",
                MOVE_KIND="ABSOLUTE", REMAINING=10000, MOVE_ID=30, TARGET_OFFSET=-12394)
@@ -317,47 +317,15 @@ def run():
         ready(p)
         w.tabs.setCurrentWidget(w.legacy_tab)
         assert w.position_label.text() == 'UNKNOWN'
-        assert w.manual_home_button.isEnabled() and not w.keypad.isEnabled()
+        assert w.keypad.display.isReadOnly() is False
         assert w.manual_teensy_setup.isHidden() and w.manual_teensy_actions.isHidden() and w.enable_chk.isHidden()
-        w.manual_home_button.click()
-        assert wire.writes[-1] == 'XCONFIG 0 1'
-        packet(p,CONFIGURED=1,READY=1,HOME_RAW=0)
-        p.tick()
-        assert wire.writes[-1] == 'XHOME 20594' and w.tabs.currentWidget() == w.legacy_tab
-        packet(p,ARMED=1,CONFIGURED=1,HOME_RAW=0,HOME_STATE='RELEASE',MOVE_ID=1,JOG_READY=0)
-        assert not w.manual_home_button.isEnabled() and not w.manual_home_search.isEnabled()
-        w.manual_stop.click(); assert wire.writes[-1] == 'OFF'
-        packet(p,CONFIGURED=1,HOME_STATE='CANCELLED')
+        # Home and keypad now prepare their controller mode automatically.
+        # That acknowledged multi-step flow is exercised in test_direct_controls.
         p.home_search.setValue(2)
         assert w.manual_home_search.value() == 2
 
-        packet(p,CONFIGURED=1,READY=1,POS_KNOWN=1,HOME_OFFSET=-14,HOME_STATE='DONE')
-        assert not w.enable_chk.isChecked() and w.enable_chk.isEnabled()
-        w.enable_chk.click(); assert wire.writes[-1] == 'XARM 1'
-        assert not w.enable_chk.isChecked(), 'Enable display must wait for controller readback'
-        packet(p,ARMED=1,CONFIGURED=1,ENA=0,POS_KNOWN=1,HOME_OFFSET=-14,HOME_STATE='DONE')
-        assert w.enable_chk.isChecked()
-        # Keep the existing keypad, including the guarded absolute-move route.
-        for digit in '159': w.keypad.button_clicked(digit)
-        w.keypad.enter_value()
-        assert wire.writes[-1] == 'XMOVE 159000'
-        assert not w.keypad.isEnabled(), 'Keypad cannot queue over a pending move'
-        packet(p,ARMED=1,CONFIGURED=1,ENA=0,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE',MOVE_ID=2)
-        w.enable_chk.click(); assert wire.writes[-1] == 'XDISABLE'
-        assert w.enable_chk.isChecked(), 'Release also waits for controller readback'
-        packet(p,CONFIGURED=0,ENA=1,POS_KNOWN=0)
-        assert not w.enable_chk.isChecked() and not w.enable_chk.isEnabled()
-        before=len(wire.writes)
-        w.toggle_motor_power(True)
-        w.keypad.value_entered.emit(158)
-        assert len(wire.writes)==before, 'Handlers cannot bypass driver setup or homing'
-        packet(p,CONFIGURED=1,ENA=0,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE')
-        assert w.enable_chk.isChecked(), 'Holding may remain enabled while disarmed'
-        p.received['X']-=3; p.refresh()
-        assert not w.enable_chk.isChecked() and not w.enable_chk.isEnabled()
-        packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE')
-        w.manual_stop.click()
-        packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-46,HOME_STATE='DONE')
+        # Old hidden enable-checkbox gestures are retired. Direct mode handoff,
+        # Home, Enter, Stop and actuator exclusion use the actual-sketch harness.
 
         # Settings use controller RAM, preserve unsent drafts and wait for ACK.
         ready(p); p.consent.setChecked(True)
@@ -423,25 +391,15 @@ def run():
         # Imports preserve the list's own tab route; switching to AUTO never arms.
         w.load_cut_list_lines(['18 A','24 B','30 C'])
         assert len(w.cut_list)==3 and len(wire.writes)==before
-        w.auto_isolation.setChecked(True)
-        assert p.consent.isChecked() and w.manual_isolation.isChecked()
-        packet(p,CONFIGURED=1,READY=1)
-        w.auto_arm.click(); assert wire.writes[-1]=='XARM 1'
-        packet(p,ARMED=1,CONFIGURED=1)
-        for button,command in ((w.qjog_left_01,'XJOG 1 13'),(w.qjog_right_025,'XJOG -1 32'),
-                               (w.qjog_left_1,'XJOG 1 127'),(w.qjog_right_2,'XJOG -1 254')):
-            button.click(); assert wire.writes[-1]==command
-            assert not w.qjog_left_01.isEnabled()
-            packet(p,ARMED=1,CONFIGURED=1,MOVE_ID=int(p.x['MOVE_ID'])+1)
-        assert not w.auto_jog(3) and not w.load_position(), 'Load requires known Home'
-        packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE')
-        for index,target in ((0,160389),(1,135000),(2,111000),(3,87000),(4,63000)):
+        # Only partial carriage telemetry is provided here: the new action
+        # broker requires pneumatic feedback too and must not infer readiness.
+        assert w.auto_teensy_setup.isHidden()
+        assert not w.qjog_left_01.isEnabled() and not w.load_button.isEnabled()
+        assert not w.auto_jog(3) and not w.load_position()
+        packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE')
+        for index,target in ((0,160.389),(1,135),(2,111),(3,87),(4,63)):
             w.board_size_radios[index][0].setChecked(True)
-            w.load_button.click()
-            assert wire.writes[-1]==f'XLOAD {target}'
-            assert not w.load_button.isEnabled(), 'No load replacement while awaiting ACK'
-            packet(p,ARMED=1,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE',
-                   MOVE_ID=int(p.x['MOVE_ID'])+1,PROFILE_ID=3,RATE_PPS=2500,ACCEL_PPS2=1500)
+            assert abs(w.native_load_target()-target)<.001
         w.current_cut_index=1
         w.cancel_cycle_button.click(); assert wire.writes[-1]=='OFF' and w.current_cut_index==1
         packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE')

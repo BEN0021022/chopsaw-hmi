@@ -20,6 +20,22 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Direct operation ? 0.21 (supersedes earlier UI preparation steps)
+
+- [x] One-gesture Home, carriage Enter/jog/load, individual actuators and Start Auto.
+- [x] Remove normal Manual/Auto consent, arm, enable and registration clicks.
+- [x] Restore physical-keyboard and touch-keypad target entry.
+- [x] Reuse valid saved machine dimensions without verification checkboxes.
+- [x] Remove Full Auto workbench checklist page and hide migration checklist tab.
+- [x] Keep controller acknowledgments, feedback, real interlocks, Stop, soft limits,
+      collision/holding policies and held-trigger release.
+- [x] Actual-sketch/Qt tests and Teensy 4.1 compile.
+- [ ] Flash/read back matching 0.21 and restore captured motion profiles.
+- [ ] Operator physical acceptance of simplified Manual/Auto dry-run workflow.
+
+See [direct controls](docs/DIRECT_CONTROLS_021.md). Older commissioning steps below
+are historical; their removed UI confirmations are not required in this build.
+
 ## Multi-board / forward-trim correction - 2026-11-11
 
 - [x] Replace whole-queue capacity rejection with one next-cut fit assessment.

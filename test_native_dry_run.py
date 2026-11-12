@@ -225,7 +225,7 @@ def run(exe):
             until(lambda:d.sequence and d.sequence['stage']=='OPERATOR_REQUIRED')
             assert d.data['ARMED']=='0' and d.data['CLAMP']=='0' and d.data['TRIGGER']=='0'
             assert not w.send_command('DCUT') and not w.send_command('DCLAMP 1')
-            panel.refresh(); assert panel.cycle_button.isEnabled() and 'review' in panel.cycle_button.text()
+            panel.refresh(); assert not panel.cycle_button.isEnabled() and 'review' in panel.cycle_button.text()
             w.tabs.setCurrentWidget(w.legacy_tab); app.processEvents()
             w.grab().save('tmp/ui-dry-run/operator-required.png')
             panel.cycle_button.click(); flush(); tick()

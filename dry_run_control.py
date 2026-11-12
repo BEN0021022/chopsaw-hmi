@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QCheckBox, QPushButton
 from sensor_bench.protocol import parse_line
 from simulator import VirtualController
 from supervision_ui import SupervisionAdapter
-from automation_supervision import Outcome, plan_board_feed
+from automation_supervision import Outcome, plan_board_feed, assess_manual_cycle
 from cycle_diagnostics import CycleDiagnostics
 
 TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.release_delay',
@@ -56,7 +56,7 @@ class NativeDryRun(QObject):
         self.auto_start_at = 0
         self.trigger_held = False
         self.last_trigger_hold = 0
-        self.message = 'Connect matching 0.20.0 saw-unplugged firmware.'
+        self.message = 'Connect matching 0.21.0 firmware.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
 
     def controls(self):
@@ -82,7 +82,7 @@ class NativeDryRun(QObject):
         note.setWordWrap(True); layout.addWidget(note)
         self.enable_manual_button=QPushButton('Enable unpowered manual controls')
         self.enable_manual_button.clicked.connect(self.enable_manual)
-        layout.addWidget(self.enable_manual_button)
+        self.enable_manual_button.setParent(self.widget); self.enable_manual_button.hide()
         self.label = QLabel(self.message); self.label.setWordWrap(True)
         self.label.setStyleSheet('color:#fbbf24;font-size:13px;')
         self.label.setParent(self.widget); self.label.hide()  # Manual status above already displays this message.
@@ -94,6 +94,7 @@ class NativeDryRun(QObject):
     def sync(self):
         session = (self.owner.ser, self.native())
         if session != self.session:
+            if hasattr(self.owner,'direct_controls'):self.owner.direct_controls.cancel()
             self.owner.cut_history.new_session()
             self.diagnostics.note('SESSION_CHANGED', 'Connection/session changed; no previous phase or material reference is reused.', time.monotonic())
             self.diagnostics.observe({'fresh':False,'message':'Connection/session changed'}, {}, time.monotonic())
@@ -123,7 +124,7 @@ class NativeDryRun(QObject):
                 and self.loaded == tuple(self.owner.cylinder_timing.snapshot()[key] for key in TIMING_KEYS))
 
     def motion_locked(self):
-        return self.native() and (bool(self.manual_start) or bool(self.auto_start) or self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
+        return self.native() and (bool(getattr(getattr(self.owner,'direct_controls',None),'intent',None)) or bool(self.manual_start) or bool(self.auto_start) or self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
                                  self.data.get('ARMED')=='1' or self.data.get('STATE','OFF') not in ('OFF','FAULT'))
 
     def consent_changed(self, checked):
@@ -167,12 +168,14 @@ class NativeDryRun(QObject):
 
     def begin_trigger_hold(self):
         self.trigger_held=True
-        if self.request('press'): return True
+        if self.owner.direct_controls.request('actuator','press'): return True
         self.trigger_held=False; return False
 
     def end_trigger_hold(self):
         was_held=self.trigger_held
         self.trigger_held=False
+        if self.owner.direct_controls.preparing_trigger():
+            self.owner.direct_controls.cancel();self.stop();self.owner.direct_controls.message='Trigger released.';return
         if was_held or self.data.get('TRIGGER')=='1': self.request('unpress')
 
     def allowed(self, command):
@@ -206,14 +209,15 @@ class NativeDryRun(QObject):
             return self.can_hold_trigger() and self.operator_holding_trigger()
         if command=='DCUT':
             return (self.settings_match() and state in ('READY','CLAMPED') and self.data.get('CYCLE')=='0'
-                    and self.data.get('TRIGGER')=='0' and self.supervision.review().proceeds)
+                    and self.data.get('TRIGGER')=='0' and (self.supervision.review().proceeds if self.sequence else
+                                                         assess_manual_cycle(self.supervision.context()).proceeds))
         if self.data.get('CYCLE')=='1': return command=='DUP'
         if self.data.get('TRIGGER')!='0': return False
         if command=='DCLAMP 0': return state=='CLAMPED'
         if command=='DUP': return state in {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY'}
         if not self.settings_match(): return False
         if command=='DCLAMP 1': return state=='READY' and self.supervision.individual_clamp_allowed()
-        return command in ('DCYCLE','DDOWN') and state=='CLAMPED' and self.supervision.individual_clamp_allowed()
+        return command in ('DCYCLE','DDOWN') and (state=='CLAMPED' or (state=='READY' and self.data.get('MANUAL')=='1')) and self.supervision.individual_clamp_allowed()
 
     def configure(self):
         self.sync()
@@ -276,14 +280,14 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.20.0'
-                        and f.get('DRY_RUN')=='UNLOADED_V4' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW')=='0.21.0'
+                        and f.get('DRY_RUN')=='UNLOADED_V5' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
                         and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
         elif message.kind=='BENCH_DRY':
             try:
-                valid=(f.get('PROTO')=='4' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
+                valid=(f.get('PROTO')=='5' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
                        and f.get('MANUAL') in ('0','1')
                        and f.get('CYCLE') in ('0','1') and f.get('RELEASE_READY') in ('0','1')
                        and f.get('STATE') in STATES and f.get('ARMED') in ('0','1')
@@ -296,8 +300,10 @@ class NativeDryRun(QObject):
                 lowered=phase in {'DESCEND','DOWN','DWELL','UP_DELAY'}
                 recovering=phase in ('STOP_RETURN','STOPPED','FAULT')
                 cycle_trigger=phase in {'SPINUP','DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','TRIGGER_RELEASE_DELAY'}
+                manual_travel=(f['MANUAL']=='1' and f['CYCLE']=='0' and phase in
+                               {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE'})
                 valid=(f['ARMED']==('0' if phase in {'OFF','STOP_RETURN','STOPPED','FAULT'} else '1')
-                       and (recovering or f['CLAMP']==str(int(clamped))) and f['SAW']==str(int(lowered))
+                       and (recovering or manual_travel or f['CLAMP']==str(int(clamped))) and f['SAW']==str(int(lowered))
                        and (f['FAULT']!='NONE')==(phase=='FAULT')
                        and f['LOCK']==('0' if f['MANUAL']=='1' or f['CYCLE']=='1' else '1')
                        and (f['MANUAL']=='0' or f['ARMED']=='1')
@@ -354,9 +360,13 @@ class NativeDryRun(QObject):
         self.diagnostics.observe(snapshot, timings, time.monotonic())
 
     def stop(self, reason='Stopped; trigger released, engaged clamp retained.'):
+        if hasattr(self.owner,'direct_controls'):self.owner.direct_controls.cancel()
         if self.native() and self.owner.ser and self.owner.ser.is_open:
             self.awaiting_stop=True
             self.owner.send_command('OFF')
+        p=self.owner.carriage_tab
+        if p.armed or p.homing or p.x.get('REMAINING','0')!='0':p.stopping=True
+        p.pending=None;p.profile_pending=None;p.full_home_pending=None
         self.sequence=None; self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message=reason
         self.supervision.coordinator.invalidate('Stopped; reconcile material before another automatic cycle.')
         if reason!='Stopped; trigger released, engaged clamp retained.': self.local_fault=reason
@@ -395,10 +405,12 @@ class NativeDryRun(QObject):
             if not self.operator_holding_trigger(): self.end_trigger_hold()
             elif self.data.get('TRIGGER')=='1' and now-self.last_trigger_hold>=.1:
                 self.owner.send_command('DTHOLD'); self.last_trigger_hold=now
-            elif not self.pending and self.data.get('TRIGGER')=='0':
+            elif not self.pending and self.data.get('TRIGGER')=='0' and not self.owner.direct_controls.preparing_trigger():
                 # An expired/lost hold never presses itself again.
                 self.trigger_held=False
         if self.sequence:
+            if not self.batch_unchanged() or self.sequence.get('reference_signature')!=self.supervision.current_reference_signature():
+                self.stop('Cut list or reference settings changed; batch cancelled.');return
             if not self.supervision.coordinator.geometry.verified:
                 self.stop('Supervision geometry/reference changed during sequence; no automatic restart')
                 return
@@ -417,7 +429,8 @@ class NativeDryRun(QObject):
             self.owner.auto_dry_run.setEnabled(self.can_start())
             self.owner.auto_dry_configure.setEnabled(self.configure_button.isEnabled() and not self.sequence)
             self.owner.auto_dry_stop.setEnabled(self.native() and self.compatible)
-            if self.native(): self.owner.start_cycle_button.setEnabled(self.can_begin_auto())
+            if self.native(): self.owner.start_cycle_button.setEnabled(self.can_begin_auto() or self.owner.direct_controls.can_motion('auto'))
+        self.owner.direct_controls.tick()
         self.capture_diagnostics()
         self.changed.emit()
 
@@ -466,6 +479,7 @@ class NativeDryRun(QObject):
                        'index':-1,'next_index':previous['next_index'] if previous else 0,
                        'board':previous['board']+1 if previous else 1,
                        'list_snapshot':previous['list_snapshot'] if previous else tuple(self.owner.cut_list),
+                       'reference_signature':self.supervision.current_reference_signature(),
                        'move_id':int(p.x['MOVE_ID']),
                        'edge_command':f'XEDGE {int(math.floor(p.edge_search.value()*127.12+.5))} '
                                       f'{int(math.floor(self.owner.board_sensor_location_input.value()*1000+.5))} '
