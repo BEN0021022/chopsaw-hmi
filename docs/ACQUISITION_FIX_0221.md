@@ -31,3 +31,8 @@ therefore did not catch the short search cap.
 Physical motion/cycle acceptance remains with the operator. Keep the saw mains
 unplugged for this commissioning scope. Local patch/readback/source archive:
 `tmp/commissioning/0.22.1`.
+
+App patch reopened on Manual/COM4, 2026-11-11. The exact latched search fault
+was reset only with RESET_READY and all outputs OFF. No arming, Home, carriage
+or valve command was sent. Firmware tree is unchanged from deployed 0.22.0;
+source checkpoint `0dfa16328f12f4fa927f5be2b9bfa262c6bde77e`. Operator Homes and retries Auto.

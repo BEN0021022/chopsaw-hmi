@@ -28,7 +28,8 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Show controller cause: not found, timeout, driver, guard or stale feedback.
 - [x] Regression: real detection after eight inches and complete bounded no-detect
       stop; different start positions; no subsequent truing/valve command on failure.
-- [ ] Reopen corrected app for operator retest (firmware remains 0.22.0).
+- [x] Reopen corrected app on Manual/COM4; clear only confirmed search fault,
+      all outputs OFF, no pending action; Home required. Firmware remains 0.22.0.
 - [ ] Physical acquisition/truing acceptance with real stock/detector.
 
 See [acquisition fix](docs/ACQUISITION_FIX_0221.md).
