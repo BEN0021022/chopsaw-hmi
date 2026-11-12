@@ -1,7 +1,7 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-11. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current deployed source/build: custom **0.20.0 / CARRIAGE_V14**, flashed/read back
+Current deployed source/build: custom **0.21.0 / CARRIAGE_V15**, flashed/read back
 on COM4, 2026-11-11. Integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
 0.18.0 was flashed/read back on 2026-11-10; individual mechanisms passed.
@@ -30,7 +30,9 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Keep controller acknowledgments, feedback, real interlocks, Stop, soft limits,
       collision/holding policies and held-trigger release.
 - [x] Actual-sketch/Qt tests and Teensy 4.1 compile.
-- [ ] Flash/read back matching 0.21 and restore captured motion profiles.
+- [x] Flash/read back matching 0.21 on COM4 and restore captured motion profiles.
+      Startup idle, outputs OFF, Home unknown. Matching app reopened on Manual;
+      no Home, arm, motion or valve command sent to physical hardware.
 - [ ] Operator physical acceptance of simplified Manual/Auto dry-run workflow.
 
 See [direct controls](docs/DIRECT_CONTROLS_021.md). Older commissioning steps below

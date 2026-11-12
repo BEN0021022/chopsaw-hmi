@@ -57,3 +57,8 @@ not establish powered production readiness.
 Local deployment artifacts are saved under `tmp/commissioning/0.21.0` with
 source, HEX hash, readback and preserved RAM motion profiles. The 0.20 archive
 is retained for rollback.
+
+Deployment confirmed 2026-11-11 on COM4 after operator isolation confirmation.
+Source checkpoint `106b854160d703bfea64928d68d64c2166217999`. HEX SHA256
+`29274ec1ec1af609f2108460be20959a06be2429f97f26abae5ad3ab3f5c1d17`. Startup and captured-profile restoration
+verified; matching app reopened on Manual. Physical Home/cycles left to the operator.
