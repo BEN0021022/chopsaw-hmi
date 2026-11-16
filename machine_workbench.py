@@ -232,6 +232,8 @@ class MachineWorkbench(QWidget):
                 data = self.owner.dry_run.data
                 status += '   |   Commanded: ' + ', '.join(f'{name.lower()} {"ON" if data.get(name)=="1" else "OFF"}'
                             for name in ('CLAMP','SAW','TRIGGER'))
+                status += '   |   second clamp '+('disabled' if data.get('SECOND_ENABLED')!='1' else
+                                                  'ON commanded' if data.get('SECOND_CLAMP')=='1' else 'OFF commanded')
         else:
             status = 'No fresh machine readback — guard, saw position and output states UNKNOWN.'
         self.machine_state.setText(status)

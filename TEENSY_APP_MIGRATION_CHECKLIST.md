@@ -1,6 +1,6 @@
 # Teensy app and firmware migration checklist
 
-Updated 2026-11-11. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
+Updated 2026-11-16. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Current deployed source/build: custom **0.22.0 / CARRIAGE_V16**, flashed/read back
 on COM4, 2026-11-11. Integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
@@ -19,6 +19,22 @@ the currently flashed firmware is custom, not stock grblHAL.
 not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
+
+## Second / outfeed clamp - prepared 0.24, disabled
+
+- [x] Reserve Mist TTL / D18 for a separate second-clamp MOSFET signal.
+- [x] Controller-side default-disabled gate, independent timing and output state.
+- [x] Manual Clamp/Release row, disabled until enabled on matching firmware.
+- [x] Settings enable and measured outfeed footprint; independent timing fields.
+- [x] Auto/Semi-Auto main/outfeed/both selection and separate commanded-state pill.
+- [x] Retain either clamp on Stop/fault, guarded release, block carriage while held.
+- [x] Host sketch/Qt tests and Teensy compilation; legacy main-only compatibility.
+- [ ] Connect/wire the cylinder and verify ON clamps / OFF releases.
+- [ ] Flash/read back 0.24 with actuator power isolated.
+- [ ] Measure footprint, enable/save and physically accept unloaded operation.
+
+No physical device was contacted. Current deployed controller remains 0.22.0.
+See [second-clamp setup](docs/SECOND_CLAMP_024.md). The 0.24 build includes 0.23 homing.
 
 ## Homing parameters / wheel protection - prepared 0.23
 

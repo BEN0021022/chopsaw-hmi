@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.23.0";
+constexpr char FIRMWARE_VERSION[] = "0.24.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -41,6 +41,7 @@ constexpr uint8_t X_ENABLE_PIN = 40;  // Axis Y En; suspect Axis X En/D10 unused
 // not the open-collector screw terminals. Test with valve power disconnected.
 constexpr uint8_t OUTPUT_PINS[] = {33, 32, 19};  // AUX2, AUX1, Flood TTL signals
 constexpr uint8_t OUTPUT_COUNT = sizeof(OUTPUT_PINS) / sizeof(OUTPUT_PINS[0]);
+constexpr uint8_t SECOND_CLAMP_PIN = 18;  // JP10 Mist TTL, disabled until explicit configuration
 
 constexpr uint32_t INPUT_INTERVAL_MS = 200;
 constexpr uint32_t HEALTH_INTERVAL_MS = 1000;
@@ -128,9 +129,11 @@ bool xReady() {
 void applyOutputs() {
   for (uint8_t index = 0; index < OUTPUT_COUNT; ++index) {
     const bool on = index == 2 ? (dry.armed && (dry.manualMode || dry.cycleRunning) && dry.trigger && !dry.failed()) :
-        dry.active() ? (index == 0 ? dry.saw : dry.clamp) : outputStates[index];
+        dry.active() ? (index == 0 ? dry.saw : dry.mainClamp()) : outputStates[index];
     digitalWrite(OUTPUT_PINS[index], on ? HIGH : LOW);
   }
+  // Never exposed as an unguarded bench OUT. Retain commanded holding on stop.
+  digitalWrite(SECOND_CLAMP_PIN,dry.secondEnabled() && dry.secondClamp() ? HIGH:LOW);
 }
 
 void commandFault() {
@@ -247,7 +250,7 @@ void publishHello() {
   Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,"
     "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V17,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
     "PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,"
-    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1");
+    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1,SECOND_CLAMP:D18_MASK_V1");
 }
 
 void publishPinMap() {
@@ -256,7 +259,7 @@ void publishPinMap() {
       "BENCH_PINMAP,HOME:D20/LIMIT_X,BOARD_EDGE:D21/LIMIT_Y,"
       "FENCE_DOOR:D29/DOOR,CL57T_ALM:D14/HALT,SAW_UP:D22/LIMIT_Z,"
       "SAW_DOWN:D16/FD_HLD,FENCE_CLOSED:D34/ST2,OUTFEED:D35/ST3,"
-      "SAW_CYLINDER:D33/AUX2_TTL,MAIN_CLAMP:D32/AUX1_TTL,BLADE_TRIGGER:D19/FLOOD_TTL,"
+      "SAW_CYLINDER:D33/AUX2_TTL,MAIN_CLAMP:D32/AUX1_TTL,BLADE_TRIGGER:D19/FLOOD_TTL,SECOND_CLAMP:D18/MIST_TTL,"
       "X_STEP:D2/AXIS_X_STP,X_DIR:D3/AXIS_X_DIR,X_ENA:D40/AXIS_Y_EN");
 }
 
@@ -275,13 +278,18 @@ void publishOutputs() {
 }
 
 void publishDry() {
-  if (!telemetryRoom(256)) return;
+  if (!telemetryRoom(512)) return;
   Serial.print("BENCH_DRY,PROTO:6,CFG:"); Serial.print(dry.configId);
   Serial.print(",HASH:"); Serial.print(dry.timingHash);
   Serial.print(",REQ:"); Serial.print(dry.requestId);
   Serial.print(",ARMED:"); Serial.print(dry.armed ? 1 : 0);
   Serial.print(",STATE:"); Serial.print(dry.name());
   Serial.print(",CLAMP:"); Serial.print(dry.clamp ? 1 : 0);
+  Serial.print(",MAIN_CLAMP:"); Serial.print(dry.mainClamp() ? 1:0);
+  Serial.print(",SECOND_CLAMP:"); Serial.print(dry.secondClamp() ? 1:0);
+  Serial.print(",SECOND_ENABLED:"); Serial.print(dry.secondEnabled() ? 1:0);
+  Serial.print(",CLAMP_MASK:"); Serial.print(dry.heldMask);
+  Serial.print(",PLAN_MASK:"); Serial.print(dry.selectedMask);
   Serial.print(",SAW:"); Serial.print(dry.saw ? 1 : 0);
   Serial.print(",TRIGGER:"); Serial.print(digitalRead(OUTPUT_PINS[2]) == HIGH ? 1 : 0);
   Serial.print(",LOCK:"); Serial.print(dry.manualMode || dry.cycleRunning ? 0 : 1);
@@ -495,10 +503,11 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
       startsWith(command,"DARM ") || startsWith(command,"DCLAMP ") || strcmp(command,"DCYCLE")==0 ||
       strcmp(command,"DDOWN")==0 || strcmp(command,"DUP")==0 || strcmp(command,"DOFF")==0 ||
       startsWith(command,"DMANUAL ") || strcmp(command,"DTHOLD")==0 || strcmp(command,"DTPRESS")==0 || strcmp(command,"DTRELEASE")==0 ||
-      strcmp(command,"DCUT")==0 || startsWith(command,"DOPCUT ") || strcmp(command,"DRELEASE")==0;
+      strcmp(command,"DCUT")==0 || startsWith(command,"DOPCUT ") || strcmp(command,"DRELEASE")==0 ||
+      startsWith(command,"DCLAMP2 ") || startsWith(command,"DCUTM ");
   if (!dryCommand) return false;
   bool accepted=false;
-  uint32_t args[2]={0,0};
+  uint32_t args[3]={0,0,0};
   if (strcmp(command,"DOFF")==0) { stopTests(); accepted=true; }
   else if (strcmp(command,"DTRELEASE")==0) { if (dry.cycleRunning) dry.stop(millis()); else dry.releaseTrigger(); accepted=true; }
   else if (strcmp(command,"DRELEASE")==0) accepted=dry.releaseStopped(millis());
@@ -508,6 +517,7 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
   else if (startsWith(command,"DARM ")) accepted=unsignedArgs(command,"DARM ",1,args) && dry.arm(args[0],millis());
   else if (startsWith(command,"DMANUAL ")) accepted=unsignedArgs(command,"DMANUAL ",1,args) && dry.arm(args[0],millis(),true);
   else if (startsWith(command,"DCLAMP ")) accepted=unsignedArgs(command,"DCLAMP ",1,args) && args[0]<=1 && dry.commandClamp(args[0]==1,millis());
+  else if (startsWith(command,"DCLAMP2 ")) accepted=unsignedArgs(command,"DCLAMP2 ",1,args) && args[0]<=1 && dry.commandClamp(args[0]==1,millis(),2);
   else if (strcmp(command,"DCYCLE")==0 || strcmp(command,"DDOWN")==0) accepted=dry.stroke(strcmp(command,"DCYCLE")==0,millis());
   else if (strcmp(command,"DUP")==0) accepted=dry.returnUp(millis());
   else if (strcmp(command,"DTHOLD")==0) {
@@ -516,6 +526,7 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
   }
   else if (strcmp(command,"DTPRESS")==0) accepted=dry.pressTrigger(millis());
   else if (strcmp(command,"DCUT")==0) accepted=dry.combinedCycle(millis());
+  else if (startsWith(command,"DCUTM ")) accepted=unsignedArgs(command,"DCUTM ",3,args) && args[2]>=1 && args[2]<=3 && dry.maskedCycle(args[0],args[1],static_cast<uint8_t>(args[2]),millis());
   else if (startsWith(command,"DOPCUT ")) accepted=unsignedArgs(command,"DOPCUT ",2,args) && dry.operatorCut(args[0],args[1],millis());
   if (!accepted) Serial.println("BENCH_ERROR,CODE:DRY_REQUEST_REJECTED");
   applyOutputs(); publishDry(); publishSafety(); publishX();
@@ -965,6 +976,7 @@ void setup() {
     digitalWrite(OUTPUT_PINS[index], LOW);
     pinMode(OUTPUT_PINS[index], OUTPUT);
   }
+  digitalWrite(SECOND_CLAMP_PIN,LOW); pinMode(SECOND_CLAMP_PIN,OUTPUT);
   pinMode(HOME_PIN, INPUT_PULLUP);
   pinMode(BOARD_EDGE_PIN, INPUT_PULLUP);
   pinMode(FENCE_DOOR_PIN, INPUT_PULLUP);

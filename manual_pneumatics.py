@@ -30,11 +30,14 @@ class ManualPneumatics(QGroupBox):
         self.buttons = {}
         rows = (
             ('clamp', 'Main clamp', ('engage','Clamp'), ('release','Release')),
+            ('second', 'Second / outfeed clamp', ('second_engage','Clamp'), ('second_release','Release')),
             ('travel', 'Saw travel', ('lower','Lower'), ('up','Return UP')),
             ('trigger', 'Blade trigger', ('press','Press trigger'), ('unpress','Release trigger')),
         )
         for row, (key, title, first, second) in enumerate(rows, 2):
-            layout.addWidget(QLabel(title), row, 0)
+            title_label=QLabel(title)
+            if key=='second':title_label.setToolTip('JP10 Mist TTL signal / Teensy D18')
+            layout.addWidget(title_label, row, 0)
             self.labels[key] = QLabel('UNKNOWN')
             self.labels[key].setStyleSheet('font-size:13px; color:#94a3b8;')
             layout.addWidget(self.labels[key], row, 1)
@@ -55,25 +58,25 @@ class ManualPneumatics(QGroupBox):
         self.cycle_button.setStyleSheet('QPushButton { background:#166534; color:#e2e8f0; font-size:17px; }' + disabled)
         self.cycle_button.setEnabled(False)
         self.cycle_button.clicked.connect(lambda: self.request('cycle'))
-        layout.addWidget(self.cycle_button, 5, 0, 1, 3)
+        layout.addWidget(self.cycle_button, 6, 0, 1, 3)
         self.stop_button = QPushButton('STOP')
         self.stop_button.setMinimumHeight(48)
         self.stop_button.setStyleSheet('QPushButton { background:#b91c1c; color:white; font-weight:bold; }' + disabled)
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop)
-        layout.addWidget(self.stop_button, 5, 3)
+        layout.addWidget(self.stop_button, 6, 3)
         self.note = QLabel('Normal saw cycle keeps the main clamp engaged. Release it explicitly after the cut.')
         self.note.setWordWrap(True); self.note.setStyleSheet('color:#94a3b8; font-size:13px;')
-        layout.addWidget(self.note, 6, 0, 1, 4)
-        self.recover_release = QPushButton('Release retained clamp')
+        layout.addWidget(self.note, 7, 0, 1, 4)
+        self.recover_release = QPushButton('Release retained clamps')
         self.recover_release.clicked.connect(lambda: self.owner.dry_run.request('recover_release'))
         self.recover_ack = QPushButton('Acknowledge fault')
         self.recover_ack.clicked.connect(lambda: self.owner.dry_run.acknowledge())
-        layout.addWidget(self.recover_release,7,0,1,2); layout.addWidget(self.recover_ack,7,2,1,2)
+        layout.addWidget(self.recover_release,8,0,1,2); layout.addWidget(self.recover_ack,8,2,1,2)
         self.register_stock=QPushButton('Register stock across blade plane / against pusher')
         self.register_stock.setToolTip('Operator registers material extent, not verified grip. No actuator command is sent.')
         self.register_stock.clicked.connect(lambda: self.owner.dry_run.supervision.register_stock())
-        layout.addWidget(self.register_stock,8,0,1,4)
+        layout.addWidget(self.register_stock,9,0,1,4)
         self.timer = QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self.refresh)
@@ -229,17 +232,21 @@ class ManualPneumatics(QGroupBox):
                 self.cycle_button.setStyleSheet('QPushButton { background:#166534; color:#e2e8f0; font-size:17px; }')
             self.register_stock.hide()
             self.register_stock.setEnabled(native.safe_link(False) and not native.sequence and native.data.get('CYCLE')=='0')
-            self.stop_button.setText('STOP / retain clamp')
+            self.stop_button.setText('STOP / retain clamps')
             self.stop_button.setEnabled(native.native() and native.compatible)
             fresh=native.fresh()
-            self.labels['clamp'].setText(('ON commanded' if native.data.get('CLAMP')=='1' else 'OFF commanded') if fresh else 'UNKNOWN')
+            self.labels['clamp'].setText(('ON commanded' if native.data.get('MAIN_CLAMP',native.data.get('CLAMP'))=='1' else 'OFF commanded') if fresh else 'UNKNOWN')
+            self.labels['second'].setText('ON commanded' if fresh and native.second_supported and native.data.get('SECOND_CLAMP')=='1' else
+                                           'DISABLED' if not native.supervision.second_requested() else
+                                           'Needs firmware 0.24' if not native.second_supported else
+                                           ('ON commanded' if native.data.get('SECOND_CLAMP')=='1' else 'OFF commanded') if fresh else 'UNKNOWN')
             self.labels['travel'].setText(self.owner.carriage_tab.safety.get('SAW_POSITION','UNKNOWN') if fresh else 'UNKNOWN')
             self.buttons['press'].setText('HOLD to press trigger')
             self.labels['trigger'].setText(('PRESSED commanded' if native.data.get('TRIGGER')=='1' else
                                            'RELEASED') if fresh else 'UNKNOWN')
-            self.status.setText((self.owner.direct_controls.message or native.message) if native.compatible else 'Connect matching 0.22.0 firmware.')
-            self.note.setText('Manual Cycle: clamp → trigger → saw down/up → trigger release → clamp release. Saw unplugged for testing.')
-            self.recover_release.hide()
+            self.status.setText((self.owner.direct_controls.message or native.message) if native.compatible else 'Connect compatible Teensy firmware.')
+            self.note.setText('Manual Cycle uses the main clamp plus any explicitly engaged, enabled outfeed clamp. If main is inhibited, engage the outfeed clamp first. Trigger → saw down/up → trigger release → clamp release. Saw unplugged for testing.')
+            self.recover_release.setVisible(fresh and native.data.get('ARMED')=='0' and native.data.get('CLAMP')=='1')
             actual_fault=bool(native.local_fault or self.owner.carriage_tab.local_fault or native.data.get('FAULT','NONE')!='NONE'
                               or self.owner.carriage_tab.x.get('FAULT','NONE')!='NONE')
             self.recover_ack.setText('Reset fault'); self.recover_ack.setVisible(actual_fault)
@@ -248,6 +255,8 @@ class ManualPneumatics(QGroupBox):
             self.state_changed.emit()
             return
         self.cycle_button.setText('Manual Saw Cycle'); self.stop_button.setText('STOP')
+        for action in ('second_engage','second_release'):self.buttons[action].setEnabled(False)
+        self.labels['second'].setText('Native clamp — disabled in legacy simulator')
         self.recover_release.hide(); self.recover_ack.hide()
         self.register_stock.hide()
         self.buttons['press'].setText('Press trigger')

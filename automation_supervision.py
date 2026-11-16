@@ -105,6 +105,8 @@ class Context:
     carriage_idle: bool = False
     fault_free: bool = False
     config_revision: int = 0
+    holding_channels: tuple[int, ...] = (1,)
+    held_channels: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,16 +144,15 @@ def assess_main_clamp(ctx, clamp=None):
 def assess_cut_holding(ctx):
     if ctx.material.located and not ctx.material.contact:
         return Decision(Outcome.OPERATOR_REQUIRED,'PUSHER_CONTACT_UNKNOWN','Material reference lost when pusher withdrew; reacquire/register stock before another cut.')
-    checks=[assess_main_clamp(ctx,c) for c in ctx.geometry.clamps if c.role=='remaining_stock']
+    checks=[assess_main_clamp(ctx,c) for c in ctx.geometry.clamps if c.role in ('remaining_stock','cut_piece')]
     permitted=tuple(k for d in checks if d.proceeds for k in d.permitted_clamps)
     inhibited=tuple(k for d in checks for k in d.inhibited_clamps)
-    # The installed 0.19 executor has one main-clamp channel. Planned outfeed or
-    # external fixtures cannot silently become a raw clamp-free DCUT permission.
-    if 'main' in permitted and any(c.key=='main' and c.controller_channel==1 for c in ctx.geometry.clamps):
-        return Decision(Outcome.PROCEED,'HOLDING_PLAN_AVAILABLE','Main clamp is eligible; controller settling/interlocks still required.',('main',),inhibited)
+    executable=tuple(c.key for c in ctx.geometry.clamps if c.key in permitted and c.controller_channel in ctx.holding_channels)
+    if executable:
+        return Decision(Outcome.PROCEED,'HOLDING_PLAN_AVAILABLE','Eligible clamps: '+', '.join(executable)+'. Controller settling/interlocks still required.',executable,inhibited)
     if permitted:
         return Decision(Outcome.OPERATOR_REQUIRED,'HOLDING_EXECUTOR_UNAVAILABLE',
-                        'An alternative clamp is geometrically eligible, but the 0.19 executor cannot execute that holding plan. Main clamp must not be substituted.',inhibited_clamps=inhibited)
+                        'An alternative clamp is geometrically eligible, but its controller channel is unavailable. Main clamp must not be substituted.',inhibited_clamps=inhibited)
     block=next((d for d in checks if d.outcome==Outcome.BLOCK),None)
     if block: return block
     detail='; '.join(d.reason for d in checks) or 'No commissioned holding device covers remaining stock.'
@@ -212,10 +213,20 @@ def assess_manual_cycle(ctx):
     if ctx.geometry.pusher(ctx.position).near<=ctx.geometry.cut_keepout:
         return Decision(Outcome.BLOCK,'BLADE_KEEP_OUT','Pusher is inside the blade keepout.')
     main=next((c for c in ctx.geometry.clamps if c.key=='main' and c.installed and c.commissioned),None)
-    if main is None:return Decision(Outcome.BLOCK,'CLAMP_UNAVAILABLE','Main clamp is unavailable.')
-    if ctx.geometry.pusher(ctx.position).overlaps(main.footprint.expanded(ctx.geometry.margin)):
-        return Decision(Outcome.OPERATOR_REQUIRED,'PUSHER_OVERLAP','Pusher overlaps the main clamp; reposition before cycling.')
-    return Decision(Outcome.PROCEED,'MANUAL_CYCLE_AVAILABLE','Manual cycle uses operator-positioned stock and the main clamp; grip is not measured.',('main',))
+    chosen=[]
+    if main and not ctx.geometry.pusher(ctx.position).overlaps(main.footprint.expanded(ctx.geometry.margin)):
+        chosen.append('main')
+    # A Manual cycle may retain an explicitly engaged outfeed clamp. With no
+    # material extent measurement, do not automatically lower it onto assumed stock.
+    for clamp in ctx.geometry.clamps:
+        if (clamp.key=='outfeed' and clamp.installed and clamp.commissioned and
+                clamp.controller_channel in ctx.holding_channels and clamp.controller_channel in ctx.held_channels and
+                not ctx.geometry.pusher(ctx.position).overlaps(clamp.footprint.expanded(ctx.geometry.margin))):
+            chosen.append(clamp.key)
+    if chosen:
+        return Decision(Outcome.PROCEED,'MANUAL_CYCLE_AVAILABLE','Manual cycle uses operator-positioned stock and '+', '.join(chosen)+'; grip is not measured.',tuple(chosen))
+    return Decision(Outcome.OPERATOR_REQUIRED,'PUSHER_OVERLAP' if main else 'CLAMP_UNAVAILABLE',
+                    'Main clamp unavailable at this position; explicitly secure stock with the commissioned outfeed clamp or reposition.')
 
 
 def plan_operator_cut(ctx, next_length=None, kerf=0):

@@ -38,6 +38,7 @@ that statement does not independently complete the physical fault matrix.
 | Door | Ad hoc/old hardware | Door/D29 active LOW, controller interlock | User confirmed input; firmware/app cancellation tested |
 | Saw endpoints | Old SSEN | UP Limit Z/D22; DOWN Fd/Hld/D16 | User-confirmed inputs, controller interlocks |
 | Main left clamp | C/D/L/U (legacy command collision) | DCLAMP / AUX1 TTL D32 | Prepared unloaded mode; ON clamps/OFF releases confirmed; combined physical acceptance pending |
+| Second/outfeed clamp | Planned | DCLAMP2 / Mist TTL D18; DCUTM selected holding | Prepared 0.24, disabled by default; wiring, footprint and physical acceptance pending |
 | Saw travel cylinder | Old saw cycle command | DCYCLE/DDOWN/DUP / AUX2 TTL D33 | Prepared held-clamp unloaded stroke using real endpoints; OFF=UP confirmed; physical acceptance pending |
 | Blade trigger cylinder | Original trigger/brake mechanism | Flood TTL D19 | Hard locked OFF throughout 0.16.0; trigger/brake commissioning separate |
 | Cut-list editing/import | Python UI | Same retained Python feature | Available; simulator regression passes |

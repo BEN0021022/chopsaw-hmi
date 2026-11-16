@@ -1,4 +1,10 @@
-# Holding-plan recovery - design boundary, not deployed
+# Holding-plan recovery - design history
+
+**2026-11-16 update:** the selected-clamp executor described below is now written
+and host-tested in prepared 0.24.0, with outfeed on Mist/D18. It is default-disabled,
+not flashed or physically accepted. Current setup/protocol and remaining physical
+checks: [second-clamp setup](SECOND_CLAMP_024.md). The main-only executor statements
+below describe the earlier design boundary, not the prepared 0.24 implementation.
 
 Operator decision, 2026-11-11: **keep no-main-clamp recovery paused until the
 second clamp is installed and mapped.** The design below does not authorize an

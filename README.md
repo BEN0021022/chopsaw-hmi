@@ -3,7 +3,13 @@
 PyQt6 operator interface for the chop-saw carriage, cut-list workflow, machine
 I/O, simulation, current monitoring, and packaged Windows releases.
 
-## Current Teensy build (2026-11-11)
+## Current Teensy build (2026-11-16)
+
+Prepared **0.24** adds the second/outfeed clamp on **Mist TTL / D18**, disabled
+by default. Manual controls, independent timing, measured footprint, selected
+holding plans and controller state checks are implemented; flash and physical
+acceptance are pending. It includes the 0.23 homing update below.
+See [second-clamp wiring and setup](docs/SECOND_CLAMP_024.md).
 
 Prepared **0.23** adds saved homing approach speed/acceleration and application-wide
 wheel protection for option/value controls. The wheel fix works after app restart;

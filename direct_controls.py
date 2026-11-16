@@ -51,8 +51,13 @@ class DirectControls(QObject):
         if action=='up':return state in ('DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY')
         if state not in ('OFF','READY','CLAMPED') or d.data.get('TRIGGER')!='0':return False
         if p.inputs.get('SAW_UP')!='0' or p.inputs.get('SAW_DOWN')!='1':return False
-        if action=='release':return state=='CLAMPED'
-        if action=='engage':return state in ('OFF','READY') and d.supervision.individual_clamp_allowed()
+        if action in ('second_engage','second_release'):
+            if not d.second_supported or not d.supervision.second_requested():return False
+            held=d.data.get('SECOND_CLAMP')=='1'
+            return state in ('OFF','READY','CLAMPED') and (held if action=='second_release' else
+                        not held and d.supervision.individual_clamp_allowed('outfeed'))
+        if action=='release':return state=='CLAMPED' and d.data.get('MAIN_CLAMP',d.data.get('CLAMP'))=='1'
+        if action=='engage':return state in ('OFF','READY','CLAMPED') and d.data.get('MAIN_CLAMP',d.data.get('CLAMP'))=='0' and d.supervision.individual_clamp_allowed()
         if action=='lower':
             c=d.supervision.context()
             return (c.reference_known and (not c.geometry.verified or c.geometry.pusher(c.position).near>c.geometry.cut_keepout)

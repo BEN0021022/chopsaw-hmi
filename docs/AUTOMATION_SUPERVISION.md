@@ -91,17 +91,17 @@ convert an acknowledgment into a clamp-free automatic stroke. Only a newly valid
 holding plan may continue after an explicit gesture. Stop cancels rather than
 resumes. Geometry cannot be changed underneath a paused live sequence.
 
-**The requested externally secured, no-main-clamp Manual Cycle is not yet an
-executable recovery path.** Firmware 0.19 DCUT always operates the main clamp.
-It must not be sent when that clamp is inhibited. A future executor extension
-needs an explicit selected-clamp/approved-fixture plan, fresh one-shot operator
-authorization, immutable geometry/material revisions, and controller-side
-validation. The approved external securing method must first be defined; presumed
-hand-holding is not encoded as machine holding. A new outfeed cylinder alone
-does not commission its footprint, I/O or holding role.
+Prepared **0.24** now implements selected main/outfeed/both holding plans through
+an acknowledged, configuration/request-bound controller command. The second
+clamp remains disabled until its measured outfeed pad footprint is saved and
+its hardware is connected/tested. Legacy DCUT is still main-only and is never
+substituted for an outfeed-only plan. The app also requires current controller
+capability and enabled-state readback before selecting this device.
 
-The outfeed clamp is therefore shown as PLANNED / unavailable. Registering future
-devices/policies does not silently map them to the main clamp's output.
+Both clamps are assessed against actual configured geometry and modeled material.
+Pieces between pads retain the existing explicit unplugged operator-intervention
+path; another cylinder does not establish coverage or verified grip. Details and
+pending physical acceptance: [second-clamp setup](SECOND_CLAMP_024.md).
 
 ## Acquisition-zone cleanup
 

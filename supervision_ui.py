@@ -1,7 +1,7 @@
 """Native HMI adapter for the single pure automation coordinator.
 
-Geometry commissioning is data-only. No automatic no-clamp stroke is provided:
-0.19 firmware always operates the main clamp and cannot execute such a plan.
+Geometry commissioning is data-only. Second-clamp execution also requires the
+matching controller capability and acknowledged enable configuration.
 """
 import json
 from dataclasses import replace
@@ -28,8 +28,14 @@ class SupervisionAdapter:
 
     @staticmethod
     def geometry_from_data(d):
+        enabled=d.get('second_enabled',False)
+        if type(enabled) is not bool:raise ValueError('Second clamp enable must be a boolean')
+        near,far=float(d.get('outfeed_near',0)),float(d.get('outfeed_far',0))
+        if near<0 or far<near or (enabled and (far<=near or near<=float(d['keepout'])+float(d['margin']))):
+            raise ValueError('Measure outfeed pad distances beyond the blade keepout; far must exceed near.')
         return Geometry(verified=d.get('verified',False),
-            clamps=(Clamp('main',Span(float(d['main_near']),float(d['main_far']))),),
+            clamps=(Clamp('main',Span(float(d['main_near']),float(d['main_far']))),
+                    Clamp('outfeed',Span(-far,-near),'cut_piece',enabled,enabled,2)),
             pusher_front_offset=float(d['front_offset']),pusher_rear_extent=float(d['rear_extent']),
             cut_keepout=float(d['keepout']),margin=float(d['margin']),
             sensor=Span(float(d['sensor_near']),float(d['sensor_far'])),
@@ -38,7 +44,7 @@ class SupervisionAdapter:
     def controls(self):
         group=QGroupBox('Machine dimensions')
         layout=QVBoxLayout(group)
-        note=QLabel('Physical dimensions in inches from the blade, positive toward Home. Save once when the hardware changes. Outfeed clamp remains unavailable.')
+        note=QLabel('Physical dimensions in inches from the blade, positive toward Home. Second-clamp distances below are measured outward from the blade on the outfeed side.')
         note.setWordWrap(True); layout.addWidget(note)
         form=QFormLayout(); self.fields={}
         g=self.coordinator.geometry; main=next(iter(g.clamps),None)
@@ -53,6 +59,18 @@ class SupervisionAdapter:
             spin.setMinimumHeight(36); self.fields[key]=spin; form.addRow(label,spin)
             if key=='rear_extent': spin.setToolTip('Physical moving assembly length behind the pushing face toward Home. This is NOT carriage travel or cleanup distance.')
         layout.addLayout(form)
+        outfeed=next((c for c in g.clamps if c.key=='outfeed'),None)
+        self.second_enabled=QCheckBox('Enable second / outfeed clamp — Mist TTL D18 (after wiring and testing)')
+        self.second_enabled.setChecked(bool(outfeed and outfeed.installed and outfeed.commissioned))
+        layout.addWidget(self.second_enabled)
+        second_form=QFormLayout()
+        for key,label,value in (('outfeed_near','Outfeed pad near edge — distance from blade',-outfeed.footprint.far if outfeed else 0),
+                                ('outfeed_far','Outfeed pad far edge — distance from blade',-outfeed.footprint.near if outfeed else 0)):
+            spin=QDoubleSpinBox();spin.setRange(0,162);spin.setDecimals(4);spin.setSuffix(' in');spin.setValue(value)
+            spin.setMinimumHeight(36);self.fields[key]=spin;second_form.addRow(label,spin)
+        layout.addLayout(second_form)
+        self.second_note=QLabel('Second clamp is disabled until enabled and dimensions saved. ON must clamp; OFF must release. Timers report commanded state, not verified grip.')
+        self.second_note.setWordWrap(True);layout.addWidget(self.second_note)
         self.verified=QCheckBox('Measured footprints, pusher envelope, blade keepout and native truing datum verified for unplugged tests')
         self.verified.setChecked(g.verified); self.verified.setParent(group); self.verified.hide()
         self.automatic_clear=QCheckBox('Enable bounded automatic detector-zone clearing after its dry-run acceptance')
@@ -67,7 +85,7 @@ class SupervisionAdapter:
         if dry.motion_locked() or p.armed or p.pending or p.homing or p.edge_searching:
             self.feedback.setText('Stop/disarm and cancel any paused sequence before changing geometry.'); return False
         data={k:w.value() for k,w in self.fields.items()}
-        data.update(verified=True,automatic_clearance=True)
+        data.update(verified=True,automatic_clearance=True,second_enabled=self.second_enabled.isChecked())
         data['reference_signature']=self.current_reference_signature()
         try: g=self.geometry_from_data(data)
         except (ValueError,TypeError) as e: self.feedback.setText(str(e)); return False
@@ -98,7 +116,12 @@ class SupervisionAdapter:
             sensor_clear=None if sensor not in ('0','1') else sensor=='1',
             carriage_idle=p.x.get('REMAINING')=='0' and not p.pending and not p.homing and not p.edge_searching,
             fault_free=p.x.get('FAULT')=='NONE' and d.data.get('FAULT')=='NONE' and not p.local_fault and not d.local_fault,
-            config_revision=self.coordinator.config_revision)
+            config_revision=self.coordinator.config_revision,
+            holding_channels=(1,2) if d.second_supported and self.second_requested() and d.data.get('SECOND_ENABLED')=='1' else (1,),
+            held_channels=tuple(i for i,key in ((1,'MAIN_CLAMP'),(2,'SECOND_CLAMP')) if d.data.get(key)=='1'))
+
+    def second_requested(self):
+        return any(c.key=='outfeed' and c.installed and c.commissioned for c in self.coordinator.geometry.clamps)
 
     def review(self, action='cut', **parameters):
         self.last_decision=self.coordinator.decide(self.context(),action,**parameters)
@@ -162,13 +185,15 @@ class SupervisionAdapter:
         self.coordinator.invalidate('Connection/session changed.')
         self.position=None; self.edge_key=None; self.done=None; self.last_decision=None
 
-    def individual_clamp_allowed(self):
+    def individual_clamp_allowed(self,key='main'):
         # Preserve explicitly commanded, unplugged wiring tests before geometry
         # commissioning; once measured, known pusher collision is never bypassed.
         g=self.coordinator.geometry; c=self.context()
         if not g.verified: return True
         from automation_supervision import assess_main_clamp
-        d=assess_main_clamp(c)
+        clamp=next((item for item in g.clamps if item.key==key),None)
+        if key=='outfeed' and (clamp is None or not clamp.installed or not clamp.commissioned):return False
+        d=assess_main_clamp(c,clamp)
         return d.code not in ('PUSHER_OVERLAP','REFERENCE_UNKNOWN')
 
     def summary(self):

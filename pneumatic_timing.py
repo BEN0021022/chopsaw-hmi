@@ -43,7 +43,7 @@ DEVICES = (
         TimingField('trigger.release_delay', 'Release delay after saw UP'),
         TimingField('trigger.brake_wait', 'Wait after trigger release'),
     )),
-    ('Outfeed clamp — planned', clamp_fields('outfeed')),
+    ('Second / outfeed clamp — Mist D18', clamp_fields('outfeed')),
     ('Backstop / fence clamp — planned', clamp_fields('fence')),
 )
 FIELDS = tuple(field for _, fields in DEVICES for field in fields)
@@ -86,7 +86,7 @@ class CylinderTimingPanel(QGroupBox):
                 spin.setMaximumWidth(260)
                 spin.setStyleSheet('QSpinBox { background:#0b1222;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:6px;font-size:16px; }')
                 if field.planned_limit:
-                    spin.setToolTip('Saw travel limits are enforced after loading into 0.19.0 saw-unplugged firmware (100–5000 ms). Clamp confirmation limits require future feedback; they remain planned.')
+                    spin.setToolTip('Saw travel limits are enforced in the controller (100–5000 ms). Clamp confirmation limits require future feedback; they remain planned.')
                 self.fields[field.key] = spin
                 form.addRow(field.label + ':', spin)
             page_layout.addWidget(page)
@@ -113,7 +113,8 @@ class CylinderTimingPanel(QGroupBox):
             'Saw-unplugged tests: Manual enable / Start Auto load main-clamp, saw and trigger timings. '
             'Delays 0–5000 ms; travel limits 100–5000 ms. Full cycle includes spin-up and brake waits. '
             'Held-trigger individual tests remain hold-to-test. Timers do not verify grip or blade stop. '
-            'Clamp confirmation and additional clamps remain planned.'
+            'Second/outfeed delays are independent on firmware 0.24+, enabled separately in Machine dimensions. '
+            'Clamp confirmation feedback and the fence clamp remain planned.'
         )
 
     def snapshot(self):

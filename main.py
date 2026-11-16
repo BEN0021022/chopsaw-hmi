@@ -31,7 +31,7 @@ from ui_components import KeypadWidget, CutLengthKeypad, CurrentGraphWidget
 from live_health import native_health, simulator_health, simulator_data_valid, HealthState, TelemetryActivity
 from pneumatic_timing import CylinderTimingPanel, CLAMPS, simulation_clamps
 from manual_pneumatics import ManualPneumatics
-from dry_run_control import NativeDryRun, COMMAND as DRY_COMMAND, TRAVEL as DRY_TRAVEL
+from dry_run_control import NativeDryRun, COMMAND as DRY_COMMAND, SECOND_COMMAND, TRAVEL as DRY_TRAVEL
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
@@ -573,7 +573,10 @@ class MinimalHMI(QMainWindow):
         self.live_health_label = QLabel("Disconnected")
         self.live_health_label.setWordWrap(True)
         health_row.addWidget(self.live_health_label, 1)
-        g1.addLayout(health_row, 8, 0, 1, 2)
+        self.auto_second_clamp_label=self.pill('DISABLED','#475569')
+        self.auto_second_clamp_label.setToolTip('Mist TTL D18. Commanded state only; no grip feedback sensor.')
+        g1.addWidget(QLabel('Second / outfeed clamp:'),8,0);g1.addWidget(self.auto_second_clamp_label,8,1)
+        g1.addLayout(health_row, 9, 0, 1, 2)
         live.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         left_col.addWidget(live)
 
@@ -2394,11 +2397,11 @@ class MinimalHMI(QMainWindow):
                 elif not dry.intervention.paused() and cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE'):
                     self.log.append('BLOCKED: unloaded list owns machine sequencing.'); return False
             if (dry.motion_locked() and not dry.intervention.paused() and not dry.issuing_sequence and not stopping and
-                    cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE') and not DRY_COMMAND.fullmatch(cmd)):
+                    cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE') and not DRY_COMMAND.fullmatch(cmd) and not SECOND_COMMAND.fullmatch(cmd)):
                 self.log.append('BLOCKED: unloaded pneumatics own machine control.'); return False
             if cmd=='XDISABLE' and dry.motion_locked():
                 self.log.append('BLOCKED: stop the unloaded test before releasing motor holding.'); return False
-            allowed = (dry.allowed(cmd) if DRY_COMMAND.fullmatch(cmd) or (cmd=='KEEPALIVE' and dry.data.get('ARMED')=='1')
+            allowed = (dry.allowed(cmd) if DRY_COMMAND.fullmatch(cmd) or SECOND_COMMAND.fullmatch(cmd) or (cmd=='KEEPALIVE' and dry.data.get('ARMED')=='1')
                        else self.carriage_tab.allowed(cmd))
             if not allowed:
                 self.log.append(f"BLOCKED in Teensy Carriage mode: {cmd}")
@@ -2581,6 +2584,11 @@ class MinimalHMI(QMainWindow):
         self.refresh_homing_settings()
         self.refresh_live_health()
         self.refresh_auto_approval()
+        second=self.dry_run
+        second_text=('ON COMMANDED' if second.fresh() and second.second_supported and second.data.get('SECOND_CLAMP')=='1' else
+                     'DISABLED' if not second.supervision.second_requested() else 'NEEDS FIRMWARE 0.24' if not second.second_supported else
+                     'UNKNOWN' if not second.fresh() else 'ON COMMANDED' if second.data.get('SECOND_CLAMP')=='1' else 'OFF COMMANDED')
+        self.set_pill(self.auto_second_clamp_label,second_text,'#92400e' if second_text=='ON COMMANDED' else '#475569')
         if self.active_controller().key != TEENSY_CARRIAGE:
             self.settings_profile_feedback.setText("Simulator profile values; apply the selected profile explicitly.")
             self.settings_profile_combo.setEnabled(True)
@@ -2638,7 +2646,8 @@ class MinimalHMI(QMainWindow):
                 text,color=("ACTIVE","#22c55e") if raw == "0" else ("INACTIVE","#475569")
             self.set_pill(label,text,color)
         if self.dry_run.fresh():
-            self.set_pill(self.auto_clamp_status_label,'ON COMMANDED' if self.dry_run.data.get('CLAMP')=='1' else 'OFF COMMANDED','#92400e' if self.dry_run.data.get('CLAMP')=='1' else '#475569')
+            main_state=self.dry_run.data.get('MAIN_CLAMP',self.dry_run.data.get('CLAMP'))
+            self.set_pill(self.auto_clamp_status_label,'ON COMMANDED' if main_state=='1' else 'OFF COMMANDED','#92400e' if main_state=='1' else '#475569')
         else:
             self.set_pill(self.auto_clamp_status_label,"UNKNOWN","#475569")
         if not known: self.auto_position_label.setText("UNKNOWN")

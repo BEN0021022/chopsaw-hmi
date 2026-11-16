@@ -39,7 +39,7 @@ T41U5XBB V2.20 board. This is not yet an approved machine-wiring map.
 | Flood | D19 | Relay Flood | Open-collector relay driver | Reported; load unassigned |
 | Mist | D18 | Relay Mist | Open-collector relay driver | Reported; load unassigned |
 | Flood TTL | D19 | JP10 `Flood` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Blade-trigger valve MOSFET; indicator test user-confirmed, coil/mechanical validation pending |
-| Mist TTL | D18 | JP10 `Mist` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Spare; not controlled by current bench firmware |
+| Mist TTL | D18 | JP10 `Mist` Sig/Gnd row | 5 V non-inverting logic from 74AHCT541 | Second/outfeed clamp reserved in prepared 0.24; disabled, not physically accepted |
 | I2C SCL | D24 | I2C `SC`/SCL | 3.3 V | Bench-verified with MCP23017 and INA228 |
 | I2C SDA | D25 | I2C `SD`/SDA | 3.3 V | Bench-verified with MCP23017 and INA228 |
 
@@ -139,7 +139,9 @@ right hole is `Gnd`.
 
 Firmware 0.3.2 reports `OUTPUT_MAP:AUX2_AUX1_FLOOD`. The dashboard requires this
 identifier before permitting output tests. It does not drive retired AUX0/D31.
-Use Flood's TTL header, not its relay screw terminal. Mist/D18 remains spare.
+Use Flood's TTL header, not its relay screw terminal. Mist/D18 is reserved for
+the default-disabled second clamp in [prepared 0.24](SECOND_CLAMP_024.md), using
+the same TTL Sig/Gnd interface. It is not a generic Sensor Bench `OUT` channel.
 The trigger cylinder mechanically operates the original saw switch; the board
 does not switch saw mains. Keep the saw unplugged for commissioning. Trigger
 release, spring return, loss-of-air response, and factory brake operation must

@@ -22,6 +22,8 @@ STATES = {'OFF','READY','CLAMP_DELAY','CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','
           'TRIGGER_DELAY','SPINUP','TRIGGER_RELEASE_DELAY','BRAKE_WAIT','STOPPED'}
 TRAVEL = {'DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN'}
 COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DMANUAL ([0-9]+)|DTHOLD|DTPRESS|DTRELEASE|DCUT|DRELEASE|DOPCUT [0-9]+ [0-9]+)')
+SECOND_COMMAND = re.compile(r'(?:DCLAMP2 [01]|DCUTM [0-9]+ [0-9]+ [123])')
+SECOND_TIMING_KEYS=('outfeed.engage_delay','outfeed.engage_settle','outfeed.release_delay','outfeed.release_clearance')
 
 
 def timing_hash(values):
@@ -42,6 +44,7 @@ class NativeDryRun(QObject):
         self.diagnostics = CycleDiagnostics()
         self.session = None
         self.compatible = False
+        self.second_supported = False
         self.data = {}
         self.received = None
         self.token = 0
@@ -59,7 +62,7 @@ class NativeDryRun(QObject):
         self.trigger_held = False
         self.last_trigger_hold = 0
         self.progress_index=None; self.progress_batch=None
-        self.message = 'Connect matching 0.22.0 firmware.'
+        self.message = 'Connect compatible Teensy firmware. Second clamp requires 0.24+.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
 
     def controls(self):
@@ -101,7 +104,7 @@ class NativeDryRun(QObject):
             self.owner.cut_history.new_session()
             self.diagnostics.note('SESSION_CHANGED', 'Connection/session changed; no previous phase or material reference is reused.', time.monotonic())
             self.diagnostics.observe({'fresh':False,'message':'Connection/session changed'}, {}, time.monotonic())
-            self.session = session; self.compatible=False; self.data={}; self.received=None
+            self.session = session; self.compatible=False; self.second_supported=False; self.data={}; self.received=None
             self.token=0; self.loaded=None; self.pending=None; self.awaiting_stop=False; self.local_fault=''; self.sequence=None
             self.manual_start=None; self.auto_start=None; self.trigger_held=False
             self.intervention.clear()
@@ -124,9 +127,22 @@ class NativeDryRun(QObject):
                 and self.data.get('FAULT')=='NONE')
 
     def settings_match(self):
-        values=self.owner.cylinder_timing.snapshot()
         return (self.loaded is not None and self.data.get('HASH')==str(timing_hash(self.loaded))
-                and self.loaded == tuple(values[key] for key in TIMING_KEYS))
+                and self.loaded == self.configuration_values()
+                and (not self.supervision.second_requested() or self.second_supported))
+
+    def configuration_values(self):
+        values=self.owner.cylinder_timing.snapshot()
+        result=tuple(values[key] for key in TIMING_KEYS)
+        if self.second_supported:
+            enabled=self.supervision.second_requested()
+            result+=(int(enabled),)+(tuple(values[key] for key in SECOND_TIMING_KEYS) if enabled else (0,0,0,0))
+        return result
+
+    def cycle_clamp_mask(self):
+        decision=self.supervision.review() if self.sequence else assess_manual_cycle(self.supervision.context())
+        if not decision.proceeds:return 0
+        return sum({'main':1,'outfeed':2}.get(key,0) for key in decision.permitted_clamps)
 
     def motion_locked(self):
         return self.native() and (bool(getattr(getattr(self.owner,'direct_controls',None),'intent',None)) or bool(self.manual_start) or bool(self.auto_start) or self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
@@ -194,13 +210,14 @@ class NativeDryRun(QObject):
                     and self.data.get('MANUAL')=='1' and self.data.get('TRIGGER')=='1')
         if self.sequence and not self.issuing_sequence: return False
         match=COMMAND.fullmatch(command)
-        if not match or not self.safe_link(): return False
+        second=SECOND_COMMAND.fullmatch(command)
+        if not (match or (self.second_supported and second)) or not self.safe_link(): return False
         p=self.owner.carriage_tab
         state=self.data.get('STATE')
         if command.startswith(('DSET ','DCOMMIT ')):
             if match[1] is not None:
                 index,value=int(match[1]),int(match[2])
-                if not self.loaded or not 0<=index<len(TIMING_KEYS) or value!=self.loaded[index]: return False
+                if not self.loaded or not 0<=index<len(self.loaded) or value!=self.loaded[index]: return False
             elif command!=f'DCOMMIT {self.token}': return False
             return bool(self.pending and self.pending['kind']=='config' and self.data.get('ARMED')=='0'
                         and state=='OFF' and not p.armed and not p.pending and not p.profile_pending
@@ -212,7 +229,12 @@ class NativeDryRun(QObject):
         if self.pending or self.data.get('ARMED')!='1' or self.data.get('CFG')!=str(self.token): return False
         if command=='DTPRESS':
             return self.can_hold_trigger() and self.operator_holding_trigger()
-        if command=='DCUT':
+        if command=='DCUT' or command.startswith('DCUTM '):
+            mask=self.cycle_clamp_mask()
+            if command.startswith('DCUTM '):
+                if command!=f"DCUTM {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {mask}":return False
+                if mask & 2 and (not self.supervision.second_requested() or self.data.get('SECOND_ENABLED')!='1'):return False
+            elif mask!=1:return False
             return (self.settings_match() and state in ('READY','CLAMPED') and self.data.get('CYCLE')=='0'
                     and self.data.get('TRIGGER')=='0' and (self.supervision.review().proceeds if self.sequence else
                                                          assess_manual_cycle(self.supervision.context()).proceeds))
@@ -225,17 +247,25 @@ class NativeDryRun(QObject):
                         and command==f"DOPCUT {self.token} {(int(self.data['REQ'])+1)&0xffffffff}")
         if self.data.get('CYCLE')=='1': return command=='DUP'
         if self.data.get('TRIGGER')!='0': return False
-        if command=='DCLAMP 0': return state=='CLAMPED'
+        if command.startswith('DCLAMP2 '):
+            on=command.endswith('1')
+            return (self.settings_match() and self.supervision.second_requested() and self.data.get('SECOND_ENABLED')=='1'
+                    and self.data.get('MANUAL')=='1' and state in ('READY','CLAMPED')
+                    and self.data.get('SECOND_CLAMP')==('0' if on else '1')
+                    and (not on or self.supervision.individual_clamp_allowed('outfeed')))
+        if command=='DCLAMP 0': return state=='CLAMPED' and self.data.get('MAIN_CLAMP',self.data.get('CLAMP'))=='1'
         if command=='DUP': return state in {'DOWN_DELAY','DESCEND','DOWN','DWELL','UP_DELAY'}
         if not self.settings_match(): return False
-        if command=='DCLAMP 1': return state=='READY' and self.supervision.individual_clamp_allowed()
+        if command=='DCLAMP 1': return state in ('READY','CLAMPED') and self.data.get('MAIN_CLAMP',self.data.get('CLAMP'))=='0' and self.supervision.individual_clamp_allowed()
         return command in ('DCYCLE','DDOWN') and (state=='CLAMPED' or (state=='READY' and self.data.get('MANUAL')=='1')) and self.supervision.individual_clamp_allowed()
 
     def configure(self):
         self.sync()
         p=self.owner.carriage_tab
         if not self.safe_link() or self.pending or p.armed or self.data.get('STATE')!='OFF': return False
-        values=tuple(self.owner.cylinder_timing.snapshot()[key] for key in TIMING_KEYS)
+        if self.supervision.second_requested() and not self.second_supported:
+            self.message='Second clamp requires firmware 0.24 or newer. Disable it or update firmware.';self.changed.emit();return False
+        values=self.configuration_values()
         if any(not 0<=value<=5000 for value in values) or min(values[6],values[9])<100:
             self.message='Dry-run delays must be 0–5000 ms; travel limits 100–5000 ms.'; self.changed.emit(); return False
         self.token=secrets.randbelow(0x7ffffffe)+1; self.loaded=values
@@ -261,6 +291,9 @@ class NativeDryRun(QObject):
         commands={'arm':f'DARM {self.token}','engage':'DCLAMP 1','release':'DCLAMP 0',
                   'lower':'DDOWN','up':'DUP','cycle':'DCUT','manual_arm':f'DMANUAL {self.token}',
                   'press':'DTPRESS','unpress':'DTRELEASE','recover_release':'DRELEASE'}
+        commands.update(second_engage='DCLAMP2 1',second_release='DCLAMP2 0')
+        if action=='cycle' and self.second_supported and self.cycle_clamp_mask()!=1:
+            commands['cycle']=f"DCUTM {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} {self.cycle_clamp_mask()}"
         command=(f"DOPCUT {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff}" if action=='operator_cycle' else commands.get(action,''))
         if not self.allowed(command):
             if action=='cycle' and self.supervision.last_decision:
@@ -293,12 +326,15 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW') in ('0.22.0','0.23.0')
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW') in ('0.22.0','0.23.0','0.24.0')
                         and f.get('DRY_RUN')=='UNLOADED_V6' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
                         and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1'
                         and f.get('OPERATOR_CUT')=='UNCLAMPED_ONESHOT_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
+            supported=compatible and f.get('FW')=='0.24.0' and f.get('SECOND_CLAMP')=='D18_MASK_V1'
+            if self.second_supported and not supported:self.stop('Second-clamp capability changed')
+            self.second_supported=supported
         elif message.kind=='BENCH_DRY':
             try:
                 valid=(f.get('PROTO')=='6' and f.get('LOCK') in ('0','1') and f.get('TRIGGER') in ('0','1')
@@ -320,7 +356,9 @@ class NativeDryRun(QObject):
                 operator_cycle=f['OPERATOR']=='1'
                 valid=(f['ARMED']==('0' if phase in {'OFF','STOP_RETURN','STOPPED','FAULT'} else '1')
                        and (not operator_cycle or (f['CYCLE']=='1' and f['CLAMP']=='0' and f['MANUAL']=='0' and phase in cycle_phases|{'TRIGGER_DELAY','BRAKE_WAIT'}))
-                       and (recovering or manual_travel or operator_cycle or f['CLAMP']==str(int(clamped))) and f['SAW']==str(int(lowered))
+                       and (recovering or manual_travel or operator_cycle or
+                            (self.second_supported and phase in ('CLAMP_DELAY','CLAMP_SETTLE','RELEASE_DELAY','RELEASE_CLEAR')) or
+                            f['CLAMP']==str(int(clamped))) and f['SAW']==str(int(lowered))
                        and (f['FAULT']!='NONE')==(phase=='FAULT')
                        and f['LOCK']==('0' if f['MANUAL']=='1' or f['CYCLE']=='1' else '1')
                        and (f['MANUAL']=='0' or f['ARMED']=='1')
@@ -328,6 +366,15 @@ class NativeDryRun(QObject):
                        and (f['CYCLE']!='1' or f['TRIGGER']==str(int(cycle_trigger)))
                        and (f['TRIGGER']=='0' or f['CYCLE']=='1' or (f['MANUAL']=='1' and phase in ('READY','CLAMPED') and f['SAW']=='0'))
                        and (f['RELEASE_READY']=='0' or (phase in ('STOPPED','FAULT') and f['CLAMP']=='1')))
+            if valid and self.second_supported:
+                try:
+                    mask,plan=int(f['CLAMP_MASK']),int(f['PLAN_MASK'])
+                    valid=(0<=mask<=3 and 0<=plan<=3 and f['SECOND_ENABLED'] in ('0','1')
+                           and f['MAIN_CLAMP']==str(int(bool(mask&1))) and f['SECOND_CLAMP']==str(int(bool(mask&2)))
+                           and f['CLAMP']==str(int(bool(mask)))
+                           and (f['SECOND_ENABLED']=='1' or not ((mask|plan)&2))
+                           and (f['CYCLE']=='0' or f['OPERATOR']=='1' or phase in ('CLAMP_DELAY','CLAMP_SETTLE','RELEASE_DELAY','RELEASE_CLEAR') or mask==plan))
+                except (KeyError,ValueError):valid=False
             if not valid:
                 self.stop('Invalid dry-run readback'); return
             if self.data and int(f['UP_MS'])<int(self.data['UP_MS']):
@@ -336,6 +383,8 @@ class NativeDryRun(QObject):
             if f['STATE'] in ('OFF','FAULT') and f['ARMED']=='0': self.awaiting_stop=False
             if self.token and f['CFG']==str(self.token) and self.loaded is not None and f['HASH']!=str(timing_hash(self.loaded)):
                 self.stop('Controller timing readback mismatch'); return
+            if self.second_supported and self.token and f['CFG']==str(self.token) and self.loaded is not None and f['SECOND_ENABLED']!=str(self.loaded[15]):
+                self.stop('Second-clamp enable readback mismatch');return
             if self.pending:
                 if ((self.pending['kind']=='config' and f['CFG']==str(self.token)) or
                     (self.pending['kind']=='action' and int(f['REQ'])==self.pending['req'])):
