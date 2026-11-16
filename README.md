@@ -5,10 +5,10 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-16)
 
-Prepared **0.24** adds the second/outfeed clamp on **Mist TTL / D18**, disabled
+Deployed **0.24** adds the second/outfeed clamp on **Mist TTL / D18**, disabled
 by default. Manual controls, independent timing, measured footprint, selected
-holding plans and controller state checks are implemented; flash and physical
-acceptance are pending. It includes the 0.23 homing update below.
+holding plans and controller state checks are implemented. Flashed/read back
+on COM4; second-clamp wiring and physical acceptance remain pending. It includes the 0.23 homing update below.
 See [second-clamp wiring and setup](docs/SECOND_CLAMP_024.md).
 
 Prepared **0.23** adds saved homing approach speed/acceleration and application-wide

@@ -1,8 +1,10 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-16. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current deployed source/build: custom **0.22.0 / CARRIAGE_V16**, flashed/read back
-on COM4, 2026-11-11. Integrated saw-unplugged
+Current deployed source/build: custom **0.24.0 / CARRIAGE_V17**, flashed/read back
+on COM4, 2026-11-16, source `2ad8673`. Second clamp remains disabled; existing
+carriage profiles restored. Startup OFF, unconfigured/unhomed, no faults or queued motion.
+Integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
 0.18.0 was flashed/read back on 2026-11-10; individual mechanisms passed.
 Prior 0.16.0 was flashed/read back on COM4 on 2026-11-09 after isolation confirmation;
@@ -20,7 +22,7 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
-## Second / outfeed clamp - prepared 0.24, disabled
+## Second / outfeed clamp - deployed 0.24, disabled
 
 - [x] Reserve Mist TTL / D18 for a separate second-clamp MOSFET signal.
 - [x] Controller-side default-disabled gate, independent timing and output state.
@@ -30,10 +32,11 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Retain either clamp on Stop/fault, guarded release, block carriage while held.
 - [x] Host sketch/Qt tests and Teensy compilation; legacy main-only compatibility.
 - [ ] Connect/wire the cylinder and verify ON clamps / OFF releases.
-- [ ] Flash/read back 0.24 with actuator power isolated.
+- [x] Flash/read back 0.24 with actuator power isolated; all outputs OFF, second disabled.
 - [ ] Measure footprint, enable/save and physically accept unloaded operation.
 
-No physical device was contacted. Current deployed controller remains 0.22.0.
+Flashed and read back after driver/valve power, air and saw isolation confirmation.
+Agent sent identity/status queries and profile configuration only; no Home, arm or actuator command.
 See [second-clamp setup](docs/SECOND_CLAMP_024.md). The 0.24 build includes 0.23 homing.
 
 ## Homing parameters / wheel protection - prepared 0.23
@@ -46,10 +49,10 @@ See [second-clamp setup](docs/SECOND_CLAMP_024.md). The 0.24 build includes 0.23
       and tab bars, including Sensor Bench. Panel/popup scrolling still works.
 - [x] C++ Home/profile tests, actual-sketch preferences/ACK/fallback tests, wheel
       behavior tests, existing app regressions and Teensy 4.1 compilation.
-- [ ] Flash/read back 0.23 when the Teensy is connected with actuator power isolated.
+- [x] Flash/read back configurable homing through deployed 0.24 / CARRIAGE_V17.
 - [ ] Physical homing speed/acceleration acceptance by operator.
 
-Prepared offline on 2026-11-12. Current deployed controller remains 0.22.0.
+Prepared offline on 2026-11-12; included in deployed 0.24. Physical homing acceptance pending.
 See [0.23 workflow](docs/HOMING_AND_WHEEL_023.md).
 
 ## Auto intervention / production patterns - app patch 0.22.2

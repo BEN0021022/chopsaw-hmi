@@ -1,5 +1,9 @@
 # Homing settings and wheel protection — 0.23
 
+Deployment update, 2026-11-16: included in flashed/read-back **0.24.0 /
+CARRIAGE_V17** on COM4. Adjustable homing capability is present. Physical speed/
+acceleration acceptance remains pending the operator's explicit Home test.
+
 Prepared offline, 2026-11-12. The wheel/UI update works immediately after an
 app restart. Adjustable controller homing requires the accompanying **0.23.0 /
 CARRIAGE_V17** firmware; existing 0.22 firmware remains supported for all prior

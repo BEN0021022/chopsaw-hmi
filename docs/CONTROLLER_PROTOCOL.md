@@ -1,9 +1,9 @@
 # Controller protocol
 
-Current prepared extension (2026-11-16): **0.24.0 / CARRIAGE_V17**, second clamp
-default-disabled on Mist/D18; not flashed. See [0.24 protocol/setup](SECOND_CLAMP_024.md)
+Current deployed extension (2026-11-16): **0.24.0 / CARRIAGE_V17**, second clamp
+default-disabled on Mist/D18; flashed/read back on COM4. See [0.24 protocol/setup](SECOND_CLAMP_024.md)
 for 20-slot commits, mask-bound cycles and individual/aggregate clamp readback.
-Last confirmed deployed build remains 0.22.0 / CARRIAGE_V16. Older entries below
+Previous deployed build was 0.22.0 / CARRIAGE_V16. Older entries below
 record earlier commissioning stages rather than the current prepared identity.
 
 Updated 2026-11-10. Flashed/read-back controller firmware **0.19.0** uses the

@@ -1,7 +1,9 @@
-# Second / outfeed clamp — prepared firmware 0.24.0
+# Second / outfeed clamp — firmware 0.24.0
 
-Prepared offline on 2026-11-16. **Disabled by default. Not flashed, wired or
-physically accepted.** This build also includes 0.23's configurable homing.
+Prepared offline and flashed/read back on COM4 on 2026-11-16, source `2ad8673`.
+**Second clamp remains disabled; wiring and physical acceptance pending.**
+Startup outputs OFF, controller unconfigured/unhomed, no faults/queued motion;
+existing carriage profiles restored. This build also includes configurable homing.
 
 ## Wiring when the cylinder is installed
 
