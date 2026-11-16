@@ -82,11 +82,20 @@ def run(exe):
             assert d.confirm_operator_cut();assert not d.confirm_operator_cut()
             flush();until(lambda:d.sequence and d.sequence['stage']=='EARLY_RETURN_ARM')
             assert not w.operator_cut_button.isHidden() and not w.operator_cut_button.isEnabled()
+            assert w.operator_cut_button.property('earlyReturnAttention') is True
+            app.processEvents();button_image=w.operator_cut_button.grab().toImage()
+            amber=button_image.pixelColor(button_image.width()//2,5)
+            assert amber.red()>220 and amber.green()>100 and amber.blue()<80,amber.name()
+            output=Path('tmp/ui-operator');output.mkdir(parents=True,exist_ok=True)
+            w.grab().save(str(output/'waiting-before-return.png'))
+            count=len(wire.writes);w.operator_cut_button.click();assert len(wire.writes)==count
             assert d.sequence['index']==1 and w._displayed_cut_index==1
             assert not d.can_confirm_operator_cut()
             assert d.intervention.pause();flush();until(lambda:d.intervention.paused())
             assert d.intervention.resume_plan()[0]=='early_return'
             assert d.intervention.resume();flush()
+            until(lambda:d.sequence and d.sequence['stage']=='EARLY_RETURN_WAIT')
+            assert w.operator_cut_button.property('earlyReturnAttention') is True and not w.operator_cut_button.isEnabled()
             until(lambda:d.sequence and d.sequence['stage']=='WAIT_OPERATOR_CUT')
             assert d.sequence['early_return'] and p.x['PROFILE_ID']=='3'
             assert abs(sup.context().position-w.native_load_target())<.02
@@ -97,6 +106,7 @@ def run(exe):
             assert d.intervention.resume();tick();assert d.can_confirm_operator_cut()
             w.refresh_teensy_tabs();app.processEvents()
             assert not w.operator_cut_button.isHidden() and w.operator_cut_button.isEnabled()
+            assert w.operator_cut_button.property('earlyReturnAttention') is False
             assert 'Waiting for operator' in w.live_health_label.text()
             output=Path('tmp/ui-operator');output.mkdir(parents=True,exist_ok=True)
             w.grab().save(str(output/'waiting-returned.png'))

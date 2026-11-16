@@ -23,8 +23,10 @@ missing material reference, contradictory detector state or blade keepout.
   agree that the detector is clear, return to Load in Fast **before** the cut.
   No scrap-clearing push is sent. Withdrawal does not pull the modeled stock
   back or pretend that pusher contact remains established.
-- After the carriage is stationary/disarmed, show an amber dashboard state and
-  **Wood secured / run cut — Saw unplugged** button. The operator verifies the
+- As soon as the cut is positioned, illuminate the **Wood secured / run cut —
+  Saw unplugged** button amber, before Fast early return starts. It stays amber
+  during return, but accepts no click/queued approval until stationary/disarmed.
+  The operator verifies the
   positioned piece and requests one stroke. There is no pause timeout and no
   sensor-driven automatic resume.
 - That one explicit action prepares the controller and sends a distinct

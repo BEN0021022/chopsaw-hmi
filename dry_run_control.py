@@ -487,6 +487,9 @@ class NativeDryRun(QObject):
                     self.auto_start='config'
                     if not self.configure(): self.stop('Auto timing load rejected')
                 elif self.auto_start=='config' and self.data.get('CFG')==str(self.token):
+                    prepared=self.owner.prepare_saved_profiles()
+                    if prepared is None:return
+                    if not prepared:self.stop('Saved motion profiles could not be acknowledged.');return
                     self.auto_start=None
                     if not self.start_sequence(): self.stop('Auto start rejected')
             finally: self.issuing_sequence=False

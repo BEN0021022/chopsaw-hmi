@@ -43,6 +43,7 @@ JOG = re.compile(r"XJOG (-1|1) ([1-9][0-9]{0,2})")
 class TeensyCarriagePanel(QWidget):
     state_changed = pyqtSignal()
     profile_changed = pyqtSignal(int)
+    profile_parameters_confirmed = pyqtSignal(int,int,int)
     homed_changed = pyqtSignal(int)
     machine_position_changed = pyqtSignal(float)
     stale_seconds = 2.0
@@ -500,7 +501,9 @@ class TeensyCarriagePanel(QWidget):
             if self.profile_pending and self.profile_pending[0]=='HOME' and self.profile_pending[1:3]==(int(f.get('HOME_RATE_PPS','0')),int(f.get('HOME_ACCEL_PPS2','0'))):
                 self.profile_pending=None
             elif self.profile_pending and self.profile_pending[:3] == (int(f["PROFILE_ID"]),int(f["RATE_PPS"]),int(f["ACCEL_PPS2"])):
+                acknowledged=self.profile_pending[:3]
                 self.profile_pending = None
+                if acknowledged[0] in (1,2,3) and getattr(self,'_persist_profile_ack',False):self.profile_parameters_confirmed.emit(*acknowledged)
                 self.profile_combo.setCurrentIndex(self.profile_combo.findData(int(f["PROFILE_ID"])))
                 self.load_profile_values()
             self.profile_changed.emit(int(f["PROFILE_ID"]))
@@ -595,6 +598,7 @@ class TeensyCarriagePanel(QWidget):
     def request_profile(self,command,profile,rate,accel):
         if self.allowed(command) and self.send(command):
             self.profile_pending = (profile,rate,accel,time.monotonic())
+            self._persist_profile_ack=command.startswith('XPROFILE ') and len(command.split())==4
             self.refresh()
             return True
         return False

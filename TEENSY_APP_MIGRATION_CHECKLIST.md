@@ -22,6 +22,20 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## App patch 0.24.1 - early attention / saved motion defaults
+
+- [x] Illuminate the operator-cut button before Fast early return, including
+      while disabled during carriage motion; no queued approval during return.
+- [x] Native startup defaults: Gentle 600/600, Normal 2500/900, Fast 3500/2000
+      (pulses/s and pulses/s²). Keep PC defaults separate from live RAM readback.
+- [x] Load/acknowledge saved profiles on explicit carriage/Auto actions, never
+      arm/move on connect. Apply-confirmed profile edits persist across restart.
+- [x] Actual-sketch/Qt early-return visual/click checks, startup/persistence/
+      dropped-ACK checks, and existing carriage/Auto regressions.
+- [ ] Operator acceptance of the earlier amber indication during live dry run.
+
+App-only update; deployed firmware stays 0.24.0. No flash required.
+
 ## Second / outfeed clamp - deployed 0.24, disabled
 
 - [x] Reserve Mist TTL / D18 for a separate second-clamp MOSFET signal.

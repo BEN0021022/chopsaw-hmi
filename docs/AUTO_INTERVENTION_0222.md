@@ -27,7 +27,8 @@ also works while the list is paused. No separate arming/waiver controls return.
   the paused manual window. After adjustment, the cut button can resume and
   approve that pending cut in one gesture, subject to current holding geometry.
 - For unclamped early return, the amber operator button appears as soon as the
-  board is positioned and return begins, at the top of Cycle Control. It remains
+  board is positioned, before return begins, at the top of Cycle Control. It stays
+  fully illuminated amber while returning (a separate attention state), and remains
   disabled until the carriage is stationary and the saved pending-cut conditions
   still match. No approval or stroke is queued during movement.
 

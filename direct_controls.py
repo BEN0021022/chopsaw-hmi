@@ -150,6 +150,10 @@ class DirectControls(QObject):
                 if not d.enable_manual():self.fail('Actuator preparation is blocked by current feedback.')
                 return
             p.consent.setChecked(True)  # internal authorization for this gesture only
+            if kind!='home':
+                prepared=self.owner.prepare_saved_profiles()
+                if prepared is None:return
+                if not prepared:self.fail('Saved motion profiles could not be acknowledged.');return
             if kind=='auto':
                 self.intent=None
                 if not d.begin_auto():self.message='Auto needs Home, a clear detector and a cut list.'

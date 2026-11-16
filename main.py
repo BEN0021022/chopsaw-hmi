@@ -370,6 +370,7 @@ class MinimalHMI(QMainWindow):
         self.carriage_tab = TeensyCarriagePanel(self.send_command, lambda line: self.log.append(line), self)
         self.carriage_tab.home_preferences=self.saved_homing_settings
         self.carriage_tab.profile_changed.connect(self.update_teensy_profile)
+        self.carriage_tab.profile_parameters_confirmed.connect(self.save_confirmed_profile)
         self.carriage_tab.homed_changed.connect(self.update_homed_status)
         self.carriage_tab.machine_position_changed.connect(self.update_position_label_from_device)
         self._teensy_settings_dirty = set()
@@ -963,7 +964,7 @@ class MinimalHMI(QMainWindow):
         cyc.insertWidget(0,self.auto_mode_label)
         self.operator_cut_button=QPushButton('Wood secured / run cut\nSaw unplugged')
         self.operator_cut_button.setMinimumHeight(66)
-        self.operator_cut_button.setStyleSheet('QPushButton { background:#f59e0b; color:#111827; font-size:19px; font-weight:bold; } QPushButton:disabled { background:#1e293b; color:#94a3b8; border:1px solid #475569; }')
+        self.operator_cut_button.setStyleSheet('QPushButton { background:#f59e0b; color:#111827; font-size:19px; font-weight:bold; } QPushButton:disabled { background:#1e293b; color:#94a3b8; border:1px solid #475569; } QPushButton[earlyReturnAttention="true"]:disabled { background:#f59e0b; color:#111827; border:1px solid #fbbf24; }')
         self.operator_cut_button.clicked.connect(self.approve_auto_cut)
         self.operator_cut_button.setEnabled(False)
         self.operator_cut_button.hide();cyc.insertWidget(1,self.operator_cut_button)
@@ -1111,7 +1112,7 @@ class MinimalHMI(QMainWindow):
         pg.addWidget(QLabel("Pulse rate (pulses/s)"), 1, 4)
         self.fast_speed = QDoubleSpinBox(); self.fast_speed.setRange(1, 20000); self.fast_speed.setDecimals(0); self.fast_speed.setValue(3500); pg.addWidget(self.fast_speed, 1, 5)
         pg.addWidget(QLabel("Acceleration (pulses/s^2)"), 2, 4)
-        self.fast_accel = QDoubleSpinBox(); self.fast_accel.setRange(1, 50000); self.fast_accel.setDecimals(0); self.fast_accel.setValue(2500); pg.addWidget(self.fast_accel, 2, 5)
+        self.fast_accel = QDoubleSpinBox(); self.fast_accel.setRange(1, 50000); self.fast_accel.setDecimals(0); self.fast_accel.setValue(2000); pg.addWidget(self.fast_accel, 2, 5)
 
         self.settings_profile_combo = QComboBox()
         self.settings_profile_combo.setStyleSheet(
@@ -2572,9 +2573,34 @@ class MinimalHMI(QMainWindow):
                 3:(self.fast_speed,self.fast_accel)}
 
     def mark_teensy_profile_edit(self, profile):
-        if (self.active_controller().key == TEENSY_CARRIAGE and self._teensy_settings_snapshot is not None):
+        if self.active_controller().key == TEENSY_CARRIAGE:
             self._teensy_settings_dirty.add(profile)
             self.refresh_teensy_tabs()
+
+    def saved_motion_profiles(self):
+        result={}
+        for profile,defaults in {1:(600,600),2:(2500,900),3:(3500,2000)}.items():
+            try:
+                pair=tuple(int(self.settings.value(f'teensy_profiles/{profile}/{key}',default)) for key,default in zip(('rate','accel'),defaults))
+                if not (1<=pair[0]<=20000 and 1<=pair[1]<=50000):raise ValueError('Profile outside limits')
+            except (TypeError,ValueError):pair=defaults
+            result[profile]=pair
+        return result
+
+    def save_confirmed_profile(self,profile,rate,accel):
+        for key,value in (('rate',rate),('accel',accel)):self.settings.setValue(f'teensy_profiles/{profile}/{key}',value)
+        self.settings.sync();self._teensy_settings_dirty.discard(profile)
+        for widget,value in zip(self.profile_setting_widgets()[profile],(rate,accel)):
+            widget.blockSignals(True);widget.setValue(value);widget.blockSignals(False)
+
+    def prepare_saved_profiles(self):
+        """Called only during an explicit motion/Auto gesture; wait for each ACK."""
+        p=self.carriage_tab
+        if p.profile_pending:return None
+        for profile,pair in self.saved_motion_profiles().items():
+            if p.profile_values.get(profile)!=pair:
+                return None if p.edit_profile(profile,*pair) else False
+        return True
 
     def refresh_teensy_tabs(self, *_args):
         """Mirror one controller-owned state into Manual/Settings; never sends commands."""
@@ -2704,16 +2730,10 @@ class MinimalHMI(QMainWindow):
         if not link:
             self._teensy_settings_snapshot = None
             self._teensy_settings_active = None
-            self._teensy_settings_dirty.clear()
         else:
-            initial = self._teensy_settings_snapshot is None
             for profile,widgets in self.profile_setting_widgets().items():
-                actual = p.profile_values[profile]
-                draft = tuple(int(widget.value()) for widget in widgets)
-                if draft == actual:
-                    self._teensy_settings_dirty.discard(profile)
-                if initial or profile not in self._teensy_settings_dirty:
-                    for widget,value in zip(widgets,actual):
+                if profile not in self._teensy_settings_dirty:
+                    for widget,value in zip(widgets,self.saved_motion_profiles()[profile]):
                         widget.blockSignals(True); widget.setValue(value); widget.blockSignals(False)
             self._teensy_settings_snapshot = dict(p.profile_values)
             active=int(p.x["PROFILE_ID"])
@@ -2736,7 +2756,7 @@ class MinimalHMI(QMainWindow):
                 f"{selected[1]} pulses/s^2. " + ("UNAPPLIED EDITS. " if self._teensy_settings_dirty else "") +
                 ("Waiting for parameter acknowledgment. " if p.profile_pending else ""))
         self.settings_profile_feedback.setText(note+f"Motion status: {p.status.text()}. "
-                                              "Disarm to apply. Values are controller RAM settings and reset on reboot.")
+                                              "Saved PC profiles load before the next carriage/Auto action. Apply saves changes after controller acknowledgment.")
 
     def refresh_auto_approval(self):
         semi=self.auto_modes.currentIndex()==1
@@ -2752,6 +2772,12 @@ class MinimalHMI(QMainWindow):
                                               ('#f59e0b; color:#fcd34d;' if semi else '#38bdf8; color:#7dd3fc;'))
             self._rendered_auto_mode=semi
         self.operator_cut_button.setVisible(semi or waiting or semi_wait)
+        attention=stage in ('EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM')
+        if self.operator_cut_button.property('earlyReturnAttention')!=attention:
+            self.operator_cut_button.setProperty('earlyReturnAttention',attention)
+            self.operator_cut_button.style().unpolish(self.operator_cut_button)
+            self.operator_cut_button.style().polish(self.operator_cut_button)
+            self.operator_cut_button.update()
         self.operator_cut_button.setEnabled(native and (d.can_confirm_operator_cut() if waiting else d.can_approve_cut()))
         truing=bool(d.sequence and d.sequence['index']<0)
         self.operator_cut_button.setText('Wood secured / run cut\nSaw unplugged' if waiting else
@@ -3130,12 +3156,17 @@ class MinimalHMI(QMainWindow):
         self.cylinder_timing.load()
         self.cut_length_keypad_checkbox.setChecked(self.settings.value("cut_length_keypad", False, type=bool))
         for key, widget in self._settings_widgets().items():
+            if self.active_controller().key==TEENSY_CARRIAGE and key in {'norm_speed','norm_accel','gentle_speed','gentle_accel','fast_speed','fast_accel'}:continue
             value = self.settings.value(key)
             if value is not None:
                 try:
                     widget.setValue(type(widget.value())(value))
                 except (TypeError, ValueError):
                     pass
+        if self.active_controller().key==TEENSY_CARRIAGE:
+            for profile,widgets in self.profile_setting_widgets().items():
+                for widget,value in zip(widgets,self.saved_motion_profiles()[profile]):
+                    widget.blockSignals(True);widget.setValue(value);widget.blockSignals(False)
         self.current_monitoring_enabled = self.settings.value("current_monitoring", False, type=bool)
         self.current_monitoring_checkbox.setChecked(self.current_monitoring_enabled)
         self.current_limit_amps = self.current_limit_input.value()

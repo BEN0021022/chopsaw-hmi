@@ -329,7 +329,7 @@ def run():
 
         # Settings use controller RAM, preserve unsent drafts and wait for ACK.
         ready(p); p.consent.setChecked(True)
-        assert w.norm_speed.value() == 1000 and w.gentle_speed.value() == 150
+        assert w.norm_speed.value() == 2500 and w.gentle_speed.value() == 600,(w.norm_speed.value(),w.gentle_speed.value(),w.saved_motion_profiles(),w._teensy_settings_dirty)
         w.tabs.setCurrentWidget(w.speed_tab)
         w.settings_profile_combo.setCurrentIndex(w.settings_profile_combo.findData('FAST'))
         before=len(wire.writes)
