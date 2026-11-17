@@ -82,6 +82,13 @@ class DryRun {
     if (!combinedCycle(now)) return false;
     operatorCycle=true; selectedMask=0; enter(TriggerDelay,now); return true;
   }
+  // Caller must verify the dedicated, forward-to-Home return token and clearance.
+  bool returnOperatorCut(uint32_t id,uint32_t expectedRequest,uint32_t now) {
+    if (!configEditable() || id!=configId || !id || rawDown || !rawUp || !rawDoor || !alarm ||
+        expectedRequest!=static_cast<uint32_t>(requestId+1)) return false;
+    armed=true;manualMode=false;heartbeat=now;operatorCycle=cycleRunning=automaticReturn=true;
+    selectedMask=0;enter(TriggerDelay,now);++requestId;return true;
+  }
   bool returnUp(uint32_t now) {
     if (!armed || (!clamp && !manualMode) || !(phase == DownDelay || phase == Descend || phase == Down ||
                               phase == Dwell || phase == UpDelay)) return false;

@@ -5,6 +5,11 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-16)
 
+Prepared **0.25** adds continuous Gentle acquisition through sensor-distance-plus-
+kerf truing, and an explicit operator cut during an authorized Fast early return.
+Cut-list advancement waits for both the return and stroke. Second clamp remains
+disabled. See [continuous feed and return-cut workflow](docs/CONTINUOUS_FEED_RETURN_025.md).
+
 Deployed **0.24** adds the second/outfeed clamp on **Mist TTL / D18**, disabled
 by default. Manual controls, independent timing, measured footprint, selected
 holding plans and controller state checks are implemented. Flashed/read back

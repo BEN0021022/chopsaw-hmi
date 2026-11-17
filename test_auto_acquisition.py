@@ -69,13 +69,16 @@ def run(exe):
             until(lambda:origin-int(p.x['HOME_OFFSET'])>=int(8*127.12))
             assert d.sequence['stage']=='SEARCH' and p.x['FAULT']=='NONE' and p.x['PROFILE_ID']=='1'
             records(wire.exchange('@PIN 21 0'));until(lambda:d.sequence and d.sequence['stage']=='MOVE')
+            if p.continuous_supported():
+                assert p.armed and int(p.x['REMAINING'])>0
+                assert not any(c.startswith('XTRUING ') for c in wire.writes)
             assert int(p.x['EDGE_MILLI'])-int(p.x['TRUING_MILLI'])==10920
             assert p.x['PROFILE_ID']=='1'
             d.stop();flush();tick();records(wire.exchange('@PIN 21 1'));tick()
             # New acquisition without detector must stop at its geometric bound,
             # preserve the actual cause, and never send a truing/cylinder command.
             assert w.start_auto_cycle();flush();until(lambda:d.sequence and d.sequence['stage']=='SEARCH')
-            command=next(c for c in reversed(wire.writes) if c.startswith('XEDGE '))
+            command=next(c for c in reversed(wire.writes) if c.startswith(('XEDGE ','XACQUIRE ')))
             search_pulses=int(command.split()[1]);assert search_pulses>254
             start=len(wire.writes);initial=int(p.x['HOME_OFFSET'])
             for _ in range(1800):

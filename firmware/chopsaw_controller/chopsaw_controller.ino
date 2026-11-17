@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.24.0";
+constexpr char FIRMWARE_VERSION[] = "0.25.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -64,7 +64,7 @@ bench::Interlocks interlocks;
 unloaded::DryRun dry;
 bool &outputsArmed = interlocks.armed;
 bool (&outputStates)[OUTPUT_COUNT] = interlocks.outputs;
-enum class TestMode { None, Pneumatic, Stepper, Homing, Edge };
+enum class TestMode { None, Pneumatic, Stepper, Homing, Edge, Acquisition };
 TestMode testMode = TestMode::None;
 bool xConfigured = false;
 bool xHomeSeenActive = false;
@@ -88,6 +88,8 @@ carriage::EdgeSearch xEdge;
 bool xEdgeValid = false;
 int32_t xEdgeMilli = 0, xTruingMilli = 0;
 int32_t xSensorOffsetMilli = 10800, xTrimMilli = 250;
+bool xContinuousAcquire=false,xReturnPermit=false,xReturnCutUsed=false;
+int32_t xAcquisitionEnd=0,xCandidateOffset=0,xReturnStart=0,xReturnMinimum=0;
 int32_t xCommandedSteps = 0;  // pulse-count displacement since boot, not encoder position
 int8_t xDirection = 1;
 uint32_t xMoveId = 0;
@@ -114,6 +116,7 @@ void stopTests() {
   if (dry.active()) dry.stop(millis());
   if (xHoming.active()) { xPositionKnown = false; xHoming.cancel(); }
   xEdge.cancel(); xEdgeValid = false;
+  xContinuousAcquire=xReturnPermit=xReturnCutUsed=false;
   xRemaining = 0; xAbsoluteMove = false;
   interlocks.off(millis());
   testMode = TestMode::None;
@@ -140,6 +143,7 @@ void commandFault() {
   if (dry.active()) dry.trip("DRY_COMMAND",millis());
   xPositionKnown = false; xHoming.cancel();
   xEdge.cancel(); xEdgeValid = false;
+  xContinuousAcquire=xReturnPermit=xReturnCutUsed=false;
   xRemaining = 0; xAbsoluteMove = false;
   interlocks.trip(bench::Fault::Command, millis());
   applyOutputs();
@@ -153,21 +157,27 @@ void updateSafety() {
   const bool wasArmed = outputsArmed;
   const bench::Fault previousFault = interlocks.fault;
   const bench::Travel previousTravel = interlocks.travel;
+  const bool returnCut=xReturnPermit && xReturnCutUsed && dry.operatorCycle && dry.cycleRunning && !dry.clamp &&
+      xPositionKnown && xDirection==1 && digitalRead(X_DIR_PIN)==HIGH && xHomeOffset>=xReturnStart && xHomeOffset>=xReturnMinimum;
+  if (returnCut && digitalRead(BOARD_EDGE_PIN)==LOW) dry.trip("DRY_RETURN_DETECTOR_BLOCKED",millis());
   interlocks.tick({digitalRead(FENCE_DOOR_PIN) == LOW,
                    digitalRead(SAW_UP_PIN) == LOW,
-                   digitalRead(SAW_DOWN_PIN) == LOW}, millis());
+                   digitalRead(SAW_DOWN_PIN) == LOW}, millis(),returnCut);
   xHomeActive.update(digitalRead(HOME_PIN) == LOW, millis());
   xHomeInactive.update(digitalRead(HOME_PIN) == HIGH, millis());
   if (!outputsArmed && xHomeActive.stable) xHomeSeenActive = true;
   if (xHomeSeenActive && xHomeInactive.stable) xHomeVerified = true;
-  if ((testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge) && outputsArmed) {
+  if ((testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge || testMode==TestMode::Acquisition) && outputsArmed) {
     if (digitalRead(CL57T_ALARM_PIN) != xAlarmNormal)
       interlocks.trip(bench::Fault::DriverAlarm, millis());
     else if (testMode != TestMode::Homing && digitalRead(HOME_PIN) == LOW)
       interlocks.trip(bench::Fault::HomeLimit, millis());
   }
+  if (xReturnPermit && dry.failed()) interlocks.trip(bench::Fault::Command,millis());
+  if (xReturnPermit && interlocks.fault!=bench::Fault::None && dry.active()) dry.trip("DRY_RETURN_MOTION_FAULT",millis());
   if (interlocks.fault != bench::Fault::None || dry.failed()) xPositionKnown = false;
-  if (!xPositionKnown || digitalRead(BOARD_EDGE_PIN) == HIGH) xEdgeValid = false;
+  if (!xPositionKnown || (!xContinuousAcquire && digitalRead(BOARD_EDGE_PIN) == HIGH)) xEdgeValid = false;
+  if (interlocks.fault!=bench::Fault::None || dry.failed()) xReturnPermit=xReturnCutUsed=false;
   if (!outputsArmed) xEdge.cancel();
   if (!outputsArmed) { xHoming.cancel(); testMode = TestMode::None; xRemaining = 0; xAbsoluteMove = false; }
   applyOutputs();
@@ -242,15 +252,15 @@ void printHex16(uint16_t value) {
 }
 
 void publishHello() {
-  if (!telemetryRoom(1024)) return;
+  if (!telemetryRoom(1536)) return;
   Serial.print("BENCH_HELLO,PROTO:");
   Serial.print(PROTOCOL_VERSION);
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
   Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,"
-    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V17,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
+    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V18,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
     "PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,"
-    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1,SECOND_CLAMP:D18_MASK_V1");
+    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1,SECOND_CLAMP:D18_MASK_V1,FEED:CONTINUOUS_ACQUIRE_V1,PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1");
 }
 
 void publishPinMap() {
@@ -319,9 +329,9 @@ void publishSafety() {
 }
 
 void publishX() {
-  if (!telemetryRoom(1024)) return;
+  if (!telemetryRoom(1536)) return;
   Serial.print("BENCH_X,ARMED:");
-  Serial.print(outputsArmed && (testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge) ? 1 : 0);
+  Serial.print(outputsArmed && (testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge || testMode==TestMode::Acquisition) ? 1 : 0);
   Serial.print(",CONFIGURED:"); Serial.print(xConfigured ? 1 : 0);
   Serial.print(",READY:"); Serial.print(xReady() ? 1 : 0);
   Serial.print(",HOME_VERIFIED:"); Serial.print(xHomeVerified ? 1 : 0);
@@ -357,7 +367,13 @@ void publishX() {
   Serial.print(",SOFT_MAX_OFFSET:"); Serial.print(xSoftMaxOffset);
   Serial.print(",SOFT_MAX_MILLI:"); Serial.print(carriage::Positioning::milliForOffset(xSoftMaxOffset));
   Serial.print(",TARGET_OFFSET:"); Serial.print(xTargetOffset);
-  Serial.print(",MAX_MOVE:20594,MOVE_KIND:"); Serial.print(testMode == TestMode::Edge ? "EDGE" : xAbsoluteMove ? "ABSOLUTE" : xRemaining ? "JOG" : "IDLE");
+  Serial.print(",MAX_MOVE:20594,MOVE_KIND:"); Serial.print(testMode == TestMode::Edge || (testMode==TestMode::Acquisition && xEdge.active()) ? "EDGE" : xAbsoluteMove ? "ABSOLUTE" : xRemaining ? "JOG" : "IDLE");
+  Serial.print(",ACQUIRE_CONTINUOUS:");Serial.print(xContinuousAcquire ? 1:0);
+  Serial.print(",RETURN_PERMIT:");Serial.print(xReturnPermit ? 1:0);
+  Serial.print(",RETURN_USED:");Serial.print(xReturnCutUsed ? 1:0);
+  Serial.print(",RETURN_START:");Serial.print(xReturnStart);
+  Serial.print(",RETURN_MIN:");Serial.print(xReturnMinimum);
+  Serial.print(",RETURN_AT_LOAD:");Serial.print(xReturnPermit && !xRemaining && xHomeOffset==xTargetOffset ? 1:0);
   Serial.print(",EDGE_STATE:"); Serial.print(xEdge.name());
   Serial.print(",EDGE_ERROR:"); Serial.print(xEdge.error);
   Serial.print(",EDGE_VALID:"); Serial.print(xEdgeValid ? 1 : 0);
@@ -504,13 +520,21 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
       strcmp(command,"DDOWN")==0 || strcmp(command,"DUP")==0 || strcmp(command,"DOFF")==0 ||
       startsWith(command,"DMANUAL ") || strcmp(command,"DTHOLD")==0 || strcmp(command,"DTPRESS")==0 || strcmp(command,"DTRELEASE")==0 ||
       strcmp(command,"DCUT")==0 || startsWith(command,"DOPCUT ") || strcmp(command,"DRELEASE")==0 ||
-      startsWith(command,"DCLAMP2 ") || startsWith(command,"DCUTM ");
+      startsWith(command,"DCLAMP2 ") || startsWith(command,"DCUTM ") || startsWith(command,"DRETURN ");
   if (!dryCommand) return false;
   bool accepted=false;
   uint32_t args[3]={0,0,0};
   if (strcmp(command,"DOFF")==0) { stopTests(); accepted=true; }
   else if (strcmp(command,"DTRELEASE")==0) { if (dry.cycleRunning) dry.stop(millis()); else dry.releaseTrigger(); accepted=true; }
   else if (strcmp(command,"DRELEASE")==0) accepted=dry.releaseStopped(millis());
+  else if (startsWith(command,"DRETURN ")) {
+    accepted=unsignedArgs(command,"DRETURN ",3,args) && xReturnPermit && !xReturnCutUsed && args[2]==xMoveId &&
+      outputsArmed && testMode==TestMode::Stepper && xDirection==1 && digitalRead(X_DIR_PIN)==HIGH &&
+      xPositionKnown && xAbsoluteMove && xRemaining && xHomeOffset>=xReturnStart && xHomeOffset>=xReturnMinimum &&
+      digitalRead(BOARD_EDGE_PIN)==HIGH && interlocks.fault==bench::Fault::None &&
+      dry.returnOperatorCut(args[0],args[1],millis());
+    if (accepted) xReturnCutUsed=true;
+  }
   else if (outputsArmed || xRemaining || interlocks.travel != bench::Travel::Idle || interlocks.fault != bench::Fault::None) {}
   else if (startsWith(command,"DSET ")) accepted=unsignedArgs(command,"DSET ",2,args) && dry.configure(args[0],args[1]);
   else if (startsWith(command,"DCOMMIT ")) accepted=unsignedArgs(command,"DCOMMIT ",1,args) && dry.commit(args[0]);
@@ -601,7 +625,7 @@ void __attribute__((noinline)) handleCommand(char *command) {
       return;
     }
     if (output == 2 && state == 1) { Serial.println("BENCH_ERROR,CODE:BLADE_LOCKED"); applyOutputs(); return; }
-    const char *error = state == 1 && (testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge) ? "STEPPER_MODE_ACTIVE" :
+    const char *error = state == 1 && (testMode == TestMode::Stepper || testMode == TestMode::Homing || testMode == TestMode::Edge || testMode==TestMode::Acquisition) ? "STEPPER_MODE_ACTIVE" :
       interlocks.requestOutput(static_cast<uint8_t>(output), state == 1, millis());
     applyOutputs();
     if (error) {
@@ -635,6 +659,7 @@ void __attribute__((noinline)) handleCommand(char *command) {
     if (!xReady() || !interlocks.arm(millis())) {
       Serial.println("BENCH_ERROR,CODE:X_NOT_READY");
     } else {
+      xReturnPermit=xReturnCutUsed=xContinuousAcquire=false;
       testMode = TestMode::Stepper;
       xRemaining = 0;
       xArmAt = xLastStepAt = millis();
@@ -695,9 +720,10 @@ void __attribute__((noinline)) handleCommand(char *command) {
       xNextPulseUs = micros() + (firstInterval>200000 ? firstInterval:200000);
     }
     publishOutputs(); publishSafety(); publishX();
-  } else if (startsWith(command, "XEDGE ")) {
+  } else if (startsWith(command, "XEDGE ") || startsWith(command,"XACQUIRE ")) {
+    const bool continuous=startsWith(command,"XACQUIRE ");
     int pulses = 0; long offset = -1, trim = -1; char extra = '\0';
-    if (sscanf(command + 6, "%d %ld %ld %c", &pulses, &offset, &trim, &extra) != 3 ||
+    if (sscanf(command + (continuous ? 9:6), "%d %ld %ld %c", &pulses, &offset, &trim, &extra) != 3 ||
         pulses < 1 || pulses > carriage::Positioning::MaxMove ||
         offset < 0 || offset > 160500 || trim < 0 || trim > 160500) {
       commandFault(); Serial.println("BENCH_ERROR,CODE:BAD_EDGE_COMMAND");
@@ -714,8 +740,13 @@ void __attribute__((noinline)) handleCommand(char *command) {
     } else if (!carriage::Positioning::within(xHomeOffset - pulses, xSoftMaxOffset)) {
       Serial.println("BENCH_ERROR,CODE:X_SOFT_LIMIT");
     } else {
+      int32_t reserved=0;
+      if (continuous && !carriage::Positioning::target(carriage::Positioning::milliForOffset(xHomeOffset-pulses)-offset-trim,xSoftMaxOffset,reserved)) {
+        Serial.println("BENCH_ERROR,CODE:X_SOFT_LIMIT");publishX();return;
+      }
       xEdgeValid = false; xSensorOffsetMilli = offset; xTrimMilli = trim;
-      xEdge.start(pulses, millis()); testMode = TestMode::Edge; ++xMoveId;
+      xContinuousAcquire=continuous;xAcquisitionEnd=xHomeOffset-pulses;
+      xEdge.start(pulses, millis()); testMode = continuous ? TestMode::Acquisition:TestMode::Edge; ++xMoveId;
       xRemaining = pulses; xAbsoluteMove = false; xDirection = -1;
       digitalWrite(X_DIR_PIN, LOW);
       // Acquisition always uses stored Gentle, including its acceleration.
@@ -734,6 +765,23 @@ void __attribute__((noinline)) handleCommand(char *command) {
       char move[24]; snprintf(move, sizeof(move), "XMOVE %ld", static_cast<long>(xTruingMilli));
       handleCommand(move);
     }
+  } else if (startsWith(command,"XRETURN ")) {
+    uint32_t values[2]={0,0};int32_t target=0,minimum=0;
+    if (!unsignedArgs(command,"XRETURN ",2,values) || values[1]==0 ||
+        !carriage::Positioning::target(values[0],xSoftMaxOffset,target) ||
+        !carriage::Positioning::target(values[1],xSoftMaxOffset,minimum) ||
+        !xPositionKnown || !outputsArmed || testMode!=TestMode::Stepper || !xConfigured || xRemaining ||
+        dry.active() || dry.failed() || !dry.configId || target<=xHomeOffset || minimum>=xHomeOffset ||
+        static_cast<uint32_t>(millis()-xArmAt)<200 || digitalRead(BOARD_EDGE_PIN)!=HIGH) {
+      Serial.println("BENCH_ERROR,CODE:RETURN_NOT_READY");
+    } else {
+      xReturnPermit=true;xReturnCutUsed=false;xReturnStart=xHomeOffset;xReturnMinimum=minimum;
+      xProfile=3;xDirection=1;xTargetOffset=target;++xMoveId;
+      xRemaining=static_cast<uint16_t>(target-xHomeOffset);xAbsoluteMove=true;
+      xRamp.start(xRemaining,xProfiles[3]);xTiming=carriage::PulseTiming{};
+      digitalWrite(X_DIR_PIN,HIGH);xNextPulseUs=micros()+xRamp.intervalUs();
+    }
+    publishX();
   } else if (startsWith(command, "XMOVE ") || startsWith(command, "XLOAD ")) {
     const bool loadMove = startsWith(command, "XLOAD ");
     long milli = -1; char extra = '\0'; int32_t target = 0;
@@ -863,7 +911,57 @@ void __attribute__((noinline)) serviceXJog() {
   // Rate is rising-edge to rising-edge; the 5us HIGH time is inside the period.
   // Rebase on the actual edge, never the overdue deadline: no catch-up burst.
   xNextPulseUs = pulseAt + xRamp.intervalUs();
-  if (!xRemaining) { xAbsoluteMove = false; publishOutputs(); publishSafety(); publishX(); }
+  if (!xRemaining) {
+    xAbsoluteMove = false;
+    if (xReturnPermit) {interlocks.off(millis());testMode=TestMode::None;applyOutputs();}
+    publishOutputs();publishSafety();publishX();publishDry();
+  }
+}
+
+void retargetAcquire(int32_t target) {
+  const uint16_t from=xRamp.sent+1,to=xRamp.total>xRamp.sent ? xRamp.total-xRamp.sent:1;
+  const uint16_t equivalent=from<to ? from:to;
+  xTargetOffset=target;xRemaining=static_cast<uint16_t>(xHomeOffset-target);
+  xRamp.sent=equivalent-1;xRamp.total=xRamp.sent+xRemaining;
+}
+
+void __attribute__((noinline)) serviceXAcquire() {
+  if (testMode!=TestMode::Acquisition || !outputsArmed) return;
+  updateSafety();if (testMode!=TestMode::Acquisition || !outputsArmed) return;
+  const bool detected=digitalRead(BOARD_EDGE_PIN)==LOW;
+  if (xEdge.active() && detected && !xEdge.asserting) {
+    xCandidateOffset=xHomeOffset;
+    const int32_t targetMilli=carriage::Positioning::milliForOffset(xCandidateOffset)-xSensorOffsetMilli-xTrimMilli;
+    int32_t target=0;
+    if (!carriage::Positioning::target(targetMilli,xSoftMaxOffset,target) || target>xHomeOffset) {
+      xEdge.stage=carriage::EdgeSearch::Stage::Failed;xEdge.error="TARGET_OUT_OF_RANGE";
+    } else retargetAcquire(target);
+  } else if (xEdge.active() && !detected && xEdge.asserting) {
+    if (xHomeOffset<=xAcquisitionEnd) {xEdge.stage=carriage::EdgeSearch::Stage::Failed;xEdge.error="NOT_FOUND";}
+    else retargetAcquire(xAcquisitionEnd);
+  }
+  xEdge.observe(detected,millis());
+  if (xEdge.stage==carriage::EdgeSearch::Stage::Failed) {
+    interlocks.trip(bench::Fault::EdgeFailed,millis());updateSafety();publishX();publishSafety();return;
+  }
+  if (xEdge.stage==carriage::EdgeSearch::Stage::Found && !xEdgeValid) {
+    xEdgeMilli=carriage::Positioning::milliForOffset(xCandidateOffset);
+    xTruingMilli=xEdgeMilli-xSensorOffsetMilli-xTrimMilli;xEdgeValid=true;xAbsoluteMove=true;
+    publishX(); // capture is at the raw edge, not the later debounced position
+  }
+  if (!xRemaining) {
+    if (xEdgeValid) {interlocks.off(millis());testMode=TestMode::None;xAbsoluteMove=false;applyOutputs();publishX();publishSafety();}
+    return;
+  }
+  if (static_cast<int32_t>(micros()-xNextPulseUs)<0) return;
+  if (!carriage::Positioning::within(xHomeOffset-1,xSoftMaxOffset)) {
+    interlocks.trip(bench::Fault::SoftLimit,millis());updateSafety();publishX();return;
+  }
+  const uint32_t pulseAt=micros();xTiming.pulse(pulseAt,xNextPulseUs);
+  digitalWrite(X_STEP_PIN,HIGH);delayMicroseconds(5);digitalWrite(X_STEP_PIN,LOW);
+  --xCommandedSteps;--xHomeOffset;--xRemaining;
+  if (xEdge.active()) xEdge.pulsed(millis());
+  xRamp.pulsed();xLastStepAt=millis();xNextPulseUs=pulseAt+xRamp.intervalUs();
 }
 
 void __attribute__((noinline)) serviceXEdge() {
@@ -1002,6 +1100,7 @@ void loop() {
   readSerialCommands();
   serviceXJog();
   serviceXEdge();
+  serviceXAcquire();
   serviceXHome();
   const uint32_t now = millis();
   updateSafety();

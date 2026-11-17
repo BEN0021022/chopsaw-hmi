@@ -204,7 +204,7 @@ def run(exe):
             assert any(c.startswith('XMOVE 10250') for c in wire.writes), 'Minimum sensor-zone clearing, not zero/full ejection'
             assert d.supervision.coordinator.material.stock.far<10.5
             assert sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)==before_trigger_commands
-            assert any(c.startswith('XEDGE ') and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'
+            assert any(c.startswith(('XEDGE ','XACQUIRE ')) and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'
             # Diagnostics observe the actual sketch; they never insert commands.
             observed=d.diagnostics.report(wire.now)
             assert any(r['controller']=='DESCEND' and r['timing_kind']=='travel limit' for r in observed['phases'])

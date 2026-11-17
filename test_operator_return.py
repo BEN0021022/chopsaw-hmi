@@ -14,7 +14,7 @@ from controller_backends import TEENSY_CARRIAGE
 from test_native_dry_run import Sketch
 
 
-def run(exe):
+def run(exe,overlap=False):
     app=QApplication.instance() or QApplication([])
     if os.name=='nt':
         for font in ('segoeui.ttf','seguisb.ttf','consola.ttf'):QFontDatabase.addApplicationFont('C:/Windows/Fonts/'+font)
@@ -95,7 +95,17 @@ def run(exe):
             assert d.intervention.resume_plan()[0]=='early_return'
             assert d.intervention.resume();flush()
             until(lambda:d.sequence and d.sequence['stage']=='EARLY_RETURN_WAIT')
-            assert w.operator_cut_button.property('earlyReturnAttention') is True and not w.operator_cut_button.isEnabled()
+            assert w.operator_cut_button.property('earlyReturnAttention') is True and w.operator_cut_button.isEnabled()==p.parallel_supported()
+            if overlap:
+                assert d.can_confirm_operator_cut() and p.armed and int(p.x['REMAINING'])>0
+                strokes=wire.strokes;w.operator_cut_button.click();flush()
+                until(lambda:wire.strokes==strokes+1)
+                assert p.armed and int(p.x['REMAINING'])>0 and d.data['OPERATOR']=='1'
+                assert not d.can_confirm_operator_cut()
+                until(lambda:d.waiting_for_board())
+                assert d.sequence['next_index']==2 and p.x['REMAINING']=='0' and not p.armed
+                assert any(c.startswith('DRETURN ') for c in wire.writes) and d.data['CLAMP_MASK']=='0'
+                w.close();wire.close();print('Operator cut during Fast return passed: immediate stroke, no clamps, both finish before next board.');return
             until(lambda:d.sequence and d.sequence['stage']=='WAIT_OPERATOR_CUT')
             assert d.sequence['early_return'] and p.x['PROFILE_ID']=='3'
             assert abs(sup.context().position-w.native_load_target())<.02
@@ -151,4 +161,6 @@ def run(exe):
     print('Operator-return actual-sketch test passed: Gentle acquisition/truing, Normal feed, Fast return, stay for fitting cut, explicit no-clamp stroke, next-board continuation, highlight and Stop.')
 
 
-if __name__=='__main__':run(Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe'))
+if __name__=='__main__':
+    executable=Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe')
+    run(executable);run(executable,overlap=True)

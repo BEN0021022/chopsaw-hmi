@@ -29,6 +29,8 @@ IDENTITY = {
     "EDGE_SEARCH": "BOUNDED_V1", "LOAD":"FAST_V1",
 }
 EDGE = re.compile(r"XEDGE ([1-9][0-9]{0,4}) (0|[1-9][0-9]{0,5}) (0|[1-9][0-9]{0,5})")
+ACQUIRE = re.compile(r"XACQUIRE ([1-9][0-9]{0,4}) (0|[1-9][0-9]{0,5}) (0|[1-9][0-9]{0,5})")
+RETURN = re.compile(r"XRETURN (0|[1-9][0-9]{0,5}) ([1-9][0-9]{0,5})")
 TRUING = re.compile(r"XTRUING (0|[1-9][0-9]{0,9})")
 PROFILE = re.compile(r"XPROFILE ([0-3])(?: ([1-9][0-9]{0,4}) ([1-9][0-9]{0,4}))?")
 PROFILE_DEFAULTS = {0:(40,0),1:(150,200),2:(1000,500),3:(2500,1500)}
@@ -367,7 +369,7 @@ class TeensyCarriagePanel(QWidget):
                 or not self.consent.isChecked() or self.x.get("FAULT") != "NONE"
                 or self.safety.get("FAULT") != "NONE"
                 or self.safety.get("DOOR_CLOSED") != "1"
-                or self.safety.get("SAW_POSITION") != "UP"
+                or (self.safety.get("SAW_POSITION") != "UP" and not (command=='KEEPALIVE' and self.return_overlap()))
                 or self.x.get("ALARM_RAW") != "1"):
             return False
         if self.profile_pending:
@@ -394,7 +396,7 @@ class TeensyCarriagePanel(QWidget):
             return False
         if command == "XARM 1":
             return idle and self.x.get("READY") == "1" and self.x.get("CONFIGURED") == "1"
-        edge = EDGE.fullmatch(command)
+        edge = EDGE.fullmatch(command) or (ACQUIRE.fullmatch(command) if self.continuous_supported() else None)
         if edge:
             return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
                     and self.x.get("JOG_READY") == "1" and self.x.get("POS_KNOWN") == "1"
@@ -408,6 +410,12 @@ class TeensyCarriagePanel(QWidget):
                     and self.x.get("JOG_READY") == "1" and self.x.get("EDGE_VALID") == "1"
                     and truing[1] == self.x.get("MOVE_ID"))
         absolute = ABSOLUTE.fullmatch(command)
+        returning=RETURN.fullmatch(command)
+        if returning:
+            current=160.5+int(self.x.get('HOME_OFFSET','0'))/STEPS_PER_INCH
+            return (self.parallel_supported() and self.armed and not self.pending and self.x.get('REMAINING')=='0'
+                    and self.x.get('JOG_READY')=='1' and self.x.get('POS_KNOWN')=='1' and self.inputs.get('BOARD_EDGE')=='1'
+                    and 0<int(returning[2])<current*1000<int(returning[1])<=int(self.x['SOFT_MAX_MILLI']))
         if absolute:
             return (self.armed and not self.pending and self.x.get("REMAINING") == "0"
                     and self.x.get("JOG_READY") == "1" and self.x.get("POS_KNOWN") == "1"
@@ -433,8 +441,10 @@ class TeensyCarriagePanel(QWidget):
         f = message.fields
         if message.kind == "BENCH_HELLO":
             self.received["HELLO"] = time.monotonic()
-            compatible = all((f.get(k) in ('CARRIAGE_V16','CARRIAGE_V17') if k=='X_APP' else f.get(k)==value) for k,value in IDENTITY.items())
-            compatible=compatible and (f.get('X_APP')!='CARRIAGE_V17' or f.get('HOME_PROFILE')=='EDITABLE_V1')
+            compatible = all((f.get(k) in ('CARRIAGE_V16','CARRIAGE_V17','CARRIAGE_V18') if k=='X_APP' else f.get(k)==value) for k,value in IDENTITY.items())
+            compatible=compatible and (f.get('X_APP') not in ('CARRIAGE_V17','CARRIAGE_V18') or f.get('HOME_PROFILE')=='EDITABLE_V1')
+            self._continuous=compatible and f.get('FEED')=='CONTINUOUS_ACQUIRE_V1'
+            self._parallel=compatible and f.get('PARALLEL_RETURN')=='UNPLUGGED_OPERATOR_V1'
             self.home_profile_supported=compatible and f.get('HOME_PROFILE')=='EDITABLE_V1'
             if self.compatible and not compatible:
                 self.trip_local("Controller identity changed")
@@ -492,6 +502,16 @@ class TeensyCarriagePanel(QWidget):
                         or int(f["TRUING_MILLI"]) != int(f["EDGE_MILLI"])-int(f["SENSOR_OFFSET_MILLI"])-int(f["TRIM_MILLI"])))):
                 self.trip_local("Invalid board-edge telemetry")
                 return
+            if self.parallel_supported():
+                try:
+                    flags=all(f[k] in ('0','1') for k in ('ACQUIRE_CONTINUOUS','RETURN_PERMIT','RETURN_USED','RETURN_AT_LOAD'))
+                    start,minimum,current,target=(int(f[k]) for k in ('RETURN_START','RETURN_MIN','HOME_OFFSET','TARGET_OFFSET'))
+                    valid_return=(flags and (f['RETURN_USED']=='0' or f['RETURN_PERMIT']=='1')
+                                  and (f['RETURN_PERMIT']=='0' or (f['DIR']=='1' and f['PROFILE_ID']=='3' and f['POS_KNOWN']=='1'
+                                       and int(f['SOFT_MIN_OFFSET'])<=minimum<start<=current<=target<=int(f['SOFT_MAX_OFFSET'])))
+                                  and (f['RETURN_AT_LOAD']=='0' or (f['RETURN_PERMIT']=='1' and f['ARMED']=='0' and f['REMAINING']=='0' and current==target)))
+                except (KeyError,ValueError):valid_return=False
+                if not valid_return:self.trip_local('Invalid operator-return telemetry');return
             self.x = f
             self.profile_values = profiles
             if not self._profiles_initialized:
@@ -608,6 +628,12 @@ class TeensyCarriagePanel(QWidget):
 
     def move_to_truing(self):
         return self.request_move(f"XTRUING {self.x.get('MOVE_ID','-1')}")
+
+    def continuous_supported(self):return self.compatible and getattr(self,'_continuous',False)
+    def parallel_supported(self):return self.compatible and getattr(self,'_parallel',False)
+    def return_overlap(self):
+        return (self.parallel_supported() and self.x.get('RETURN_PERMIT')=='1' and self.x.get('RETURN_USED')=='1'
+                and self.x.get('DIR')=='1' and self.x.get('POS_KNOWN')=='1')
 
     def request_move(self, command):
         if self.allowed(command) and self.send(command):

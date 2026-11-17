@@ -2763,7 +2763,7 @@ class MinimalHMI(QMainWindow):
         native=self.active_controller().key==TEENSY_CARRIAGE
         d=self.dry_run
         stage=d.sequence['stage'] if d.sequence else ''
-        waiting=stage in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM')
+        waiting=stage in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM','RETURN_CUT_ACK','RETURN_CUT_WAIT')
         semi_wait=stage=='WAIT_CUT_APPROVAL' or (d.intervention.paused() and bool(d.sequence.get('semi')))
         if getattr(self,'_rendered_auto_mode',None)!=semi:
             self.auto_mode_label.setText('SEMI-AUTO — positions each cut; waits for your cut button.' if semi else
@@ -2782,7 +2782,8 @@ class MinimalHMI(QMainWindow):
         truing=bool(d.sequence and d.sequence['index']<0)
         self.operator_cut_button.setText('Wood secured / run cut\nSaw unplugged' if waiting else
                                         'True-up / advance\nSaw unplugged' if truing else 'Clamp / Cut / Advance\nSaw unplugged')
-        self.operator_cut_button.setToolTip('Available once the carriage stops. No saw stroke is queued during return.' if waiting else
+        self.operator_cut_button.setToolTip(('Press during the authorized Fast return to start this operator cut; both clamps stay OFF.' if self.carriage_tab.parallel_supported() else
+                                             'Available once the carriage stops. No saw stroke is queued during return.') if waiting else
                                             'Enabled when the cycle is waiting for cut approval. You can jog to adjust the positioned cut first.')
         approval_wait=waiting or semi_wait
         if approval_wait and not getattr(self,'_cut_approval_waiting',False):

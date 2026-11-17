@@ -22,6 +22,19 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Continuous acquisition / cut during return - prepared 0.25
+
+- [x] One controller-owned Gentle sensor acquisition plus sensor/kerf advance,
+      without stopping/rearming at detection; raw-coordinate capture and debounce.
+- [x] Explicit operator cut accepted during an authorized Fast early return.
+- [x] Bound to move/config/request and measured blade clearance; clamps inhibited.
+- [x] Both actions must finish before next board; shared stop/fault revocation.
+- [x] App/firmware tests and Teensy 4.1 build; existing legacy paths retained.
+- [ ] Flash/read back 0.25, restore profiles and verify idle outputs.
+- [ ] Operator unloaded acceptance of continuous feed and overlapping return/cut.
+
+See [0.25 workflow/protocol](docs/CONTINUOUS_FEED_RETURN_025.md).
+
 ## App patch 0.24.1 - early attention / saved motion defaults
 
 - [x] Illuminate the operator-cut button before Fast early return, including
@@ -35,6 +48,8 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [ ] Operator acceptance of the earlier amber indication during live dry run.
 
 App-only update; deployed firmware stays 0.24.0. No flash required.
+The disabled-during-return behavior above is historical; 0.25 supersedes it with
+the dedicated return-only cut path described in the newer section.
 
 ## Second / outfeed clamp - deployed 0.24, disabled
 

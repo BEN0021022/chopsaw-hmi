@@ -45,7 +45,7 @@ class Interlocks {
   Inputs inputs = {false, false, false};
   StableAssertion door, up, down;
 
-  void tick(Inputs sample, uint32_t now) {
+  void tick(Inputs sample, uint32_t now, bool authorizedReturnCut=false) {
     inputs = sample;
     door.update(sample.doorClosed, now);
     up.update(sample.sawUp, now);
@@ -53,7 +53,7 @@ class Interlocks {
     if (armed) {
       if (!sample.doorClosed) trip(Fault::DoorOpen, now);
       else if (sample.sawUp && sample.sawDown) trip(Fault::PositionConflict, now);
-      else if (travel == Travel::Idle && (!sample.sawUp || sample.sawDown))
+      else if (!authorizedReturnCut && travel == Travel::Idle && (!sample.sawUp || sample.sawDown))
         trip(Fault::PositionLost, now);
       else if (static_cast<uint32_t>(now - lastKeepalive) >= WatchdogMs)
         trip(Fault::Watchdog, now);

@@ -23,7 +23,7 @@ class CycleIntervention:
         if not s or s['stage'] in ('PAUSING','PAUSED'):return False
         # Do not stop a partly issued/active stroke just to implement a routine
         # pause. Cancel/STOP remains the immediate interruption control.
-        if not after_cut and (d.data.get('CYCLE')=='1' or s['stage'] in ('SAW_ACK','SAW_WAIT')):
+        if not after_cut and (d.data.get('CYCLE')=='1' or s['stage'] in ('SAW_ACK','SAW_WAIT','RETURN_CUT_ACK','RETURN_CUT_WAIT')):
             self.after_cut=True;d.message='Pause requested: finishing this stroke and brake wait, then stopping before the next feed.'
             d.changed.emit();return True
         stage='AFTER_CUT' if after_cut else s['stage']

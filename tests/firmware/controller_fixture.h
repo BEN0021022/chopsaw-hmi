@@ -26,6 +26,8 @@ void restart() {
   xHomeActive = bench::StableAssertion{}; xHomeInactive = bench::StableAssertion{};
   xHoming = carriage::Homing{}; xPositionKnown = false; xHomeOffset = 0; xSoftMaxOffset = 0; xTargetOffset = 0; xAbsoluteMove = false; xProfile = 0; xRamp = carriage::MotionRamp{};
   xEdge = carriage::EdgeSearch{}; xEdgeValid = false;
+  xContinuousAcquire=xReturnPermit=xReturnCutUsed=false;
+  xAcquisitionEnd=xCandidateOffset=xReturnStart=xReturnMinimum=0;
   xEdgeMilli = xTruingMilli = 0; xSensorOffsetMilli = 10800; xTrimMilli = 250;
   xTiming = carriage::PulseTiming{}; Serial.txRoom = 8192;
   for (unsigned id=0; id<4; ++id) xProfiles[id] = carriage::MotionProfile::get(id);

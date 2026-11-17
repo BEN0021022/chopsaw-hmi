@@ -161,6 +161,7 @@ class SupervisionAdapter:
             if p.x.get('EDGE_VALID')=='1' and key!=self.edge_key and self.coordinator.geometry.verified:
                 rear=self.coordinator.geometry.pusher(c.position).near
                 front=self.coordinator.geometry.sensor.near
+                if p.x.get('ACQUIRE_CONTINUOUS')=='1':front+=c.position-int(p.x['EDGE_MILLI'])/1000
                 if rear>=front:
                     self.coordinator.locate_stock(Span(front,rear),'real edge acquisition')
                     self.owner.cut_history.new_board(rear-front, 'edge_estimate')
