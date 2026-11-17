@@ -5,6 +5,10 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-16)
 
+App patch **0.25.1** preserves acquisition rejection reasons and automatically
+saves the evaluated board/reference/controller snapshot for investigation.
+No firmware change; see [acquisition diagnostics](docs/ACQUISITION_DIAGNOSTICS_0251.md).
+
 Deployed **0.25** adds continuous Gentle acquisition through sensor-distance-plus-
 kerf truing, and an explicit operator cut during an authorized Fast early return.
 Cut-list advancement waits for both the return and stroke. Second clamp remains

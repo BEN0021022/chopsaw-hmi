@@ -3,13 +3,14 @@ import math
 import re
 import secrets
 import time
-from dataclasses import replace
+from datetime import datetime, timezone
+from dataclasses import asdict, replace
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QCheckBox, QPushButton
 from sensor_bench.protocol import parse_line
 from simulator import VirtualController
 from supervision_ui import SupervisionAdapter
-from automation_supervision import Outcome, plan_board_feed, assess_manual_cycle
+from automation_supervision import Decision, Outcome, plan_board_feed, assess_manual_cycle
 from cycle_diagnostics import CycleDiagnostics
 from cycle_intervention import CycleIntervention
 
@@ -651,6 +652,41 @@ class NativeDryRun(QObject):
                 or p.inputs.get('BOARD_EDGE')!='1' or not self.owner.cut_list
                 or self.acquisition_command() is None)
 
+    def acquisition_rejected(self, decision, context):
+        """Retain the first actual rejection; capture data without actuator writes."""
+        s=self.sequence
+        if not s:return
+        if s.get('acquisition_rejection'):return
+        detail={'code':decision.code,'reason':decision.reason,'context':asdict(context),
+                'decision':asdict(decision),'carriage_readback':dict(self.owner.carriage_tab.x),
+                'controller_readback':dict(self.data),'inputs_raw':dict(self.owner.carriage_tab.inputs),
+                'sequence_before_rejection':dict(s)}
+        s['acquisition_rejection']={'code':decision.code,'reason':decision.reason}
+        s['stage']='BOARD_TOO_SHORT' if decision.code=='NEXT_BOARD_REQUIRED' else 'OPERATOR_REQUIRED'
+        s['at']=time.monotonic()
+        self.supervision.coordinator.paused=decision
+        self.supervision.last_decision=decision
+        self.diagnostics.note('ACQUISITION_REJECTED',decision.code+': '+decision.reason,time.monotonic(),detail)
+        try:
+            folder=self.owner.cut_history.path.parent/'diagnostics'
+            folder.mkdir(parents=True,exist_ok=True)
+            path=folder/('acquisition-rejected-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')+'.json')
+            self.diagnostics.write_report(path,time.monotonic(),{'acquisition_rejection':detail})
+            s['acquisition_rejection']['snapshot_path']=str(path)
+        except (OSError,ValueError,TypeError) as error:
+            s['acquisition_rejection']['write_error']=str(error)
+        self.owner.log.append('ACQUISITION REJECTED ['+decision.code+']: '+decision.reason+' '+
+                              s['acquisition_rejection'].get('snapshot_path',s['acquisition_rejection'].get('write_error','')))
+        self.message=self.acquisition_rejection_message()
+
+    def acquisition_rejection_message(self):
+        result=self.sequence['acquisition_rejection']
+        message=f"Acquisition paused [{result['code']}]: {result['reason']} No saw cycle was sent."
+        if result['code']=='NEXT_BOARD_REQUIRED':message+=' Load suitable stock with detector clear before starting a new acquisition.'
+        if result.get('snapshot_path'):message+=' Diagnostic saved: '+result['snapshot_path']
+        elif result.get('write_error'):message+=' Diagnostic could not be saved: '+result['write_error']
+        return message
+
     def advance_sequence(self):
         # Implemented as ACK/state transitions, never PC timers commanding valve phases.
         s=self.sequence; p=self.owner.carriage_tab
@@ -676,9 +712,7 @@ class NativeDryRun(QObject):
                 material=replace(material,stock=material.stock.shifted(proposed-c.position))
             decision=plan_board_feed(replace(c,position=proposed,material=material),s['cuts'][s['next_index']],s['kerf'])
             if not decision.proceeds or decision.code=='NEXT_BOARD_REQUIRED':
-                self.supervision.coordinator.paused=decision
-                next_stage('BOARD_TOO_SHORT')
-                self.message=decision.reason+' Load suitable stock and start acquisition again; no truing stroke was sent.'
+                self.acquisition_rejected(decision,replace(c,position=proposed,material=material))
                 return
             if not p.select_profile(1): self.stop('Cannot retain Gentle truing profile'); return
             next_stage('TRUE_PROFILE')
@@ -698,10 +732,11 @@ class NativeDryRun(QObject):
                 reference=self.supervision.context()
                 if (not reference.material.located or reference.sensor_clear is None or
                         reference.material.stock.overlaps(reference.geometry.sensor)==reference.sensor_clear):
-                    next_stage('OPERATOR_REQUIRED');self.message='Truing position reached; board detector and material reference disagree. Reconcile before the first stroke.';return
+                    self.acquisition_rejected(Decision(Outcome.OPERATOR_REQUIRED,'DETECTOR_REFERENCE_MISMATCH',
+                        'Truing position reached; board detector and material reference disagree. Reconcile before the first stroke.'),reference);return
                 capacity=plan_board_feed(reference,s['cuts'][s['next_index']],s['kerf'])
                 if not capacity.proceeds or capacity.code=='NEXT_BOARD_REQUIRED':
-                    next_stage('BOARD_TOO_SHORT');self.message=capacity.reason+' No truing stroke was sent.';return
+                    self.acquisition_rejected(capacity,reference);return
             # Captured stock was translated by the real sensor+kerf advance.
             # Do not fabricate a new material origin to hide a truing mismatch.
             decision=self.supervision.review()
@@ -850,6 +885,9 @@ class NativeDryRun(QObject):
                 self.message=f"Board {s['board']} complete. Load the next board; next cut is {s['next_index']+1}. Press Start next board when ready."
             else:
                 self.sequence=None; self.message='Unloaded dry list complete; production cut-list progress unchanged.'
+            return
+        elif stage in ('BOARD_TOO_SHORT','OPERATOR_REQUIRED') and s.get('acquisition_rejection'):
+            self.message=self.acquisition_rejection_message()
             return
         elif stage in ('WAIT_NEW_BOARD','BOARD_TOO_SHORT'):
             self.message=(f"Board {s['board']}: waiting for suitable stock for cut {s['next_index']+1}. "
