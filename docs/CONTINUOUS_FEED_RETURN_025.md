@@ -1,6 +1,7 @@
 # Continuous acquisition and operator cut during return — 0.25
 
-Prepared 2026-11-16; firmware **0.25.0 / CARRIAGE_V18**. Existing 0.24 and earlier
+Flashed/read back 2026-11-16; firmware **0.25.0 / CARRIAGE_V18**, source `da6de73`.
+Existing 0.24 and earlier
 protocols remain supported by the app; the new behavior needs this firmware.
 Scope remains saw-mains-unplugged commissioning, not proof of grip or powered-cut
 acceptance. Second clamp stays disabled unless separately commissioned/enabled.
@@ -72,10 +73,41 @@ acceptance during return, late stationary approval, once-only history, waiting
 for both activities, acquisition, multi-board, pause/resume and legacy features.
 Physical operator acceptance is still required after flashing.
 
-Regression note: two full-suite attempts on Windows CPython 3.13.5 terminated
+Regression note: full-suite attempts on Windows CPython 3.13.5 terminated
 inside the interpreter with `Executing a cache`, at the input-validity generator
 in `safe_link`. Isolated cases passed. That fixed three-input predicate now uses
 explicit equivalent comparisons, removing the generator allocation from this
-frequent callback. This is a localized mitigation; the native crash's root cause
-has not been established. Original failing logs are retained in the deployment
+frequent callback. Another native failure still occurred; this did not resolve
+the runtime issue. The native crash's root cause has not been established.
+Original failing logs are retained in the deployment
 archive alongside the subsequent regression result.
+
+## Deployment record
+
+COM4 readback confirmed 0.25.0 / CARRIAGE_V18, both new capabilities,
+unconfigured/unhomed/disarmed startup, no fault, all valve outputs OFF,
+second clamp disabled and all return/acquisition permission flags zero.
+Only identity/status reads and captured profile restoration were sent by the
+agent. Gentle 600/600, Normal 2500/900 and Fast 3500/2000 were restored and
+read back. No Home, arm, carriage or valve command was issued.
+
+Archive: `tmp/commissioning/0.25.0` (source ZIP, HEX, before/after records,
+restored profiles, test logs, app startup and manifest). Source commit:
+`da6de7315c228548724ab5caa22c360275617a14`; firmware tree:
+`7dd0c3ebc540429a3d65d73fae568af8d880fb40`. HEX SHA-256:
+`b8ccab17c949355c4d9e98b2ade6442071abc1aafdaaff543466f5a27af4dd22`.
+
+A private CPython 3.13.17 runtime was extracted to `tmp/python-3.13.17` for
+comparison, using the existing pinned PyQt/serial packages. System Python and
+dependencies were not upgraded. Official embeddable archive:
+[Python 3.13.17 Windows package](https://www.python.org/ftp/python/3.13.17/python-3.13.17-embed-amd64.zip),
+SHA-256 `9e35319bffedab8b36ad44d8f377cb4f1733bcec257a0b6d04d94f01486ddb38`.
+Its `python313._pth` contains the project root and installed 3.13 site-packages
+paths. Launch this private copy with `tmp/python-3.13.17/python.exe main.py`.
+This comparison does not establish the old runtime crash's root cause.
+The full run on 3.13.17 also terminated natively in the startup-profiles test
+(Windows event log identifies Qt6Core.dll); that case passed separately, as did
+the remaining second-clamp and wheel tests. Thus every feature-specific case
+passed, but a clean full-harness run has **not** been established. The native
+test-process crash remains an open validation limitation. The app is reopened
+idle on the private runtime for operator unplugged commissioning only.

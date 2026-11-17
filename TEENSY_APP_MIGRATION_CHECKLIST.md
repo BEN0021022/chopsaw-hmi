@@ -1,8 +1,8 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-16. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current deployed source/build: custom **0.24.0 / CARRIAGE_V17**, flashed/read back
-on COM4, 2026-11-16, source `2ad8673`. Second clamp remains disabled; existing
+Current deployed source/build: custom **0.25.0 / CARRIAGE_V18**, flashed/read back
+on COM4, 2026-11-16, source `da6de73`. Second clamp remains disabled; existing
 carriage profiles restored. Startup OFF, unconfigured/unhomed, no faults or queued motion.
 Integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
@@ -22,7 +22,7 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
-## Continuous acquisition / cut during return - prepared 0.25
+## Continuous acquisition / cut during return - deployed 0.25
 
 - [x] One controller-owned Gentle sensor acquisition plus sensor/kerf advance,
       without stopping/rearming at detection; raw-coordinate capture and debounce.
@@ -30,7 +30,11 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Bound to move/config/request and measured blade clearance; clamps inhibited.
 - [x] Both actions must finish before next board; shared stop/fault revocation.
 - [x] App/firmware tests and Teensy 4.1 build; existing legacy paths retained.
-- [ ] Flash/read back 0.25, restore profiles and verify idle outputs.
+- [x] Flash/read back 0.25, restore profiles and verify idle outputs.
+- [x] Reopen matching app on Automatic; live/fresh identity, outputs OFF, no queued action.
+- [ ] Resolve intermittent native Qt/interpreter crashes in automated test
+      processes. Individual cases pass; full harness has not completed cleanly
+      on either 3.13.5 or private 3.13.17. See deployment notes/logs.
 - [ ] Operator unloaded acceptance of continuous feed and overlapping return/cut.
 
 See [0.25 workflow/protocol](docs/CONTINUOUS_FEED_RETURN_025.md).

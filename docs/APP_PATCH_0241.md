@@ -2,6 +2,9 @@
 
 App-only changes for firmware 0.24.0 (also compatible with 0.22/0.23).
 
+Historical behavior below: [0.25](CONTINUOUS_FEED_RETURN_025.md) supersedes the
+disabled-during-return rule with an explicitly authorized return-only cut path.
+
 The operator-cut button illuminates amber in EARLY_RETURN_ARM, before the Fast
 return command, and stays amber throughout return/disarm. This visual attention
 state is independent of click eligibility. Returning clicks remain ignored;
