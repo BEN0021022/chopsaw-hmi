@@ -70,7 +70,7 @@ def run(exe,legacy=False):
      assert w.auto_second_clamp_label.text()=='ON COMMANDED' and w.manual_pneumatics.labels['second'].text()=='ON commanded'
      d.data=original;w.refresh_teensy_tabs()
     # Existing settings gain no silent enable; both saved footprint and protocol are required.
-    for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,keepout=1,margin=.5,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():sup.fields[key].setValue(value)
+    for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,keepout=1,margin=.5,max_clear_push=160).items():sup.fields[key].setValue(value)
     assert sup.save()
     if legacy:
      sup.second_enabled.setChecked(True);assert not sup.save()

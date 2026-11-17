@@ -102,7 +102,7 @@ def run(exe):
             # uncommissioned and cannot authorize automatic cuts.
             sup=d.supervision
             for key,value in dict(main_near=9,main_far=10,front_offset=0,rear_extent=6,
-                                  keepout=1,margin=.25,sensor_near=10.8,sensor_far=10.8,max_clear_push=162).items():
+                                  keepout=1,margin=.25,max_clear_push=162).items():
                 sup.fields[key].setValue(value)
             sup.verified.setChecked(True); sup.automatic_clear.setChecked(True)
             assert sup.save()
@@ -153,7 +153,6 @@ def run(exe):
             w.load_cut_list_lines(['2 A','3 B'])
             w.clear_at_list_end.setChecked(True) # explicit end-of-list clearing mode
             w.board_sensor_location_input.setValue(10.5)
-            sup.fields['sensor_near'].setValue(10.5); sup.fields['sensor_far'].setValue(10.5)
             records(wire.exchange('@SENSOR_ZONE 10.5'))
             sup.verified.setChecked(True); assert sup.save()  # explicitly verify changed test-fixture truing datum
             before=(list(w.cut_list),w.current_cut_index,w.sim_next_piece_index)

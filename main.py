@@ -180,7 +180,6 @@ class MinimalHMI(QMainWindow):
         self.pending_early_return = False
         self.is_early_returning = False
         self.board_sensor_tripped = False
-        self.board_sensor_distance_inches = 10.8
         self.current_draw_amps = 0.0
         self.current_limit_amps = 2.5
         self.current_trip_delay_ms = 150
@@ -1070,11 +1069,12 @@ class MinimalHMI(QMainWindow):
         self.kerf_input.setValue(0.100)
         self.kerf_input.setToolTip("Blade cut width used in cut-list and stock calculations.")
         geometry.addRow("Blade Kerf (in):", self.kerf_input)
+        initial_sensor_distance=self.dry_run.supervision.sensor_distance()
         self.board_sensor_location_input = QDoubleSpinBox()
         self.board_sensor_location_input.setRange(0, 2000)
         self.board_sensor_location_input.setDecimals(4)
-        self.board_sensor_location_input.setValue(10.80)
-        self.board_sensor_location_input.setToolTip("Distance from the saw blade to the board sensor.")
+        self.board_sensor_location_input.setValue(initial_sensor_distance)
+        self.board_sensor_location_input.setToolTip("Distance from the saw blade to the laser board sensor. Used for truing motion, board tracking and sensor-zone clearing.")
         geometry.addRow("Board Sensor Distance (in):", self.board_sensor_location_input)
         for field in (self.kerf_input, self.board_sensor_location_input):
             field.setMinimumHeight(44)
@@ -1083,6 +1083,8 @@ class MinimalHMI(QMainWindow):
         root.addWidget(cutting)
         self.cylinder_timing = CylinderTimingPanel(self.settings)
         self.supervision_settings = self.dry_run.supervision.controls()
+        self.board_sensor_location_input.valueChanged.connect(self.dry_run.supervision.sync_reference)
+        self.kerf_input.valueChanged.connect(self.dry_run.supervision.sync_reference)
         root.addWidget(self.supervision_settings)
         root.addWidget(self.cylinder_timing)
         history_note = QLabel('Cut history: '+str(self.cut_history.path)+'\n'

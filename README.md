@@ -5,6 +5,10 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-16)
 
+App patch **0.25.2** uses the Board Sensor Distance beside Kerf for both motion
+and detector geometry. Duplicate near/far fields are removed and old saved
+geometry migrates automatically. See [single sensor distance](docs/SINGLE_SENSOR_DISTANCE_0252.md).
+
 App patch **0.25.1** preserves acquisition rejection reasons and automatically
 saves the evaluated board/reference/controller snapshot for investigation.
 No firmware change; see [acquisition diagnostics](docs/ACQUISITION_DIAGNOSTICS_0251.md).

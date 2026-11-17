@@ -26,8 +26,10 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
 - [x] App 0.25.1: retain exact acquisition rejection reason and save a diagnostic
       snapshot; distinguish short stock from state/reference refusals.
-- [ ] Reproduce physical acquisition refusal and identify its exact cause from
-      the snapshot; repeated restart/Stop is not treated as a resolution.
+- [x] Physical acquisition refusal identified: motion offset 10.5 versus model
+      detector 10.8, producing NO_STOCK_AT_CUT; operator confirmed matching them resolved it.
+- [x] App 0.25.2: one Board Sensor Distance drives motion/model/clearing; remove
+      duplicate near/far fields and migrate old saved geometry.
 - [x] One controller-owned Gentle sensor acquisition plus sensor/kerf advance,
       without stopping/rearming at detection; raw-coordinate capture and debounce.
 - [x] Explicit operator cut accepted during an authorized Fast early return.

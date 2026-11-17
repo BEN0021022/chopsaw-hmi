@@ -47,7 +47,7 @@ def run(exe):
             assert not any(c.startswith(('XARM','DARM','DMANUAL','XHOME','DCUT')) for c in wire.writes)
             sup=d.supervision
             for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,
-                                  keepout=1,margin=.5,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():
+                                  keepout=1,margin=.5,max_clear_push=160).items():
                 sup.fields[key].setValue(value)
             assert sup.save() # numeric data only, no verification checkbox
             assert sup.verified.isHidden() and sup.automatic_clear.isHidden()

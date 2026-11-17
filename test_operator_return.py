@@ -56,7 +56,7 @@ def run(exe,overlap=False):
                 assert p.edit_profile(profile,rate,accel);flush();tick()
             sup=d.supervision
             for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,
-                                  keepout=1,margin=.5,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():
+                                  keepout=1,margin=.5,max_clear_push=160).items():
                 sup.fields[key].setValue(value)
             assert sup.save();w.kerf_input.setValue(.12)
             w.load_cut_list_lines(['142 first','2 last usable','40 next board'])

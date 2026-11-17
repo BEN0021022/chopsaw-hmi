@@ -42,7 +42,7 @@ def run(exe):
             for profile in (1,2,3):assert p.edit_profile(profile,600,600);flush();tick()
             sup=d.supervision
             for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,
-                                  keepout=1,margin=.5,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():sup.fields[key].setValue(value)
+                                  keepout=1,margin=.5,max_clear_push=160).items():sup.fields[key].setValue(value)
             assert sup.save();w.kerf_input.setValue(.12);w.load_cut_list_lines(['20 first','20 second'])
             assert w.start_auto_cycle();flush();until(lambda:stage('SEARCH'))
             tick(400);assert d.intervention.pause();flush();until(lambda:d.intervention.paused())

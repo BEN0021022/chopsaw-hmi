@@ -48,9 +48,12 @@ def run(exe):
             assert p.edit_profile(1,600,600);flush();tick()
             sup=d.supervision
             for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,
-                                  keepout=1,margin=.5,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():
+                                  keepout=1,margin=.5,max_clear_push=160).items():
                 sup.fields[key].setValue(value)
             assert sup.save();w.kerf_input.setValue(.12);w.load_cut_list_lines(['20 delayed detection'])
+            # Reproduce calibration through ONLY the single cutting field.
+            w.board_sensor_location_input.setValue(10.5)
+            assert sup.coordinator.geometry.sensor.near==sup.coordinator.geometry.sensor.far==10.5
             assert p.edge_search.value()==2 # commissioning widget must not cap Auto
             saved=p.x.copy()
             for offset in (-14,-5000,-12000):
@@ -58,8 +61,8 @@ def run(exe):
                 count=int(d.acquisition_command().split()[1])
                 capture=160.5+(offset-count)/127.12
                 assert offset-count>=int(saved['SOFT_MIN_OFFSET']) and count>0
-                assert capture-10.8-.12>sup.coordinator.geometry.cut_keepout
-            p.x=dict(saved,HOME_OFFSET=str(math.ceil((11.92-160.5)*127.12)))
+                assert capture-10.5-.12>sup.coordinator.geometry.cut_keepout
+            p.x=dict(saved,HOME_OFFSET=str(math.ceil((11.62-160.5)*127.12)))
             assert d.acquisition_command() is None
             p.x=dict(saved,POS_KNOWN='0');assert d.acquisition_command() is None
             p.x=saved
@@ -72,8 +75,12 @@ def run(exe):
             if p.continuous_supported():
                 assert p.armed and int(p.x['REMAINING'])>0
                 assert not any(c.startswith('XTRUING ') for c in wire.writes)
-            assert int(p.x['EDGE_MILLI'])-int(p.x['TRUING_MILLI'])==10920
+            assert int(p.x['EDGE_MILLI'])-int(p.x['TRUING_MILLI'])==10620
+            assert p.x['SENSOR_OFFSET_MILLI']=='10500'
             assert p.x['PROFILE_ID']=='1'
+            until(lambda:d.data.get('DONE')=='1' and d.data.get('CYCLE')=='0')
+            assert d.sequence and d.sequence['stage'] not in ('BOARD_TOO_SHORT','OPERATOR_REQUIRED')
+            assert wire.strokes==1,'Single-distance calibration must accept the truing stroke'
             d.stop();flush();tick();records(wire.exchange('@PIN 21 1'));tick()
             # New acquisition without detector must stop at its geometric bound,
             # preserve the actual cause, and never send a truing/cylinder command.

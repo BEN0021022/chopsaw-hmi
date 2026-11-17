@@ -52,7 +52,7 @@ def run(exe):
                 assert p.edit_profile(profile,rate,accel);flush();tick()
             sup=d.supervision
             for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,
-                                  keepout=1,margin=.5,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():sup.fields[key].setValue(value)
+                                  keepout=1,margin=.5,max_clear_push=160).items():sup.fields[key].setValue(value)
             assert sup.save();w.kerf_input.setValue(.12)
             w.auto_modes.setCurrentIndex(1);w.tabs.setCurrentWidget(w.auto_tab);w.resize(1440,1000);w.show();app.processEvents()
             assert not w.operator_cut_button.isHidden() and not w.operator_cut_button.isEnabled()

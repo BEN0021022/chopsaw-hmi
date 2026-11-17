@@ -7,7 +7,10 @@ acquisition capacity-check rejection, including reference and machine-state
 failures. That hid the reason needed to investigate repeated refusals after
 Stop/Cancel or an app restart. A reported pair of 38.313-inch cuts at about
 82.125 inches passes the pure capacity check with the saved 0.12-inch kerf.
-The cause on the physical machine is not yet identified.
+The initial cause was not yet identified when this patch was prepared. The
+captured report subsequently showed a 10.5-inch motion offset versus a
+10.8-inch detector model; matching them resolved the operator's reproduction.
+[App patch 0.25.2](SINGLE_SENSOR_DISTANCE_0252.md) removes those duplicate values.
 
 Acquisition rejection now preserves the decision code/reason in the status
 and serial log. Only NEXT_BOARD_REQUIRED uses BOARD_TOO_SHORT. Other refusal

@@ -4,6 +4,7 @@ Geometry commissioning is data-only. Second-clamp execution also requires the
 matching controller capability and acknowledged enable configuration.
 """
 import json
+import math
 from dataclasses import replace
 from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QFormLayout, QLabel, QDoubleSpinBox, QCheckBox, QPushButton
 from automation_supervision import AutomationCoordinator, Geometry, Clamp, Span, Context, Outcome
@@ -23,11 +24,16 @@ class SupervisionAdapter:
                 # Saved dimensions are machine data, not a per-session waiver.
                 # Reject invalid/empty defaults; no checkbox is needed to reuse
                 # valid operator-entered measurements on the next startup.
-                self.coordinator.configure(self.geometry_from_data(dict(data,verified=True,automatic_clearance=True)))
+                self.coordinator.configure(self.geometry_from_data(dict(data,verified=True,automatic_clearance=True),self.sensor_distance()))
+                # Retire old duplicated coordinates only after validating the
+                # migrated geometry. The saved cutting setting is authoritative.
+                if 'sensor_near' in data or 'sensor_far' in data:
+                    data.pop('sensor_near',None);data.pop('sensor_far',None)
+                    owner.settings.setValue('supervision/geometry_v1',json.dumps(data))
         except (ValueError,TypeError,KeyError): pass  # Invalid stored geometry stays uncommissioned.
 
     @staticmethod
-    def geometry_from_data(d):
+    def geometry_from_data(d,sensor_distance):
         enabled=d.get('second_enabled',False)
         if type(enabled) is not bool:raise ValueError('Second clamp enable must be a boolean')
         near,far=float(d.get('outfeed_near',0)),float(d.get('outfeed_far',0))
@@ -38,7 +44,7 @@ class SupervisionAdapter:
                     Clamp('outfeed',Span(-far,-near),'cut_piece',enabled,enabled,2)),
             pusher_front_offset=float(d['front_offset']),pusher_rear_extent=float(d['rear_extent']),
             cut_keepout=float(d['keepout']),margin=float(d['margin']),
-            sensor=Span(float(d['sensor_near']),float(d['sensor_far'])),
+            sensor=Span(sensor_distance,sensor_distance),
             max_clear_push=float(d['max_clear_push']),automatic_clearance=d.get('automatic_clearance',False))
 
     def controls(self):
@@ -50,10 +56,10 @@ class SupervisionAdapter:
         g=self.coordinator.geometry; main=next(iter(g.clamps),None)
         values={'main_near':main.footprint.near if main else 0,'main_far':main.footprint.far if main else 0,
                 'front_offset':g.pusher_front_offset,'rear_extent':g.pusher_rear_extent,'keepout':g.cut_keepout,
-                'margin':g.margin,'sensor_near':g.sensor.near,'sensor_far':g.sensor.far,'max_clear_push':g.max_clear_push}
+                'margin':g.margin,'max_clear_push':g.max_clear_push}
         labels=('Main clamp pad near edge','Main clamp pad far edge','Pusher projection toward blade',
                 'Pusher body extent toward Home','Blade swept-area keepout','Geometry clearance margin',
-                'Board detector zone near edge','Board detector zone far edge','Maximum cleanup push')
+                'Maximum cleanup push')
         for (key,value),label in zip(values.items(),labels):
             spin=QDoubleSpinBox(); spin.setRange(0,162); spin.setDecimals(4); spin.setValue(value); spin.setSuffix(' in')
             spin.setMinimumHeight(36); self.fields[key]=spin; form.addRow(label,spin)
@@ -87,7 +93,7 @@ class SupervisionAdapter:
         data={k:w.value() for k,w in self.fields.items()}
         data.update(verified=True,automatic_clearance=True,second_enabled=self.second_enabled.isChecked())
         data['reference_signature']=self.current_reference_signature()
-        try: g=self.geometry_from_data(data)
+        try: g=self.geometry_from_data(data,self.sensor_distance())
         except (ValueError,TypeError) as e: self.feedback.setText(str(e)); return False
         self.owner.settings.setValue('supervision/geometry_v1',json.dumps(data)); self.coordinator.configure(g)
         self.reference_signature=tuple(data['reference_signature'])
@@ -99,13 +105,29 @@ class SupervisionAdapter:
         if not hasattr(self.owner,'board_sensor_location_input') or not hasattr(self.owner,'carriage_tab'): return ()
         return (self.owner.board_sensor_location_input.value(),self.owner.kerf_input.value(),'sensor_plus_kerf_v1')
 
+    def sensor_distance(self):
+        widget=getattr(self.owner,'board_sensor_location_input',None)
+        if widget is not None:return float(widget.value())
+        try:value=float(self.owner.settings.value('board_sensor_location',10.8))
+        except (ValueError,TypeError):return 10.8
+        return value if math.isfinite(value) and 0<=value<=2000 else 10.8
+
+    def sync_reference(self,*_args):
+        """The cutting field supplies both the motion offset and point detector."""
+        current=self.current_reference_signature()
+        if not current:return
+        g=self.coordinator.geometry;point=Span(self.sensor_distance(),self.sensor_distance())
+        geometry_changed=g.sensor!=point
+        if geometry_changed or current!=self.reference_signature:
+            if geometry_changed:self.coordinator.configure(replace(g,sensor=point))
+            else:self.coordinator.invalidate('Sensor/kerf parameters changed; acquire a new material reference.')
+            self.reference_signature=current
+            self.position=None;self.last_decision=None
+            if hasattr(self,'feedback'): self.feedback.setText('Reference parameters updated. Acquire a new board before Auto.')
+
     def context(self):
         p=self.owner.carriage_tab; d=self.owner.dry_run
-        current=self.current_reference_signature()
-        if current and self.coordinator.geometry.verified and current!=self.reference_signature:
-            self.coordinator.invalidate('Sensor/kerf parameters changed; acquire a new material reference.')
-            self.reference_signature=current
-            if hasattr(self,'feedback'): self.feedback.setText('Reference parameters updated. Acquire a new board before Auto.')
+        self.sync_reference()
         try: pos=160.5+int(p.x['HOME_OFFSET'])/127.12 if p.x.get('POS_KNOWN')=='1' else None
         except (KeyError,ValueError): pos=None
         sensor=p.inputs.get('BOARD_EDGE') if p.fresh('INPUTS') else None
@@ -159,6 +181,15 @@ class SupervisionAdapter:
                 self.position=None; self.edge_key=None; return
             key=(p.x.get('MOVE_ID'),p.x.get('EDGE_MILLI'))
             if p.x.get('EDGE_VALID')=='1' and key!=self.edge_key and self.coordinator.geometry.verified:
+                # A delayed old capture cannot restore a board reference after
+                # calibration changed. Require the parameters of the new move.
+                try:
+                    captured=(int(p.x['SENSOR_OFFSET_MILLI']),int(p.x['TRIM_MILLI']))
+                    expected=tuple(int(math.floor(v*1000+.5)) for v in self.current_reference_signature()[:2])
+                except (KeyError,ValueError):captured=None;expected=()
+                if captured!=expected:
+                    self.coordinator.invalidate('Captured edge uses previous sensor/kerf parameters; acquire a new board.')
+                    self.edge_key=key;self.position=c.position;return
                 rear=self.coordinator.geometry.pusher(c.position).near
                 front=self.coordinator.geometry.sensor.near
                 if p.x.get('ACQUIRE_CONTINUOUS')=='1':front+=c.position-int(p.x['EDGE_MILLI'])/1000

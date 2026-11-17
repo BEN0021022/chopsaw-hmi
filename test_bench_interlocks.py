@@ -15,6 +15,7 @@ def main():
     output_dir = root / "tmp" / "firmware-tests"
     output_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run([sys.executable,str(root/'test_acquisition_diagnostics.py')],check=True,cwd=root)
+    subprocess.run([sys.executable,str(root/'test_sensor_distance.py')],check=True,cwd=root)
     subprocess.run([sys.executable,str(root/'test_automation_supervision.py')],check=True,cwd=root)
     subprocess.run([sys.executable,str(root/'test_machine_preview.py')],check=True,cwd=root)
     subprocess.run([sys.executable,str(root/'test_cut_history.py')],check=True,cwd=root)

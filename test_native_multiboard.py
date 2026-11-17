@@ -50,7 +50,7 @@ def run_case(exe, lengths, needs_cleanup):
             # Test-only footprint avoids clamp overlap so this case isolates
             # board capacity. Production dimensions are never changed by tests.
             for key,value in dict(main_near=2,main_far=3,front_offset=0,rear_extent=6,
-                                  keepout=1,margin=.25,sensor_near=10.8,sensor_far=10.8,max_clear_push=160).items():
+                                  keepout=1,margin=.25,max_clear_push=160).items():
                 sup.fields[key].setValue(value)
             sup.verified.setChecked(True); sup.automatic_clear.setChecked(True); assert sup.save()
             w.load_cut_list_lines([f'{length} test' for length in lengths])
