@@ -5,9 +5,10 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-19)
 
-Prepared **0.26** returns the carriage during the last clamped cut, after the
+Deployed **0.26** returns the carriage during the last clamped cut, after the
 selected clamps settle. It keeps the carriage forward for another fitting cut
 or a required cleanup push, and waits for both cut and return before advancing.
+Flashed/read back on COM4; operator unplugged acceptance pending.
 See [clamped early return](docs/CLAMPED_EARLY_RETURN_026.md).
 
 App patch **0.25.2** uses the Board Sensor Distance beside Kerf for both motion

@@ -1,8 +1,9 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-19. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current deployed source/build: custom **0.25.0 / CARRIAGE_V18**, flashed/read back
-on COM4, 2026-11-16, source `da6de73`. Second clamp remains disabled; existing
+Current deployed source/build: custom **0.26.0 / CARRIAGE_V19**, flashed/read back
+on COM4, 2026-11-19, source `bdb7efe`. Second clamp enabled in saved app settings;
+controller boots disabled until normal configuration; existing
 carriage profiles restored. Startup OFF, unconfigured/unhomed, no faults or queued motion.
 Integrated saw-unplugged
 Manual/Auto cycles and one-click full-range Home. Physical acceptance pending.
@@ -22,14 +23,16 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
-## Clamped last-cut early return - prepared 0.26
+## Clamped last-cut early return - deployed 0.26
 
 - [x] Select last usable cut; remain forward for another fitting cut or required cleanup.
 - [x] Command selected main/outfeed/both clamps, wait their settle intervals, then Fast return during stroke.
 - [x] Bind one return to config/request/mask and positive Load target/clearance; cross-stop and retain clamps on failure.
 - [x] Wait for both DONE and Load; Pause/Resume board-done checkpoint, older-firmware fallback.
 - [x] Actual-sketch/Qt overlap, negative/fault and policy tests; Teensy 4.1 compilation.
-- [ ] Flash/read back 0.26, restore captured speed profiles, reopen matching app idle.
+- [x] Flash/read back 0.26, restore captured speed profiles, reopen matching app idle.
+- [x] New clamped path, old-firmware fallback, pause checkpoints, homing, acquisition and profiles pass isolated Qt/sketch tests.
+- [ ] Resolve native test-process failures in multiboard/operator-return regression cases; logs retained separately from passing controller/feature checks.
 - [ ] Operator unplugged acceptance of automatic clamped return.
 
 See [clamped early return](docs/CLAMPED_EARLY_RETURN_026.md).
@@ -82,7 +85,7 @@ the dedicated return-only cut path described in the newer section.
 - [x] Auto/Semi-Auto main/outfeed/both selection and separate commanded-state pill.
 - [x] Retain either clamp on Stop/fault, guarded release, block carriage while held.
 - [x] Host sketch/Qt tests and Teensy compilation; legacy main-only compatibility.
-- [ ] Connect/wire the cylinder and verify ON clamps / OFF releases.
+- [x] Operator reports second cylinder plumbed and working; enabled saved footprint is 10.25–11.5 inches outward from blade (2026-11-19).
 - [x] Flash/read back 0.24 with actuator power isolated; all outputs OFF, second disabled.
 - [ ] Measure footprint, enable/save and physically accept unloaded operation.
 

@@ -1,6 +1,6 @@
 # Clamped last-cut early return — 0.26
 
-Prepared 2026-11-19. Firmware 0.26.0 / CARRIAGE_V19 and matching app required.
+Flashed/read back 2026-11-19. Firmware 0.26.0 / CARRIAGE_V19 and matching app required.
 Physical acceptance pending; existing saw-unplugged commissioning scope remains.
 
 The previous early return applied to an unclampable operator-controlled cut.
@@ -65,3 +65,25 @@ feedback. Deployment captures and build/test results belong in
 
 Prior native Qt test-process crashes remain documented in the 0.25 record;
 full-harness failures and isolated outcomes are retained separately.
+
+## Deployment
+
+Source `bdb7efe31fbed75cca63c9150fa3c50af8a4f777`; firmware tree
+`3a0adc6b556df6c5a6eaff688dfe28ed0ba81357`. Teensy 4.1 compile/upload succeeded.
+Captured pre-flash 0.25 identity and idle outputs after operator confirmed app
+closed, power and air off. Readback confirms 0.26 / V19 and automatic-return
+capability; all outputs OFF, return flags zero, unconfigured/unhomed startup.
+Restored captured Gentle 600/600, Normal 2500/1500 and Fast 3500/2000 profiles.
+App reopened connected/fresh/compatible on Auto, no queued action; the saved
+second-clamp enable/footprint is retained. Only identity/status and profile
+configuration were sent by the agent; no Home, arm, motion or valve test.
+
+The final clamped-return controller test passed 196385 checks; existing C++
+policies/sketches passed 26555 checks. The final focused dry-run/continuous-return
+tests passed again. The new Qt/sketch outfeed-only overlap + pause path, 0.25
+fallback, legacy clamp lockout, cycle intervention, pause checkpoints, acquisition,
+homing and startup profiles passed. The broad run and isolated multiboard and
+operator-return cases encountered native access-violation/interpreter-cache
+crashes, so a clean full regression run is not established. These remain an
+unresolved validation limitation; their logs are preserved. Physical acceptance
+of the new clamped return remains pending.
