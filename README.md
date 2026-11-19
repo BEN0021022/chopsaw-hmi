@@ -3,7 +3,12 @@
 PyQt6 operator interface for the chop-saw carriage, cut-list workflow, machine
 I/O, simulation, current monitoring, and packaged Windows releases.
 
-## Current Teensy build (2026-11-16)
+## Current Teensy build (2026-11-19)
+
+Prepared **0.26** returns the carriage during the last clamped cut, after the
+selected clamps settle. It keeps the carriage forward for another fitting cut
+or a required cleanup push, and waits for both cut and return before advancing.
+See [clamped early return](docs/CLAMPED_EARLY_RETURN_026.md).
 
 App patch **0.25.2** uses the Board Sensor Distance beside Kerf for both motion
 and detector geometry. Duplicate near/far fields are removed and old saved

@@ -14,6 +14,23 @@ def context(**changes):
 
 
 class Policies(unittest.TestCase):
+    def test_clamped_last_cut_returns_only_when_following_cut_or_cleanup_does_not_need_pusher(self):
+        g=geometry(clamps=(Clamp('main',Span(8.75,9.75)),Clamp('outfeed',Span(-11.5,-10.25),'cut_piece',True,True,2)),
+                   pusher_rear_extent=16.75,sensor=Span(10.5,10.5),margin=.5)
+        c=context(geometry=g,position=8,material=Material(Span(-22,8),'estimated',True),sensor_clear=True,holding_channels=(1,2))
+        d=plan_clamped_cut_return(c,None,.12,111,True)
+        self.assertEqual(d.code,'CLAMPED_CUT_RETURN');self.assertEqual(d.permitted_clamps,('outfeed',))
+        self.assertEqual(plan_clamped_cut_return(c,2,.12,111,True).code,'RETURN_AFTER_CYCLE')
+        self.assertEqual(plan_clamped_cut_return(c,20,.12,111,True).code,'CLAMPED_CUT_RETURN')
+        long=context(geometry=g,position=40,material=Material(Span(-38.433,40),'estimated',True),sensor_clear=False,holding_channels=(1,2))
+        self.assertEqual(plan_clamped_cut_return(long,None,.12,111,True).code,'RETURN_AFTER_CLEARANCE')
+        both=plan_clamped_cut_return(long,None,.12,111,False)
+        self.assertEqual(both.code,'CLAMPED_CUT_RETURN');self.assertEqual(both.permitted_clamps,('main','outfeed'))
+        for changes in ({'fresh':False},{'door_closed':False},{'saw_up':False},{'reference_known':False},{'sensor_clear':False}):
+            with self.subTest(changes=changes):self.assertFalse(plan_clamped_cut_return(replace(c,**changes),None,.12,111,True).proceeds)
+        unavailable=replace(c,holding_channels=(1,))
+        self.assertFalse(plan_clamped_cut_return(unavailable,None,.12,111,True).proceeds)
+
     def test_last_unclamped_cut_returns_only_when_detector_clear(self):
         c=context(position=8,material=Material(Span(-20,8),'estimated',True),sensor_clear=True)
         self.assertEqual(plan_operator_cut(c,None,.12).code,'OPERATOR_CUT_RETURN')

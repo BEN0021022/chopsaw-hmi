@@ -25,7 +25,7 @@ def policies():
  assert assess_manual_cycle(replace(manual,held_channels=(2,))).permitted_clamps==('outfeed',)
 
 
-def run(exe,legacy=False):
+def run(exe,legacy=False,old_return=False):
  app=QApplication.instance() or QApplication([])
  with tempfile.TemporaryDirectory() as folder:
   with patch.object(main,'QSettings',lambda *a,**k:QSettings(folder+'/settings.ini',QSettings.Format.IniFormat)),patch.object(main,'get_app_dir',lambda:folder),patch.object(main.updater,'check_for_update',lambda *a,**k:None):
@@ -35,13 +35,17 @@ def run(exe,legacy=False):
     for timer in w.findChildren(QTimer):timer.stop()
     w.controller_combo.setCurrentIndex(w.controller_combo.findData(TEENSY_CARRIAGE))
     w.ser=wire;w.set_controls_enabled(True);p=w.carriage_tab;d=w.dry_run;sup=d.supervision
-    mask_seen=set()
+    mask_seen=set();return_overlap=[]
     def records(lines):
      for line in lines:
-      if legacy and line.startswith('BENCH_HELLO,'):line=line.replace('FW:0.24.0','FW:0.23.0').replace('FW:0.25.0','FW:0.23.0').replace('CARRIAGE_V18','CARRIAGE_V17').replace(',SECOND_CLAMP:D18_MASK_V1','').replace(',FEED:CONTINUOUS_ACQUIRE_V1','').replace(',PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1','')
+      if old_return and line.startswith('BENCH_HELLO,'):line=line.replace('FW:0.26.0','FW:0.25.0').replace('CARRIAGE_V19','CARRIAGE_V18').replace(',AUTO_RETURN:CLAMPED_LAST_CUT_V1','')
+      if legacy and line.startswith('BENCH_HELLO,'):line=line.replace('FW:0.26.0','FW:0.23.0').replace('CARRIAGE_V19','CARRIAGE_V17').replace(',AUTO_RETURN:CLAMPED_LAST_CUT_V1','').replace('FW:0.24.0','FW:0.23.0').replace('FW:0.25.0','FW:0.23.0').replace('CARRIAGE_V18','CARRIAGE_V17').replace(',SECOND_CLAMP:D18_MASK_V1','').replace(',FEED:CONTINUOUS_ACQUIRE_V1','').replace(',PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1','')
       w.update_message_log(line)
       assert not p.local_fault,(p.local_fault,line)
       if line.startswith('BENCH_DRY,') and d.data.get('CYCLE')=='1' and d.data.get('STATE')=='SPINUP':mask_seen.add(d.data['CLAMP_MASK'])
+      if (p.x.get('RETURN_AUTO')=='1' and p.x.get('ARMED')=='1' and int(p.x.get('REMAINING','0'))>0 and
+          d.data.get('SAW')=='1' and d.data.get('SECOND_CLAMP')=='1' and d.data.get('MAIN_CLAMP')=='0'):
+       return_overlap.append(int(p.x['REMAINING']))
     def flush():
      for _ in range(100):
       if not wire.commands:return
@@ -117,9 +121,19 @@ def run(exe,legacy=False):
     assert w.start_auto_cycle();flush();until(lambda:d.sequence and d.sequence['stage']=='SEARCH')
     records(wire.exchange('@PIN 21 0'));until(lambda:d.sequence and d.sequence['stage']=='MOVE')
     records(wire.exchange('@AUTO_SENSOR 1'))
+    if not old_return:
+     until(lambda:bool(return_overlap))
+     assert d.sequence['stage']=='RETURN_CUT_WAIT'
+     assert d.intervention.pause() and d.intervention.after_cut
+     until(lambda:d.intervention.paused())
+     assert p.x['REMAINING']=='0' and not p.armed and d.data['CLAMP']=='0' and wire.strokes==3
+     assert d.intervention.resume_plan()[0]=='board_done'
+     assert d.intervention.resume();flush()
     until(lambda:d.sequence is None)
     assert wire.strokes==3 and '1' in mask_seen and '2' in mask_seen,(wire.strokes,mask_seen,d.message,d.data,wire.writes[-30:])
-    assert any(c.startswith('DCUTM ') and c.endswith(' 2') for c in wire.writes)
+    assert any(c.startswith(('DCUTM ','DCUTRET ')) and c.split()[3]=='2' for c in wire.writes)
+    assert bool(return_overlap) is not old_return
+    assert any(c.startswith('DCUTRET ') for c in wire.writes) is not old_return
     assert not any(c.startswith('DOPCUT ') for c in wire.writes)
     assert d.data['CLAMP_MASK']=='0' and not p.armed
     w.close();app.processEvents()
@@ -129,4 +143,4 @@ def run(exe,legacy=False):
 
 if __name__=='__main__':
  policies();exe=Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe')
- run(exe);run(exe,legacy=True)
+ run(exe);run(exe,old_return=True);run(exe,legacy=True)

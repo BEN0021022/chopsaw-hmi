@@ -441,10 +441,11 @@ class TeensyCarriagePanel(QWidget):
         f = message.fields
         if message.kind == "BENCH_HELLO":
             self.received["HELLO"] = time.monotonic()
-            compatible = all((f.get(k) in ('CARRIAGE_V16','CARRIAGE_V17','CARRIAGE_V18') if k=='X_APP' else f.get(k)==value) for k,value in IDENTITY.items())
-            compatible=compatible and (f.get('X_APP') not in ('CARRIAGE_V17','CARRIAGE_V18') or f.get('HOME_PROFILE')=='EDITABLE_V1')
+            compatible = all((f.get(k) in ('CARRIAGE_V16','CARRIAGE_V17','CARRIAGE_V18','CARRIAGE_V19') if k=='X_APP' else f.get(k)==value) for k,value in IDENTITY.items())
+            compatible=compatible and (f.get('X_APP') not in ('CARRIAGE_V17','CARRIAGE_V18','CARRIAGE_V19') or f.get('HOME_PROFILE')=='EDITABLE_V1')
             self._continuous=compatible and f.get('FEED')=='CONTINUOUS_ACQUIRE_V1'
             self._parallel=compatible and f.get('PARALLEL_RETURN')=='UNPLUGGED_OPERATOR_V1'
+            self._auto_return=compatible and f.get('AUTO_RETURN')=='CLAMPED_LAST_CUT_V1'
             self.home_profile_supported=compatible and f.get('HOME_PROFILE')=='EDITABLE_V1'
             if self.compatible and not compatible:
                 self.trip_local("Controller identity changed")
@@ -512,6 +513,15 @@ class TeensyCarriagePanel(QWidget):
                                   and (f['RETURN_AT_LOAD']=='0' or (f['RETURN_PERMIT']=='1' and f['ARMED']=='0' and f['REMAINING']=='0' and current==target)))
                 except (KeyError,ValueError):valid_return=False
                 if not valid_return:self.trip_local('Invalid operator-return telemetry');return
+            if self.automatic_return_supported():
+                try:
+                    auto,pending,mask=(int(f[k]) for k in ('RETURN_AUTO','RETURN_PENDING','RETURN_HOLD_MASK'))
+                    valid=(auto in (0,1) and pending in (0,1) and 0<=mask<=3 and
+                           (not auto or (f['RETURN_PERMIT']==f['RETURN_USED']=='1' and mask>0)) and
+                           (auto or (pending==mask==0)) and
+                           (not pending or (auto and f['ARMED']=='0' and f['REMAINING']=='0' and f['RETURN_AT_LOAD']=='0')))
+                except (KeyError,ValueError):valid=False
+                if not valid:self.trip_local('Invalid clamped-return telemetry');return
             self.x = f
             self.profile_values = profiles
             if not self._profiles_initialized:
@@ -631,6 +641,7 @@ class TeensyCarriagePanel(QWidget):
 
     def continuous_supported(self):return self.compatible and getattr(self,'_continuous',False)
     def parallel_supported(self):return self.compatible and getattr(self,'_parallel',False)
+    def automatic_return_supported(self):return self.compatible and getattr(self,'_auto_return',False)
     def return_overlap(self):
         return (self.parallel_supported() and self.x.get('RETURN_PERMIT')=='1' and self.x.get('RETURN_USED')=='1'
                 and self.x.get('DIR')=='1' and self.x.get('POS_KNOWN')=='1')

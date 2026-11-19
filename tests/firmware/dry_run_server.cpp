@@ -31,10 +31,12 @@ void step() {
   CHECK(!fakePins[19] || (dry.armed && dry.trigger && (dry.cycleRunning || dry.manualMode) &&
                         fakePins[29]==LOW && fakePins[14]==HIGH));
   CHECK(!dry.cycleRunning || !fakePins[19] || fakePins[32] || fakePins[18] || dry.operatorCycle);
-  CHECK(!fakePins[19] || xCommandedSteps == before || (xReturnPermit && xReturnCutUsed && dry.operatorCycle && xDirection==1 && xCommandedSteps>before));
+  CHECK(!fakePins[19] || xCommandedSteps == before || (xReturnPermit && xReturnCutUsed && (dry.operatorCycle || (xReturnAutomatic && dry.returnHoldingReady())) && xDirection==1 && xCommandedSteps>before));
   CHECK(!dry.cycleRunning || !fakePins[33] || fakePins[32] || fakePins[18] || dry.operatorCycle);
   CHECK(!dry.operatorCycle || (!fakePins[32] && !fakePins[18] && dry.cycleRunning));
-  CHECK((!fakePins[32] && !fakePins[18]) || xCommandedSteps == before);
+  CHECK((!fakePins[32] && !fakePins[18]) || xCommandedSteps == before ||
+        (xReturnAutomatic && !xReturnPending && xReturnPermit && xDirection==1 && xCommandedSteps>before &&
+         (dry.returnHoldingReady() || dry.phase==unloaded::DryRun::ReleaseDelay || dry.phase==unloaded::DryRun::ReleaseClear)));
   CHECK(dry.secondEnabled() || !fakePins[18]);
 }
 

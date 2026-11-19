@@ -28,6 +28,14 @@ class DryRun {
 
   bool active() const { return armed || clamp || saw || phase == StopReturn; }
   bool failed() const { return phase == Failed; }
+  bool returnHoldingPhase() const {
+    return phase==TriggerDelay || phase==Spinup || phase==DownDelay || phase==Descend ||
+      phase==Dwell || phase==UpDelay || phase==Returning || phase==UpSettle ||
+      phase==TriggerReleaseDelay || phase==BrakeWait;
+  }
+  bool returnHoldingReady() const {
+    return armed && cycleRunning && !operatorCycle && selectedMask && heldMask==selectedMask && returnHoldingPhase();
+  }
   bool configEditable() const { return !active() && !failed() && phase == Off && up.stable && door.stable && alarm; }
   bool configure(unsigned index, uint32_t value) {
     if (!configEditable() || index >= Count || value > 5000 || (index==15 && value>1) ||

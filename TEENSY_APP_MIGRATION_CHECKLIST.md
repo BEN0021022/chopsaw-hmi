@@ -1,6 +1,6 @@
 # Teensy app and firmware migration checklist
 
-Updated 2026-11-16. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
+Updated 2026-11-19. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Current deployed source/build: custom **0.25.0 / CARRIAGE_V18**, flashed/read back
 on COM4, 2026-11-16, source `da6de73`. Second clamp remains disabled; existing
 carriage profiles restored. Startup OFF, unconfigured/unhomed, no faults or queued motion.
@@ -21,6 +21,18 @@ the currently flashed firmware is custom, not stock grblHAL.
 not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
+
+## Clamped last-cut early return - prepared 0.26
+
+- [x] Select last usable cut; remain forward for another fitting cut or required cleanup.
+- [x] Command selected main/outfeed/both clamps, wait their settle intervals, then Fast return during stroke.
+- [x] Bind one return to config/request/mask and positive Load target/clearance; cross-stop and retain clamps on failure.
+- [x] Wait for both DONE and Load; Pause/Resume board-done checkpoint, older-firmware fallback.
+- [x] Actual-sketch/Qt overlap, negative/fault and policy tests; Teensy 4.1 compilation.
+- [ ] Flash/read back 0.26, restore captured speed profiles, reopen matching app idle.
+- [ ] Operator unplugged acceptance of automatic clamped return.
+
+See [clamped early return](docs/CLAMPED_EARLY_RETURN_026.md).
 
 ## Continuous acquisition / cut during return - deployed 0.25
 

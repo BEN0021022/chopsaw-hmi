@@ -23,7 +23,7 @@ STATES = {'OFF','READY','CLAMP_DELAY','CLAMP_SETTLE','CLAMPED','RELEASE_DELAY','
           'TRIGGER_DELAY','SPINUP','TRIGGER_RELEASE_DELAY','BRAKE_WAIT','STOPPED'}
 TRAVEL = {'DESCEND','DOWN','DWELL','UP_DELAY','RETURN','UP_SETTLE','STOP_RETURN'}
 COMMAND = re.compile(r'(?:DSET ([0-9]+) ([0-9]+)|DCOMMIT ([0-9]+)|DARM ([0-9]+)|DCLAMP ([01])|DCYCLE|DDOWN|DUP|DOFF|DMANUAL ([0-9]+)|DTHOLD|DTPRESS|DTRELEASE|DCUT|DRELEASE|DOPCUT [0-9]+ [0-9]+)')
-SECOND_COMMAND = re.compile(r'(?:DCLAMP2 [01]|DCUTM [0-9]+ [0-9]+ [123]|DRETURN [0-9]+ [0-9]+ [0-9]+)')
+SECOND_COMMAND = re.compile(r'(?:DCLAMP2 [01]|DCUTM [0-9]+ [0-9]+ [123]|DRETURN [0-9]+ [0-9]+ [0-9]+|DCUTRET [0-9]+ [0-9]+ [123] [0-9]+ [0-9]+)')
 SECOND_TIMING_KEYS=('outfeed.engage_delay','outfeed.engage_settle','outfeed.release_delay','outfeed.release_clearance')
 
 
@@ -240,9 +240,16 @@ class NativeDryRun(QObject):
         if self.pending or self.data.get('ARMED')!='1' or self.data.get('CFG')!=str(self.token): return False
         if command=='DTPRESS':
             return self.can_hold_trigger() and self.operator_holding_trigger()
-        if command=='DCUT' or command.startswith('DCUTM '):
+        if command=='DCUT' or command.startswith(('DCUTM ','DCUTRET ')):
             mask=self.cycle_clamp_mask()
-            if command.startswith('DCUTM '):
+            if command.startswith('DCUTRET '):
+                s=self.sequence
+                if (not s or not s.get('automatic_cut_return') or not p.automatic_return_supported() or
+                    not self.supervision.coordinator.still_valid(s['cut_return_plan']) or
+                    command!=f"DCUTRET {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {mask} {s['cut_return_target']} {s['cut_return_min']}"):
+                    return False
+                if mask!=s['cut_return_mask']:return False
+            elif command.startswith('DCUTM '):
                 if command!=f"DCUTM {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {mask}":return False
                 if mask & 2 and (not self.supervision.second_requested() or self.data.get('SECOND_ENABLED')!='1'):return False
             elif mask!=1:return False
@@ -305,6 +312,9 @@ class NativeDryRun(QObject):
         commands.update(second_engage='DCLAMP2 1',second_release='DCLAMP2 0')
         if action=='cycle' and self.second_supported and self.cycle_clamp_mask()!=1:
             commands['cycle']=f"DCUTM {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} {self.cycle_clamp_mask()}"
+        if action=='cycle' and self.sequence and self.sequence.get('automatic_cut_return'):
+            s=self.sequence
+            commands['cycle']=f"DCUTRET {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} {self.cycle_clamp_mask()} {s['cut_return_target']} {s['cut_return_min']}"
         if action=='return_operator_cycle':commands[action]=f"DRETURN {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} {self.owner.carriage_tab.x['MOVE_ID']}"
         command=(f"DOPCUT {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff}" if action=='operator_cycle' else commands.get(action,''))
         if not self.allowed(command):
@@ -338,15 +348,16 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW') in ('0.22.0','0.23.0','0.24.0','0.25.0')
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW') in ('0.22.0','0.23.0','0.24.0','0.25.0','0.26.0')
                         and f.get('DRY_RUN')=='UNLOADED_V6' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
                         and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1'
                         and f.get('OPERATOR_CUT')=='UNCLAMPED_ONESHOT_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
-            compatible=compatible and (f.get('FW')!='0.25.0' or (self.owner.carriage_tab.continuous_supported() and self.owner.carriage_tab.parallel_supported()))
+            compatible=compatible and (f.get('FW') not in ('0.25.0','0.26.0') or (self.owner.carriage_tab.continuous_supported() and self.owner.carriage_tab.parallel_supported()))
+            compatible=compatible and (f.get('FW')!='0.26.0' or self.owner.carriage_tab.automatic_return_supported())
             self.compatible=compatible
-            supported=compatible and f.get('FW') in ('0.24.0','0.25.0') and f.get('SECOND_CLAMP')=='D18_MASK_V1'
+            supported=compatible and f.get('FW') in ('0.24.0','0.25.0','0.26.0') and f.get('SECOND_CLAMP')=='D18_MASK_V1'
             if self.second_supported and not supported:self.stop('Second-clamp capability changed')
             self.second_supported=supported
         elif message.kind=='BENCH_DRY':
@@ -764,6 +775,20 @@ class NativeDryRun(QObject):
                 self.changed.emit(); return
             if s['semi'] and not s.pop('cut_approved',False):
                 next_stage('WAIT_CUT_APPROVAL');self.message='Position ready. Jog to adjust if needed, then approve the pending stroke.';return
+            s['automatic_cut_return']=False
+            if s['index']>=0 and p.automatic_return_supported():
+                following=s['cuts'][s['index']+1] if s['index']+1<len(s['cuts']) else None
+                clear_after=s['clear_between'] if following is not None or s['repeat'] else s['clear_end']
+                plan=self.supervision.review('cut_return',length=following,kerf=s['kerf'],
+                                             load_position=self.owner.native_load_target(),clear_after=clear_after)
+                if plan.code=='CLAMPED_CUT_RETURN':
+                    g=self.supervision.coordinator.geometry
+                    selected=[c for c in g.clamps if c.key in plan.permitted_clamps]
+                    minimum=max([g.cut_keepout+g.pusher_front_offset]+
+                                [c.footprint.far+g.margin+g.pusher_front_offset for c in selected])
+                    s.update(automatic_cut_return=True,early_return=True,cut_return_plan=plan,
+                             cut_return_mask=sum({'main':1,'outfeed':2}[c.key] for c in selected),
+                             cut_return_target=round(plan.target*1000),cut_return_min=math.ceil(minimum*1000))
             if not self.request('arm'): self.stop('Cannot arm unloaded pneumatics'); return
             next_stage('CLAMP')
         elif stage=='CLAMP' and self.data.get('STATE')=='READY':
@@ -773,7 +798,7 @@ class NativeDryRun(QObject):
         elif stage=='SAW_ACK':
             # REQ acknowledgment completes before this branch; next status may
             # still be DOWN_DELAY, but the cycle must actually leave CLAMPED.
-            if self.data.get('CYCLE')=='1': next_stage('SAW_WAIT')
+            if self.data.get('CYCLE')=='1': next_stage('RETURN_CUT_WAIT' if s.get('automatic_cut_return') else 'SAW_WAIT')
         elif stage=='SAW_WAIT' and self.data.get('STATE')=='READY' and int(self.data['DONE'])!=s['done']:
             self.owner.send_command('DOFF'); next_stage('PNEU_OFF')
         elif stage=='PNEU_OFF' and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0':
@@ -829,7 +854,8 @@ class NativeDryRun(QObject):
         elif stage=='RETURN_CUT_ACK':
             if self.data.get('CYCLE')=='1' or int(self.data['DONE'])!=s['done']:next_stage('RETURN_CUT_WAIT')
         elif stage=='RETURN_CUT_WAIT':
-            self.message='Operator cut running while carriage returns; waiting for both to finish.'
+            self.message=('Last cut: settling clamps, then Fast carriage return; waiting for cut and return to finish.'
+                          if s.get('automatic_cut_return') else 'Operator cut running while carriage returns; waiting for both to finish.')
             if (p.x.get('RETURN_AT_LOAD')=='1' and not p.armed and p.x.get('REMAINING')=='0' and
                     self.data.get('STATE')=='READY' and self.data.get('CYCLE')=='0' and int(self.data['DONE'])!=s['done']):
                 self.owner.send_command('DOFF');next_stage('PNEU_OFF')

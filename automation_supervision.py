@@ -259,6 +259,28 @@ def plan_operator_cut(ctx, next_length=None, kerf=0):
     return Decision(Outcome.ADAPT,'OPERATOR_CUT_STAY','Secure the unclamped wood and request this cut; detector clearance is needed before carriage return.',inhibited_clamps=('main',))
 
 
+def plan_clamped_cut_return(ctx, next_length, kerf, load_position, clear_after):
+    """Withdraw only for the last usable cut, after a valid holding plan settles."""
+    holding=validate_next_action(ctx,'cut')
+    if not holding.proceeds:return holding
+    if ctx.sensor_clear is None or ctx.material.stock.overlaps(ctx.geometry.sensor)==ctx.sensor_clear:
+        return Decision(Outcome.BLOCK,'MATERIAL_SENSOR_DISAGREEMENT','Detector and tracked stock disagree.')
+    if next_length is not None:
+        following=plan_board_feed(ctx,next_length,kerf)
+        if following.code!='NEXT_BOARD_REQUIRED':
+            return Decision(Outcome.PROCEED,'RETURN_AFTER_CYCLE','Stay forward while another cut fits or its feed needs review.')
+    if clear_after and not ctx.sensor_clear:
+        return Decision(Outcome.PROCEED,'RETURN_AFTER_CLEARANCE','Stay forward for the required detector-zone clearing push.')
+    if load_position is None or not math.isfinite(load_position) or load_position<=ctx.position:
+        return Decision(Outcome.PROCEED,'RETURN_AFTER_CYCLE','Load target is not behind the positioned cut.')
+    sweep=Span(ctx.geometry.pusher(ctx.position).near,ctx.geometry.pusher(load_position).far)
+    selected=[c for c in ctx.geometry.clamps if c.key in holding.permitted_clamps]
+    if any(sweep.overlaps(c.footprint.expanded(ctx.geometry.margin)) for c in selected):
+        return Decision(Outcome.PROCEED,'RETURN_AFTER_CYCLE','Return sweep crosses a selected clamp envelope.')
+    return Decision(Outcome.ADAPT,'CLAMPED_CUT_RETURN','Last usable cut: settle selected clamps, then return while the cut runs.',
+                    permitted_clamps=holding.permitted_clamps,target=load_position)
+
+
 def plan_sensor_clearance(ctx):
     state=validate_next_action(ctx,'clear_sensor')
     if not state.proceeds: return state
@@ -315,11 +337,12 @@ class AutomationCoordinator:
             self.invalidate('Completed stroke cannot be reconciled with tracked stock.'); return
         self.material=replace(m,stock=Span(0,m.stock.far),revision=m.revision+1)
 
-    def decide(self, ctx, action='cut', *, length=None, kerf=None):
+    def decide(self, ctx, action='cut', *, length=None, kerf=None, load_position=None, clear_after=False):
         # New rules join here; a blocking result cannot be overridden by an
         # optimization. No individual function can write GPIO/serial.
         ctx=replace(ctx,geometry=self.geometry,material=self.material,config_revision=self.config_revision)
-        d=(plan_sensor_clearance(ctx) if action=='clear_sensor' else
+        d=(plan_clamped_cut_return(ctx,length,kerf,load_position,clear_after) if action=='cut_return' else
+           plan_sensor_clearance(ctx) if action=='clear_sensor' else
            plan_operator_cut(ctx,length,kerf) if action=='operator_cut' else
            plan_board_feed(ctx,length,kerf) if action=='feed' else validate_next_action(ctx,action))
         d=replace(d,material_revision=self.material.revision,config_revision=self.config_revision)

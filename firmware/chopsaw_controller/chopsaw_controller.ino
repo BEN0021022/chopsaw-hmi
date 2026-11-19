@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.25.0";
+constexpr char FIRMWARE_VERSION[] = "0.26.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -89,6 +89,8 @@ bool xEdgeValid = false;
 int32_t xEdgeMilli = 0, xTruingMilli = 0;
 int32_t xSensorOffsetMilli = 10800, xTrimMilli = 250;
 bool xContinuousAcquire=false,xReturnPermit=false,xReturnCutUsed=false;
+bool xReturnAutomatic=false,xReturnPending=false;
+uint8_t xReturnHoldMask=0;
 int32_t xAcquisitionEnd=0,xCandidateOffset=0,xReturnStart=0,xReturnMinimum=0;
 int32_t xCommandedSteps = 0;  // pulse-count displacement since boot, not encoder position
 int8_t xDirection = 1;
@@ -117,6 +119,7 @@ void stopTests() {
   if (xHoming.active()) { xPositionKnown = false; xHoming.cancel(); }
   xEdge.cancel(); xEdgeValid = false;
   xContinuousAcquire=xReturnPermit=xReturnCutUsed=false;
+  xReturnAutomatic=xReturnPending=false;xReturnHoldMask=0;
   xRemaining = 0; xAbsoluteMove = false;
   interlocks.off(millis());
   testMode = TestMode::None;
@@ -144,6 +147,7 @@ void commandFault() {
   xPositionKnown = false; xHoming.cancel();
   xEdge.cancel(); xEdgeValid = false;
   xContinuousAcquire=xReturnPermit=xReturnCutUsed=false;
+  xReturnAutomatic=xReturnPending=false;xReturnHoldMask=0;
   xRemaining = 0; xAbsoluteMove = false;
   interlocks.trip(bench::Fault::Command, millis());
   applyOutputs();
@@ -157,12 +161,27 @@ void updateSafety() {
   const bool wasArmed = outputsArmed;
   const bench::Fault previousFault = interlocks.fault;
   const bench::Travel previousTravel = interlocks.travel;
-  const bool returnCut=xReturnPermit && xReturnCutUsed && dry.operatorCycle && dry.cycleRunning && !dry.clamp &&
+  const bool returnCut=xReturnPermit && xReturnCutUsed && !xReturnPending && dry.cycleRunning &&
+      (xReturnAutomatic ? dry.returnHoldingReady() && dry.selectedMask==xReturnHoldMask : dry.operatorCycle && !dry.clamp) &&
       xPositionKnown && xDirection==1 && digitalRead(X_DIR_PIN)==HIGH && xHomeOffset>=xReturnStart && xHomeOffset>=xReturnMinimum;
-  if (returnCut && digitalRead(BOARD_EDGE_PIN)==LOW) dry.trip("DRY_RETURN_DETECTOR_BLOCKED",millis());
+  if (returnCut && !xReturnAutomatic && digitalRead(BOARD_EDGE_PIN)==LOW) dry.trip("DRY_RETURN_DETECTOR_BLOCKED",millis());
+  if (xReturnAutomatic && !xReturnPending && dry.cycleRunning && dry.returnHoldingPhase() &&
+      (!dry.returnHoldingReady() || dry.selectedMask!=xReturnHoldMask)) dry.trip("DRY_RETURN_HOLD_LOST",millis());
   interlocks.tick({digitalRead(FENCE_DOOR_PIN) == LOW,
                    digitalRead(SAW_UP_PIN) == LOW,
                    digitalRead(SAW_DOWN_PIN) == LOW}, millis(),returnCut);
+  if (xReturnPending && dry.returnHoldingReady()) {
+    if (!xPositionKnown || xHomeOffset!=xReturnStart || dry.selectedMask!=xReturnHoldMask || digitalRead(HOME_PIN)!=HIGH ||
+        digitalRead(CL57T_ALARM_PIN)!=xAlarmNormal || !interlocks.arm(millis())) {
+      dry.trip("DRY_RETURN_START_REJECTED",millis());
+    } else {
+      xReturnPending=false;testMode=TestMode::Stepper;xAbsoluteMove=true;
+      xRemaining=static_cast<uint16_t>(xTargetOffset-xHomeOffset);
+      xRamp.start(xRemaining,xProfiles[3]);xTiming=carriage::PulseTiming{};
+      digitalWrite(X_ENABLE_PIN,xEnableLevel);digitalWrite(X_DIR_PIN,HIGH);
+      xArmAt=xLastStepAt=millis();xNextPulseUs=micros()+200000;
+    }
+  }
   xHomeActive.update(digitalRead(HOME_PIN) == LOW, millis());
   xHomeInactive.update(digitalRead(HOME_PIN) == HIGH, millis());
   if (!outputsArmed && xHomeActive.stable) xHomeSeenActive = true;
@@ -177,7 +196,9 @@ void updateSafety() {
   if (xReturnPermit && interlocks.fault!=bench::Fault::None && dry.active()) dry.trip("DRY_RETURN_MOTION_FAULT",millis());
   if (interlocks.fault != bench::Fault::None || dry.failed()) xPositionKnown = false;
   if (!xPositionKnown || (!xContinuousAcquire && digitalRead(BOARD_EDGE_PIN) == HIGH)) xEdgeValid = false;
-  if (interlocks.fault!=bench::Fault::None || dry.failed()) xReturnPermit=xReturnCutUsed=false;
+  if (interlocks.fault!=bench::Fault::None || dry.failed()) {
+    xReturnPermit=xReturnCutUsed=xReturnAutomatic=xReturnPending=false;xReturnHoldMask=0;
+  }
   if (!outputsArmed) xEdge.cancel();
   if (!outputsArmed) { xHoming.cancel(); testMode = TestMode::None; xRemaining = 0; xAbsoluteMove = false; }
   applyOutputs();
@@ -258,9 +279,9 @@ void publishHello() {
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
   Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,"
-    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V18,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
+    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V19,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
     "PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,"
-    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1,SECOND_CLAMP:D18_MASK_V1,FEED:CONTINUOUS_ACQUIRE_V1,PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1");
+    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1,SECOND_CLAMP:D18_MASK_V1,FEED:CONTINUOUS_ACQUIRE_V1,PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1,AUTO_RETURN:CLAMPED_LAST_CUT_V1");
 }
 
 void publishPinMap() {
@@ -371,6 +392,9 @@ void publishX() {
   Serial.print(",ACQUIRE_CONTINUOUS:");Serial.print(xContinuousAcquire ? 1:0);
   Serial.print(",RETURN_PERMIT:");Serial.print(xReturnPermit ? 1:0);
   Serial.print(",RETURN_USED:");Serial.print(xReturnCutUsed ? 1:0);
+  Serial.print(",RETURN_AUTO:");Serial.print(xReturnAutomatic ? 1:0);
+  Serial.print(",RETURN_PENDING:");Serial.print(xReturnPending ? 1:0);
+  Serial.print(",RETURN_HOLD_MASK:");Serial.print(xReturnHoldMask);
   Serial.print(",RETURN_START:");Serial.print(xReturnStart);
   Serial.print(",RETURN_MIN:");Serial.print(xReturnMinimum);
   Serial.print(",RETURN_AT_LOAD:");Serial.print(xReturnPermit && !xRemaining && xHomeOffset==xTargetOffset ? 1:0);
@@ -520,12 +544,12 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
       strcmp(command,"DDOWN")==0 || strcmp(command,"DUP")==0 || strcmp(command,"DOFF")==0 ||
       startsWith(command,"DMANUAL ") || strcmp(command,"DTHOLD")==0 || strcmp(command,"DTPRESS")==0 || strcmp(command,"DTRELEASE")==0 ||
       strcmp(command,"DCUT")==0 || startsWith(command,"DOPCUT ") || strcmp(command,"DRELEASE")==0 ||
-      startsWith(command,"DCLAMP2 ") || startsWith(command,"DCUTM ") || startsWith(command,"DRETURN ");
+      startsWith(command,"DCLAMP2 ") || startsWith(command,"DCUTM ") || startsWith(command,"DRETURN ") || startsWith(command,"DCUTRET ");
   if (!dryCommand) return false;
   bool accepted=false;
-  uint32_t args[3]={0,0,0};
+  uint32_t args[5]={0,0,0,0,0};
   if (strcmp(command,"DOFF")==0) { stopTests(); accepted=true; }
-  else if (strcmp(command,"DTRELEASE")==0) { if (dry.cycleRunning) dry.stop(millis()); else dry.releaseTrigger(); accepted=true; }
+  else if (strcmp(command,"DTRELEASE")==0) { if (xReturnPermit) stopTests(); else if (dry.cycleRunning) dry.stop(millis()); else dry.releaseTrigger(); accepted=true; }
   else if (strcmp(command,"DRELEASE")==0) accepted=dry.releaseStopped(millis());
   else if (startsWith(command,"DRETURN ")) {
     accepted=unsignedArgs(command,"DRETURN ",3,args) && xReturnPermit && !xReturnCutUsed && args[2]==xMoveId &&
@@ -536,6 +560,20 @@ bool __attribute__((noinline)) handleDryCommand(const char *command) {
     if (accepted) xReturnCutUsed=true;
   }
   else if (outputsArmed || xRemaining || interlocks.travel != bench::Travel::Idle || interlocks.fault != bench::Fault::None) {}
+  else if (startsWith(command,"DCUTRET ")) {
+    int32_t target=0,minimum=0;
+    accepted=unsignedArgs(command,"DCUTRET ",5,args) && !xReturnPermit && !dry.manualMode && xConfigured && xPositionKnown && digitalRead(HOME_PIN)==HIGH &&
+      args[2]>=1 && args[2]<=3 && args[4]>0 &&
+      carriage::Positioning::target(args[3],xSoftMaxOffset,target) &&
+      carriage::Positioning::target(args[4],xSoftMaxOffset,minimum) && minimum<xHomeOffset && target>xHomeOffset &&
+      digitalRead(CL57T_ALARM_PIN)==xAlarmNormal && interlocks.readyToArm() &&
+      dry.maskedCycle(args[0],args[1],static_cast<uint8_t>(args[2]),millis());
+    if (accepted) {
+      xReturnPermit=xReturnCutUsed=xReturnAutomatic=xReturnPending=true;
+      xReturnHoldMask=static_cast<uint8_t>(args[2]);xReturnStart=xHomeOffset;xReturnMinimum=minimum;
+      xProfile=3;xDirection=1;xTargetOffset=target;++xMoveId;digitalWrite(X_DIR_PIN,HIGH);
+    }
+  }
   else if (startsWith(command,"DSET ")) accepted=unsignedArgs(command,"DSET ",2,args) && dry.configure(args[0],args[1]);
   else if (startsWith(command,"DCOMMIT ")) accepted=unsignedArgs(command,"DCOMMIT ",1,args) && dry.commit(args[0]);
   else if (startsWith(command,"DARM ")) accepted=unsignedArgs(command,"DARM ",1,args) && dry.arm(args[0],millis());
@@ -660,6 +698,7 @@ void __attribute__((noinline)) handleCommand(char *command) {
       Serial.println("BENCH_ERROR,CODE:X_NOT_READY");
     } else {
       xReturnPermit=xReturnCutUsed=xContinuousAcquire=false;
+      xReturnAutomatic=xReturnPending=false;xReturnHoldMask=0;
       testMode = TestMode::Stepper;
       xRemaining = 0;
       xArmAt = xLastStepAt = millis();

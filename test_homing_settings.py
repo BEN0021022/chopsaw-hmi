@@ -27,7 +27,7 @@ def case(exe,legacy=False,drop_ack=False):
             def records(lines):
                 for line in lines:
                     if legacy and line.startswith('BENCH_HELLO,'):
-                        line=line.replace('FW:0.23.0','FW:0.22.0').replace('FW:0.24.0','FW:0.22.0').replace('FW:0.25.0','FW:0.22.0').replace('CARRIAGE_V17','CARRIAGE_V16').replace('CARRIAGE_V18','CARRIAGE_V16').replace(',HOME_PROFILE:EDITABLE_V1','').replace(',SECOND_CLAMP:D18_MASK_V1','').replace(',FEED:CONTINUOUS_ACQUIRE_V1','').replace(',PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1','')
+                        line=line.replace('FW:0.26.0','FW:0.22.0').replace('CARRIAGE_V19','CARRIAGE_V16').replace(',AUTO_RETURN:CLAMPED_LAST_CUT_V1','').replace('FW:0.23.0','FW:0.22.0').replace('FW:0.24.0','FW:0.22.0').replace('FW:0.25.0','FW:0.22.0').replace('CARRIAGE_V17','CARRIAGE_V16').replace('CARRIAGE_V18','CARRIAGE_V16').replace(',HOME_PROFILE:EDITABLE_V1','').replace(',SECOND_CLAMP:D18_MASK_V1','').replace(',FEED:CONTINUOUS_ACQUIRE_V1','').replace(',PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1','')
                     if drop_ack and line.startswith('BENCH_X,'):
                         line=line.replace('HOME_RATE_PPS:1200','HOME_RATE_PPS:40').replace('HOME_ACCEL_PPS2:1500','HOME_ACCEL_PPS2:200')
                     w.update_message_log(line)
