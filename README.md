@@ -5,10 +5,17 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-19)
 
+Prepared **0.27** retains counted carriage position on controlled guard/saw-sensor
+stops and preserves the unfinished cut list. After clearing the cause/error,
+manual jog/Load is available; explicit Resume gently reacquires and trues the
+board before continuing. Driver alarms and other confidence losses still require
+Home. Offline regression and Teensy build pass; flash/physical acceptance pending.
+See [fault recovery](docs/FAULT_RECOVERY_027.md).
+
 Deployed **0.26** returns the carriage during the last clamped cut, after the
 selected clamps settle. It keeps the carriage forward for another fitting cut
 or a required cleanup push, and waits for both cut and return before advancing.
-Flashed/read back on COM4; operator unplugged acceptance pending.
+Flashed/read back on COM4; operator confirmed early return working.
 See [clamped early return](docs/CLAMPED_EARLY_RETURN_026.md).
 
 App patch **0.25.2** uses the Board Sensor Distance beside Kerf for both motion

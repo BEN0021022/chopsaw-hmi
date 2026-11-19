@@ -95,7 +95,7 @@ int main() {
     const unsigned stopped=fakePulses;
     for(unsigned t=0;t<200;++t) edgeTick();
     CHECK(!outputsArmed && !xRemaining && !xEdge.active() && !xEdgeValid && fakePulses==stopped);
-    CHECK(cause==0 ? xPositionKnown : !xPositionKnown);
+    CHECK((cause==0 || cause==1 || cause==5) ? xPositionKnown : !xPositionKnown);
   }
   edgeReady(); command("XEDGE 254 10800 250");
   const uint32_t id=xMoveId;

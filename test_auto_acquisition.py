@@ -93,7 +93,7 @@ def run(exe):
                 if d.local_fault:break
             assert p.x['EDGE_ERROR']=='NOT_FOUND' and p.x['FAULT']=='EDGE_FAILED'
             assert 'Board detector not found' in d.local_fault,d.local_fault
-            assert d.sequence is None and p.x['ARMED']=='0' and p.x['POS_KNOWN']=='0'
+            assert d.intervention.recovering() and d.sequence['next_index']==0 and p.x['ARMED']=='0' and p.x['POS_KNOWN']=='0'
             assert initial-int(p.x['HOME_OFFSET'])==search_pulses
             assert not any(c.startswith(('XTRUING','DARM','DCUT','DOPCUT')) for c in wire.writes[start:])
             assert all(d.data[k]=='0' for k in ('CLAMP','SAW','TRIGGER','CYCLE'))

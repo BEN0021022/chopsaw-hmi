@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr char FIRMWARE_VERSION[] = "0.26.0";
+constexpr char FIRMWARE_VERSION[] = "0.27.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t MCP_ADDRESS = 0x27;
 constexpr uint8_t INA_ADDRESS = 0x40;
@@ -155,6 +155,17 @@ void commandFault() {
   digitalWrite(X_STEP_PIN, LOW);
 }
 
+bool sensorStopKeepsPosition() {
+  const bench::Fault f=interlocks.fault;
+  const bool control=f==bench::Fault::None || f==bench::Fault::DoorOpen || f==bench::Fault::PositionConflict ||
+    f==bench::Fault::PositionLost || f==bench::Fault::DownTimeout || f==bench::Fault::ReturnTimeout ||
+    (f==bench::Fault::Command && dry.failed());
+  const bool sensor=!dry.failed() || !strcmp(dry.fault,"DRY_DOOR_OPEN") || !strcmp(dry.fault,"DRY_POSITION_CONFLICT") ||
+    !strcmp(dry.fault,"DRY_POSITION_LOST") || !strcmp(dry.fault,"DRY_DOWN_TIMEOUT") ||
+    !strcmp(dry.fault,"DRY_UP_TIMEOUT") || !strcmp(dry.fault,"DRY_STOP_RETURN_TIMEOUT");
+  return control && sensor && !xHoming.active() && xConfigured && digitalRead(CL57T_ALARM_PIN)==xAlarmNormal;
+}
+
 void updateSafety() {
   dry.tick(digitalRead(FENCE_DOOR_PIN)==LOW, digitalRead(SAW_UP_PIN)==LOW,
            digitalRead(SAW_DOWN_PIN)==LOW, digitalRead(CL57T_ALARM_PIN)==HIGH, millis());
@@ -194,7 +205,9 @@ void updateSafety() {
   }
   if (xReturnPermit && dry.failed()) interlocks.trip(bench::Fault::Command,millis());
   if (xReturnPermit && interlocks.fault!=bench::Fault::None && dry.active()) dry.trip("DRY_RETURN_MOTION_FAULT",millis());
-  if (interlocks.fault != bench::Fault::None || dry.failed()) xPositionKnown = false;
+  if ((interlocks.fault != bench::Fault::None || dry.failed()) && !sensorStopKeepsPosition()) xPositionKnown = false;
+  // A later driver alarm must invalidate confidence even if a door fault was first.
+  if (xConfigured && digitalRead(CL57T_ALARM_PIN)!=xAlarmNormal) xPositionKnown=false;
   if (!xPositionKnown || (!xContinuousAcquire && digitalRead(BOARD_EDGE_PIN) == HIGH)) xEdgeValid = false;
   if (interlocks.fault!=bench::Fault::None || dry.failed()) {
     xReturnPermit=xReturnCutUsed=xReturnAutomatic=xReturnPending=false;xReturnHoldMask=0;
@@ -279,9 +292,9 @@ void publishHello() {
   Serial.print(",FW:");
   Serial.print(FIRMWARE_VERSION);
   Serial.println(",BOARD:TEENSY41,MAP:T41U5XBB_V2_20,MOTION:1,TEST_OUTPUTS:3,OUTPUT_MAP:AUX2_AUX1_FLOOD,INPUT_MAP:DOOR29_UP22_DOWN16,INTERLOCKS:DOOR_POSITION_V1,COMMISSIONING:UNLOADED_DRY_RUN,"
-    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V19,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
+    "X_TEST:MANUAL_JOG_V1,X_MAP:STEP2_DIR3_EN40,X_APP:CARRIAGE_V20,HOME_PROFILE:EDITABLE_V1,TRUING:SENSOR_PLUS_TRIM_V1,MANUAL:DIRECT_ACTIONS_V1,CAL_SPI:127.12,MAX_JOG:254,BASE_RATE:40,MAX_RATE:20000,MAX_ACCEL:50000,"
     "PROFILES:EDITABLE_V1,HOME_CHECK:LEVEL_ONLY,HOMING:BOUNDED_V1,HOME_MAX:20594,HOME_REF:160.5,ABSOLUTE:REFERENCED_V1,MAX_MOVE:20594,EDGE_SEARCH:BOUNDED_V1,LOAD:FAST_V1,"
-    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1,SECOND_CLAMP:D18_MASK_V1,FEED:CONTINUOUS_ACQUIRE_V1,PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1,AUTO_RETURN:CLAMPED_LAST_CUT_V1");
+    "DRY_RUN:UNLOADED_V6,BLADE_LOCK:UNPLUGGED_CYCLE,TRIGGER_TEST:HOLD_V1,CYCLE:CLAMP_TRIGGER_TRAVEL_V1,OPERATOR_CUT:UNCLAMPED_ONESHOT_V1,SECOND_CLAMP:D18_MASK_V1,FEED:CONTINUOUS_ACQUIRE_V1,PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1,AUTO_RETURN:CLAMPED_LAST_CUT_V1,RECOVERY:COUNTED_STOP_V1");
 }
 
 void publishPinMap() {
@@ -641,6 +654,7 @@ void __attribute__((noinline)) handleCommand(char *command) {
     publishOutputs();
     publishSafety();
     publishDry();
+    publishX();
   } else if (strcmp(command, "ARM 0") == 0 || strcmp(command, "OFF") == 0) {
     stopTests();
     applyOutputs();

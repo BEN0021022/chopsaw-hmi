@@ -38,8 +38,8 @@ def run(exe,legacy=False,old_return=False):
     mask_seen=set();return_overlap=[]
     def records(lines):
      for line in lines:
-      if old_return and line.startswith('BENCH_HELLO,'):line=line.replace('FW:0.26.0','FW:0.25.0').replace('CARRIAGE_V19','CARRIAGE_V18').replace(',AUTO_RETURN:CLAMPED_LAST_CUT_V1','')
-      if legacy and line.startswith('BENCH_HELLO,'):line=line.replace('FW:0.26.0','FW:0.23.0').replace('CARRIAGE_V19','CARRIAGE_V17').replace(',AUTO_RETURN:CLAMPED_LAST_CUT_V1','').replace('FW:0.24.0','FW:0.23.0').replace('FW:0.25.0','FW:0.23.0').replace('CARRIAGE_V18','CARRIAGE_V17').replace(',SECOND_CLAMP:D18_MASK_V1','').replace(',FEED:CONTINUOUS_ACQUIRE_V1','').replace(',PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1','')
+      if old_return and line.startswith('BENCH_HELLO,'):line=line.replace('FW:0.27.0','FW:0.26.0').replace('CARRIAGE_V20','CARRIAGE_V19').replace(',RECOVERY:COUNTED_STOP_V1','').replace('FW:0.26.0','FW:0.25.0').replace('CARRIAGE_V19','CARRIAGE_V18').replace(',AUTO_RETURN:CLAMPED_LAST_CUT_V1','')
+      if legacy and line.startswith('BENCH_HELLO,'):line=line.replace('FW:0.27.0','FW:0.26.0').replace('CARRIAGE_V20','CARRIAGE_V19').replace(',RECOVERY:COUNTED_STOP_V1','').replace('FW:0.26.0','FW:0.23.0').replace('CARRIAGE_V19','CARRIAGE_V17').replace(',AUTO_RETURN:CLAMPED_LAST_CUT_V1','').replace('FW:0.24.0','FW:0.23.0').replace('FW:0.25.0','FW:0.23.0').replace('CARRIAGE_V18','CARRIAGE_V17').replace(',SECOND_CLAMP:D18_MASK_V1','').replace(',FEED:CONTINUOUS_ACQUIRE_V1','').replace(',PARALLEL_RETURN:UNPLUGGED_OPERATOR_V1','')
       w.update_message_log(line)
       assert not p.local_fault,(p.local_fault,line)
       if line.startswith('BENCH_DRY,') and d.data.get('CYCLE')=='1' and d.data.get('STATE')=='SPINUP':mask_seen.add(d.data['CLAMP_MASK'])

@@ -72,7 +72,7 @@ int main() {
     const unsigned stopped = fakePulses;
     fakeTime += 500; command("KEEPALIVE");
     CHECK(!outputsArmed && !xRemaining && !xAbsoluteMove && fakePulses == stopped);
-    CHECK(cause == 0 ? xPositionKnown : !xPositionKnown);
+    CHECK((cause==0 || cause==1 || cause==4) ? xPositionKnown : !xPositionKnown);
   }
   // Per-pulse enforcement catches an unexpectedly changed counted position.
   positionReady(); command("XMOVE 159390");

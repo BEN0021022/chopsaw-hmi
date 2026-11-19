@@ -55,6 +55,8 @@ int main() {
     loop();const unsigned stopped=fakePulses;waitReturn(50);
     CHECK(!xReturnPermit && !xReturnPending && !outputsArmed && !xRemaining && !dry.cycleRunning && !fakePins[19]);
     CHECK(stopped==fakePulses);
+    if(event==1 || event==4) CHECK(xPositionKnown);  // controlled door/endpoint stop
+    if(event==2 || event==3 || event==5) CHECK(!xPositionKnown);  // drive, watchdog, holding loss
   }
   readyReturn();automaticReturn(2);command("OFF");waitReturn(400);
   CHECK(!xReturnPermit && !xReturnPending && !xRemaining && !fakePulses);

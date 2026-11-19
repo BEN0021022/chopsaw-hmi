@@ -152,12 +152,12 @@ class NativeDryRun(QObject):
                                  self.data.get('ARMED')=='1' or self.data.get('STATE','OFF') not in ('OFF','FAULT'))
 
     def consent_changed(self, checked):
-        if not checked and self.native() and (self.data.get('ARMED')=='1' or self.sequence):
+        if not checked and self.native() and not self.intervention.recovering() and (self.data.get('ARMED')=='1' or self.sequence):
             self.stop('Dry-run consent removed')
         self.changed.emit()
 
     def trigger_consent_changed(self, checked):
-        if not checked and self.native() and self.compatible:
+        if not checked and self.native() and self.compatible and not self.intervention.recovering():
             self.request('unpress')
         self.changed.emit()
 
@@ -204,7 +204,7 @@ class NativeDryRun(QObject):
 
     def allowed(self, command):
         if command=='DOFF': return self.native() and self.compatible
-        if command=='DRELEASE': return self.fresh() and self.data.get('RELEASE_READY')=='1' and not self.sequence
+        if command=='DRELEASE': return self.fresh() and self.data.get('RELEASE_READY')=='1' and (not self.sequence or self.intervention.recovering())
         if command=='DTRELEASE': return self.native() and self.compatible and not self.sequence
         if self.awaiting_stop: return False
         if command=='KEEPALIVE': return self.safe_link() and self.data.get('ARMED')=='1'
@@ -348,16 +348,17 @@ class NativeDryRun(QObject):
         if not message: return
         f=message.fields
         if message.kind=='BENCH_HELLO':
-            compatible=(self.owner.carriage_tab.compatible and f.get('FW') in ('0.22.0','0.23.0','0.24.0','0.25.0','0.26.0')
+            compatible=(self.owner.carriage_tab.compatible and f.get('FW') in ('0.22.0','0.23.0','0.24.0','0.25.0','0.26.0','0.27.0')
                         and f.get('DRY_RUN')=='UNLOADED_V6' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
                         and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1'
                         and f.get('OPERATOR_CUT')=='UNCLAMPED_ONESHOT_V1')
             if self.compatible and not compatible: self.stop('Dry-run identity changed')
             self.compatible=compatible
-            compatible=compatible and (f.get('FW') not in ('0.25.0','0.26.0') or (self.owner.carriage_tab.continuous_supported() and self.owner.carriage_tab.parallel_supported()))
-            compatible=compatible and (f.get('FW')!='0.26.0' or self.owner.carriage_tab.automatic_return_supported())
+            compatible=compatible and (f.get('FW') not in ('0.25.0','0.26.0','0.27.0') or (self.owner.carriage_tab.continuous_supported() and self.owner.carriage_tab.parallel_supported()))
+            compatible=compatible and (f.get('FW') not in ('0.26.0','0.27.0') or self.owner.carriage_tab.automatic_return_supported())
+            compatible=compatible and (f.get('FW')!='0.27.0' or f.get('RECOVERY')=='COUNTED_STOP_V1')
             self.compatible=compatible
-            supported=compatible and f.get('FW') in ('0.24.0','0.25.0','0.26.0') and f.get('SECOND_CLAMP')=='D18_MASK_V1'
+            supported=compatible and f.get('FW') in ('0.24.0','0.25.0','0.26.0','0.27.0') and f.get('SECOND_CLAMP')=='D18_MASK_V1'
             if self.second_supported and not supported:self.stop('Second-clamp capability changed')
             self.second_supported=supported
         elif message.kind=='BENCH_DRY':
@@ -415,7 +416,13 @@ class NativeDryRun(QObject):
                     (self.pending['kind']=='action' and int(f['REQ'])==self.pending['req'])):
                     self.pending=None
             if f['FAULT']!='NONE':
-                self.sequence=None; self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message='Controller fault: '+f['FAULT']+'; clamp retained if engaged.'
+                reason='Controller fault: '+f['FAULT']+'; clamp retained if engaged.'
+                if self.sequence and (not self.intervention.recovering() or self.owner.direct_controls.intent):
+                    self.stop(reason,recover_cycle=True)
+                else:
+                    self.pending=None;self.manual_start=None;self.auto_start=None;self.trigger_held=False
+                    if self.intervention.recovering():self.intervention.observe_fault_completion()
+                    else:self.message=reason
             elif not self.local_fault and not self.sequence and not self.message.startswith('Unloaded dry list complete'):
                 trigger=('PRESSED while held (commanded)' if f['TRIGGER']=='1' else
                          'released; hold-to-test ready' if f['MANUAL']=='1' else 'locked OFF')
@@ -450,16 +457,21 @@ class NativeDryRun(QObject):
         }
         self.diagnostics.observe(snapshot, timings, time.monotonic())
 
-    def stop(self, reason='Stopped; trigger released, engaged clamp retained.'):
-        self.intervention.clear()
+    def stop(self, reason='Stopped; trigger released, engaged clamp retained.', *, recover_cycle=False,discard_recovery=False):
+        retain=bool(self.sequence and not discard_recovery and (recover_cycle or self.intervention.recovering() or reason!='Stopped; trigger released, engaged clamp retained.'))
+        if retain:self.intervention.capture_fault(reason)
+        else:self.intervention.clear()
         if hasattr(self.owner,'direct_controls'):self.owner.direct_controls.cancel()
         if self.native() and self.owner.ser and self.owner.ser.is_open:
             self.awaiting_stop=True
-            self.owner.send_command('OFF')
+            old=self.issuing_sequence;self.issuing_sequence=True
+            try:self.owner.send_command('OFF')
+            finally:self.issuing_sequence=old
         p=self.owner.carriage_tab
         if p.armed or p.homing or p.x.get('REMAINING','0')!='0':p.stopping=True
         p.pending=None;p.profile_pending=None;p.full_home_pending=None
-        self.sequence=None; self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message=reason
+        if not retain:self.sequence=None
+        self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message=reason
         self.supervision.coordinator.invalidate('Stopped; reconcile material before another automatic cycle.')
         if reason!='Stopped; trigger released, engaged clamp retained.': self.local_fault=reason
         self.diagnostics.note('STOP', reason, time.monotonic())
@@ -479,7 +491,7 @@ class NativeDryRun(QObject):
                 return f'Board detector not found after {distance:.2f} in of search. Check stock/sensor; Home before retry.'
             if detail=='TIMEOUT':return 'Board detector search timed out. Check stock/sensor and Gentle profile; Home before retry.'
             return f'Board detector acquisition failed ({detail}). Home before retry.'
-        if code!='NONE':return f'Carriage fault: {code}. Home after resolving the cause.'
+        if code!='NONE':return f"Carriage fault: {code}. "+('Counted position retained; clear the cause and error before recovery.' if p.x.get('POS_KNOWN')=='1' else 'Home after resolving the cause.')
         if self.data.get('FAULT','NONE')!='NONE':return 'Controller fault: '+self.data['FAULT']
         if not self.fresh():return 'Controller cycle feedback missing or stale; action stopped.'
         for record in ('X','SAFETY','INPUTS'):
@@ -491,7 +503,7 @@ class NativeDryRun(QObject):
     def tick(self):
         self.sync()
         now=time.monotonic()
-        if self.native() and (self.data.get('ARMED')=='1' or self.sequence):
+        if self.native() and not self.intervention.recovering() and (self.data.get('ARMED')=='1' or self.sequence):
             if not self.safe_link():
                 if not self.local_fault: self.stop(self.feedback_problem())
             elif not self.awaiting_stop and now-self.last_keepalive>=.25 and self.data.get('ARMED')=='1':
@@ -527,6 +539,9 @@ class NativeDryRun(QObject):
                 self.trigger_held=False
         if self.sequence:
             if not self.batch_unchanged() or self.sequence.get('reference_signature')!=self.supervision.current_reference_signature():
+                if self.intervention.recovering():
+                    self.message='RECOVERY — cut list or reference settings changed. Cancel to start the edited batch.'
+                    self.changed.emit();return
                 self.stop('Cut list or reference settings changed; batch cancelled.');return
             if not self.supervision.coordinator.geometry.verified:
                 self.stop('Supervision geometry/reference changed during sequence; no automatic restart')
@@ -534,7 +549,7 @@ class NativeDryRun(QObject):
             self.issuing_sequence=True
             try:
                 self.intervention.tick()
-                if self.sequence['stage'] not in ('PAUSING','PAUSED'):self.advance_sequence()
+                if self.sequence['stage'] not in ('PAUSING','PAUSED','FAULT_RECOVERY'):self.advance_sequence()
             finally: self.issuing_sequence=False
         if hasattr(self,'label'):
             self.label.setText(self.message)
@@ -554,12 +569,12 @@ class NativeDryRun(QObject):
         self.changed.emit()
 
     def acknowledge(self):
-        if self.native() and self.owner.carriage_tab.ready_link() and self.owner.carriage_tab.safety.get('RESET_READY')=='1':
+        if self.native() and self.data.get('CLAMP')=='0' and self.owner.carriage_tab.ready_link() and self.owner.carriage_tab.safety.get('RESET_READY')=='1':
             self.owner.carriage_tab.acknowledge(); self.local_fault=''; self.consent.setChecked(False)
             self.trigger_consent.setChecked(False)
 
     def cancel_cycle(self):
-        self.stop();self.message='Cycle canceled; cut list retained. Start begins a new batch.';self.changed.emit()
+        self.stop(discard_recovery=True);self.message='Cycle canceled; cut list retained. Start begins a new batch.';self.changed.emit()
 
     def approve_cut(self):
         if self.intervention.paused():return self.intervention.resume(approve_cut=True)

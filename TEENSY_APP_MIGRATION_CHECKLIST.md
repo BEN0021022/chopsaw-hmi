@@ -23,6 +23,26 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Fault recovery - prepared 0.27
+
+- [x] Preserve counted carriage reference on controlled guard/saw-sensor stops;
+      retain holding enable and still require Home after driver/confidence loss.
+- [x] Preserve pending cut/checkpoint; reconcile matching late DONE once;
+      block ambiguous completion counts and changed list/reference settings.
+- [x] Enable guarded clamp release, Clear Error, manual jog/Load and explicit
+      Resume from recovery; Cancel discards checkpoint; Clear never starts motion.
+- [x] Resume with clear-detector Gentle acquisition and a new truing cut, then
+      remaining cuts without repeating confirmed completions.
+- [x] Actual-sketch/Qt second-cut feed/stroke fault tests and full offline
+      regression pass; Teensy 4.1 compile succeeds.
+- [ ] Flash/read back 0.27 and restore captured profiles after hardware isolation.
+- [ ] Operator acceptance: trip guard on cut two, clear/release, move stock back,
+      Resume/retrue/finish; verify driver alarm still requires Home.
+
+See [fault recovery](docs/FAULT_RECOVERY_027.md). Artifacts/logs:
+`tmp/commissioning/0.27.0`. Earlier native test-process crashes remain unresolved,
+although this complete regression run passed on private Python 3.13.17.
+
 ## Clamped last-cut early return - deployed 0.26
 
 - [x] Select last usable cut; remain forward for another fitting cut or required cleanup.
@@ -33,7 +53,7 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 - [x] Flash/read back 0.26, restore captured speed profiles, reopen matching app idle.
 - [x] New clamped path, old-firmware fallback, pause checkpoints, homing, acquisition and profiles pass isolated Qt/sketch tests.
 - [ ] Resolve native test-process failures in multiboard/operator-return regression cases; logs retained separately from passing controller/feature checks.
-- [ ] Operator unplugged acceptance of automatic clamped return.
+- [x] Operator reports early return working after 0.26 deployment (2026-11-19).
 
 See [clamped early return](docs/CLAMPED_EARLY_RETURN_026.md).
 

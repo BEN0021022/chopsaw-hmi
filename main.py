@@ -946,7 +946,9 @@ class MinimalHMI(QMainWindow):
         self.auto_resume_button=QPushButton('Resume Cycle')
         self.auto_resume_button.setToolTip('Use the adjusted board position, with stock against the pusher. After Home, reacquire the board and retain the pending cut.')
         self.auto_resume_button.clicked.connect(lambda:self.dry_run.intervention.resume())
-        for index,button in enumerate((self.auto_home_button,self.auto_clear_error,self.auto_cancel_button,self.auto_pause_button,self.auto_resume_button)):
+        self.auto_release_clamps=QPushButton('Release retained clamps')
+        self.auto_release_clamps.clicked.connect(lambda:self.dry_run.request('recover_release'))
+        for index,button in enumerate((self.auto_home_button,self.auto_clear_error,self.auto_cancel_button,self.auto_pause_button,self.auto_resume_button,self.auto_release_clamps)):
             button.setMinimumHeight(42);actions.addWidget(button,index//2,index%2)
         cyc.insertLayout(1,actions)
         self.repeat_pattern=QCheckBox('Repeat cut list on each new board')
@@ -2394,7 +2396,9 @@ class MinimalHMI(QMainWindow):
                 self.direct_controls.cancel()
                 dry.auto_start=None; dry.manual_start=None; dry.trigger_held=False
             if dry.sequence and not dry.issuing_sequence:
-                if dry.intervention.paused() and cmd=='XARM 0':pass
+                if stopping and self.carriage_tab.local_fault:dry.intervention.capture_fault(self.carriage_tab.local_fault)
+                if dry.intervention.recovering() and stopping:pass
+                elif dry.intervention.paused() and cmd=='XARM 0':pass
                 elif stopping:
                     dry.sequence=None; dry.pending=None; dry.message='Unloaded dry list stopped.'
                 elif not dry.intervention.paused() and cmd not in ('HELLO','PINMAP','STATUS','PING','KEEPALIVE'):
@@ -2689,9 +2693,10 @@ class MinimalHMI(QMainWindow):
         self.auto_configure.setEnabled(p.allowed("XCONFIG 0 1"))
         self.auto_home.setEnabled(self.direct_controls.can_motion('home'))
         self.auto_home_button.setEnabled(self.direct_controls.can_motion('home'))
-        self.auto_clear_error.setEnabled(p.ready_link() and not p.armed and not self.dry_run.sequence and p.safety.get('RESET_READY')=='1')
-        self.auto_cancel_button.setEnabled(p.connected and bool(self.dry_run.sequence or self.dry_run.auto_start or self.direct_controls.intent))
-        self.auto_pause_button.setEnabled(bool(self.dry_run.sequence and self.dry_run.sequence['stage'] not in ('PAUSED','PAUSING') and not self.dry_run.intervention.after_cut))
+        self.auto_clear_error.setEnabled(p.ready_link() and not p.armed and (not self.dry_run.sequence or self.dry_run.intervention.recovering()) and self.dry_run.data.get('CLAMP')=='0' and p.safety.get('RESET_READY')=='1')
+        self.auto_cancel_button.setEnabled(p.connected)
+        self.auto_release_clamps.setEnabled(self.dry_run.allowed('DRELEASE'))
+        self.auto_pause_button.setEnabled(bool(self.dry_run.sequence and self.dry_run.sequence['stage'] not in ('PAUSED','PAUSING','FAULT_RECOVERY') and not self.dry_run.intervention.after_cut))
         self.auto_pause_button.setText('Pausing after cut...' if self.dry_run.intervention.after_cut else 'Pause Cycle')
         self.auto_resume_button.setEnabled(self.dry_run.intervention.resume_plan() is not None)
         self.auto_modes.tabBar().setEnabled((not self.dry_run.sequence or self.dry_run.intervention.manual_window()) and not self.dry_run.auto_start)

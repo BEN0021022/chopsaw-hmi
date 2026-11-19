@@ -441,8 +441,8 @@ class TeensyCarriagePanel(QWidget):
         f = message.fields
         if message.kind == "BENCH_HELLO":
             self.received["HELLO"] = time.monotonic()
-            compatible = all((f.get(k) in ('CARRIAGE_V16','CARRIAGE_V17','CARRIAGE_V18','CARRIAGE_V19') if k=='X_APP' else f.get(k)==value) for k,value in IDENTITY.items())
-            compatible=compatible and (f.get('X_APP') not in ('CARRIAGE_V17','CARRIAGE_V18','CARRIAGE_V19') or f.get('HOME_PROFILE')=='EDITABLE_V1')
+            compatible = all((f.get(k) in ('CARRIAGE_V16','CARRIAGE_V17','CARRIAGE_V18','CARRIAGE_V19','CARRIAGE_V20') if k=='X_APP' else f.get(k)==value) for k,value in IDENTITY.items())
+            compatible=compatible and (f.get('X_APP') not in ('CARRIAGE_V17','CARRIAGE_V18','CARRIAGE_V19','CARRIAGE_V20') or f.get('HOME_PROFILE')=='EDITABLE_V1')
             self._continuous=compatible and f.get('FEED')=='CONTINUOUS_ACQUIRE_V1'
             self._parallel=compatible and f.get('PARALLEL_RETURN')=='UNPLUGGED_OPERATOR_V1'
             self._auto_return=compatible and f.get('AUTO_RETURN')=='CLAMPED_LAST_CUT_V1'
