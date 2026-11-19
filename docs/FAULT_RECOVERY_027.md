@@ -1,7 +1,7 @@
 # Counted-position fault recovery - 0.27
 
-Prepared 2026-11-19: firmware **0.27.0 / CARRIAGE_V20**, capability
-`RECOVERY:COUNTED_STOP_V1`. Not flashed yet; physical acceptance pending.
+Deployed 2026-11-19: firmware **0.27.0 / CARRIAGE_V20**, capability
+`RECOVERY:COUNTED_STOP_V1`. Flashed/read back on COM4; physical acceptance pending.
 
 ## Operator workflow
 
@@ -66,3 +66,14 @@ motion or valve commands were sent during development. Deployment must capture
 the existing RAM profiles, flash only after hardware isolation confirmation,
 read back idle/off startup and restore those profiles. Physical recovery tests
 remain to be performed by the operator.
+
+Upload and readback succeeded after the operator confirmed driver power OFF,
+valve power disconnected, air isolated and saw mains unplugged. Startup was
+disarmed, unconfigured/unhomed, with outputs OFF and second clamp disabled until
+normal app configuration. Captured profiles were restored: Gentle 600/600,
+Normal 2500/1500 and Fast 3500/2000. The matching app reopened on Auto,
+connected/fresh/compatible, no faults or queued actions; saved outfeed enable
+and geometry remain intact. No Home, arm, motion or valve commands were sent.
+Source `3df2b0df517f0b8620aacc77f42f39212a9c6deb`, firmware tree
+`f4e591ce27c4feb0746d4750c54116465140fcfd`; artifact hashes and deployment
+captures are recorded in the local manifest. Rollback 0.26 is preserved.

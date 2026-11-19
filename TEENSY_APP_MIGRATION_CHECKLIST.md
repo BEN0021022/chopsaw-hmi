@@ -1,8 +1,8 @@
 # Teensy app and firmware migration checklist
 
 Updated 2026-11-19. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
-Current deployed source/build: custom **0.26.0 / CARRIAGE_V19**, flashed/read back
-on COM4, 2026-11-19, source `bdb7efe`. Second clamp enabled in saved app settings;
+Current deployed source/build: custom **0.27.0 / CARRIAGE_V20**, flashed/read back
+on COM4, 2026-11-19, source `3df2b0d`. Second clamp enabled in saved app settings;
 controller boots disabled until normal configuration; existing
 carriage profiles restored. Startup OFF, unconfigured/unhomed, no faults or queued motion.
 Integrated saw-unplugged
@@ -23,7 +23,7 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
-## Fault recovery - prepared 0.27
+## Fault recovery - deployed 0.27
 
 - [x] Preserve counted carriage reference on controlled guard/saw-sensor stops;
       retain holding enable and still require Home after driver/confidence loss.
@@ -35,7 +35,8 @@ Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
       remaining cuts without repeating confirmed completions.
 - [x] Actual-sketch/Qt second-cut feed/stroke fault tests and full offline
       regression pass; Teensy 4.1 compile succeeds.
-- [ ] Flash/read back 0.27 and restore captured profiles after hardware isolation.
+- [x] Flash/read back 0.27 after hardware isolation; restore Gentle 600/600,
+      Normal 2500/1500 and Fast 3500/2000; reopen matching app connected/idle.
 - [ ] Operator acceptance: trip guard on cut two, clear/release, move stock back,
       Resume/retrue/finish; verify driver alarm still requires Home.
 

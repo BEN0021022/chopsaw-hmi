@@ -5,11 +5,12 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-19)
 
-Prepared **0.27** retains counted carriage position on controlled guard/saw-sensor
+Deployed **0.27** retains counted carriage position on controlled guard/saw-sensor
 stops and preserves the unfinished cut list. After clearing the cause/error,
 manual jog/Load is available; explicit Resume gently reacquires and trues the
 board before continuing. Driver alarms and other confidence losses still require
-Home. Offline regression and Teensy build pass; flash/physical acceptance pending.
+Home. Offline regression and Teensy build pass; flashed/read back on COM4,
+profiles restored and app reopened idle. Physical recovery acceptance pending.
 See [fault recovery](docs/FAULT_RECOVERY_027.md).
 
 Deployed **0.26** returns the carriage during the last clamped cut, after the
