@@ -5,6 +5,11 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-19)
 
+Windows app **v1.1.0** is [published on GitHub Releases](https://github.com/BEN0021022/chopsaw-hmi/releases/tag/v1.1.0)
+as of 2026-11-20. Packaged startup, updater replacement/restart, native machine
+regressions and public download/checksum verification passed. See the
+[release record](docs/RELEASE_1_1_0.md). Controller firmware remains 0.27.0.
+
 Full Auto now opens on the two-clamp **Machine / live cycle** view. Start and
 Stop/Interrupt use the shared Auto sequence; live telemetry drives the carriage,
 clamps and saw display, with modeled stock explicitly identified. App-only update;

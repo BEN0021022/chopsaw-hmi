@@ -1,6 +1,6 @@
 # Teensy app and firmware migration checklist
 
-Updated 2026-11-19. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
+Updated 2026-11-20. Active project: `C:/Users/bensc/Projects/ChopSawHMI-Teensy`.
 Current deployed source/build: custom **0.27.0 / CARRIAGE_V20**, flashed/read back
 on COM4, 2026-11-19, source `3df2b0d`. Second clamp enabled in saved app settings;
 controller boots disabled until normal configuration; existing
@@ -22,6 +22,22 @@ the currently flashed firmware is custom, not stock grblHAL.
 not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
+
+## Windows release - v1.1.0
+
+- [x] Build from a committed source revision; record EXE hash, dependency versions
+      and matching controller source tree; target the exact commit in GitHub.
+- [x] Pass complete controller/Qt regression and additional UI/updater/simulator
+      checks; test the exact frozen EXE and its HTTPS access on Windows.
+- [x] Exercise replacement/restart using the v1.0.2 updater helper in a disposable
+      frozen installation; preserve sentinel cut-list/history data.
+- [x] Publish v1.1.0 EXE/checksum, manual-flash HEX and manifests; push both source
+      branches; verify public update detection/download/hash and tagged commit.
+- [x] Preserve older releases, legacy Mega rollback tag and current operator data.
+- [ ] Operator acceptance of v1.1.0 on the physical machine remains separate from
+      this packaging/update release verification.
+
+See [release record](docs/RELEASE_1_1_0.md). The Windows updater does not flash firmware.
 
 ## Full Auto machine view - app update
 
