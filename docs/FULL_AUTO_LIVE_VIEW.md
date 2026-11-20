@@ -47,6 +47,10 @@ both clamps, last-cut/return overlap, shared per-cut approval, stop during a
 clamped stroke, stale/unknown feedback and non-actuating refresh. Screenshots
 are under `tmp/ui-full-auto`. Timing sequencing/migration and offline workbench
 checks pass; existing second-clamp and 0.27 recovery integrations pass.
+Existing operator-return/overlap, UI safety boundaries and carriage integration
+tests also pass. The updated app was reopened on Machine / live cycle; no serial
+ports were enumerated at handoff, so live values remain UNKNOWN and Start stays
+disabled until connection/readiness. No machine actions were sent by the agent.
 
 The older `test_sim_cycle.py` fails at its initial unhomed virtual keypad move
 assertion; the identical failure was reproduced from unchanged HEAD in an
