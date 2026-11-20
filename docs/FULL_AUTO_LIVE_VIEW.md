@@ -52,8 +52,8 @@ tests also pass. The updated app was reopened on Machine / live cycle; no serial
 ports were enumerated at handoff, so live values remain UNKNOWN and Start stays
 disabled until connection/readiness. No machine actions were sent by the agent.
 
-The older `test_sim_cycle.py` fails at its initial unhomed virtual keypad move
-assertion; the identical failure was reproduced from unchanged HEAD in an
-isolated baseline checkout. It occurs before the changed two-clamp cycle.
-This pre-existing simulator test issue is not a pass and remains outstanding.
+The older `test_sim_cycle.py` assumed an unhomed keypad move was allowed; that
+failure was reproduced on the unchanged baseline. Release preparation updates
+the fixture to Home before referenced keypad motion, then Home again after
+motor release, matching the application's reference policy.
 Physical acceptance of the new view/buttons remains for the operator.

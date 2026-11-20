@@ -60,6 +60,8 @@ def run(exe):
     records(wire.initial);tick();assert w.home_motor();flush();until(lambda:w.direct_controls.intent is None)
     for key,value in dict(main_near=8.75,main_far=9.75,front_offset=0,rear_extent=16.75,keepout=1,margin=.5,max_clear_push=160,outfeed_near=10.25,outfeed_far=11.5).items():sup.fields[key].setValue(value)
     sup.second_enabled.setChecked(True);assert sup.save()
+    assert d.progress_index is None and sup.register_stock()
+    w.refresh_teensy_tabs();assert w.saw_sim.board_present
     w.kerf_input.setValue(.12);w.board_sensor_location_input.setValue(10.5)
     w.load_cut_list_lines(['20 first','20 second']);w.repeat_pattern.setChecked(False);w.clear_at_list_end.setChecked(False)
     w.tabs.setCurrentWidget(w.full_auto_tab);w.resize(1440,950);w.show();app.processEvents();tick()

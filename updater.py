@@ -116,13 +116,13 @@ def check_for_update(timeout=DEFAULT_TIMEOUT):
 
     assets = data.get("assets") or []
     exe_asset = next(
-        (a for a in assets if str(a.get("name", "")).lower().endswith(".exe")), None
+        (a for a in assets if str(a.get("name", "")).lower() == APP_EXE_NAME.lower()), None
     )
     if not exe_asset or not exe_asset.get("browser_download_url"):
         return None
 
     sha_asset = next(
-        (a for a in assets if str(a.get("name", "")).lower().endswith(".sha256")), None
+        (a for a in assets if str(a.get("name", "")).lower() == (APP_EXE_NAME + '.sha256').lower()), None
     )
 
     return {
@@ -141,7 +141,7 @@ def _expected_sha(sha256_url, timeout):
     try:
         text = _http_get(sha256_url, timeout, accept="text/plain").decode("utf-8")
         token = text.strip().split()[0].lower()
-        return token if len(token) == 64 else None
+        return token if len(token) == 64 and all(c in '0123456789abcdef' for c in token) else None
     except Exception:
         return None
 
@@ -158,6 +158,8 @@ def download_update(info, progress_cb=None, timeout=60.0):
         return None
     dest = update_cache_dir() / APP_EXE_NAME
     expected = _expected_sha(info.get("sha256_url"), timeout)
+    if info.get('sha256_url') and expected is None:
+        return None  # A published checksum must verify; never silently downgrade.
     hasher = hashlib.sha256()
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -178,7 +180,7 @@ def download_update(info, progress_cb=None, timeout=60.0):
     except Exception:
         return None
 
-    if expected and hasher.hexdigest().lower() != expected:
+    if (expected and hasher.hexdigest().lower() != expected) or (total and downloaded != total):
         try:
             dest.unlink()
         except OSError:

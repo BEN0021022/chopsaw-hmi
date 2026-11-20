@@ -93,7 +93,7 @@ class CutLengthKeypad(QFrame):
         grid = QGridLayout()
         grid.setSpacing(8)
         self.keys = {}
-        for index, text in enumerate(('7','8','9','4','5','6','1','2','3','.','0','Back')):
+        for index, text in enumerate(('7','8','9','4','5','6','1','2','3','Back','0','.')):
             button = QPushButton(text)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.clicked.connect(lambda _checked=False, key=text: self.edit(key))

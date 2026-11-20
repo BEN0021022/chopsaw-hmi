@@ -119,6 +119,46 @@ def test_schedule_update_dev_mode():
     print("schedule_update_dev_mode OK")
 
 
+def test_select_exact_app_assets(monkeypatch):
+    monkeypatch(updater, '_current_version', lambda: '1.0.2')
+    assets = [
+        {'name':'OtherTool.exe','browser_download_url':'https://x/wrong.exe'},
+        {'name':'firmware.hex.sha256','browser_download_url':'https://x/wrong.sha256'},
+        {'name':'ChopSawHMI.exe','browser_download_url':'https://x/right.exe','size':30},
+        {'name':'ChopSawHMI.exe.sha256','browser_download_url':'https://x/right.sha256'},
+    ]
+    monkeypatch(updater, '_http_get', lambda *a, **k: json.dumps({'tag_name':'v1.1.0','assets':assets}).encode())
+    info = updater.check_for_update()
+    assert info['download_url']=='https://x/right.exe' and info['sha256_url']=='https://x/right.sha256'
+
+
+def test_unreadable_published_checksum_rejects_download(monkeypatch, tmp_dir):
+    monkeypatch(updater, 'update_cache_dir', lambda: tmp_dir)
+    monkeypatch(updater, '_expected_sha', lambda *a: None)
+    monkeypatch(updater.urllib.request, 'urlopen', lambda *a, **k: (_ for _ in ()).throw(AssertionError('Must not download')))
+    assert updater.download_update({'download_url':'https://x/app.exe','sha256_url':'https://x/app.sha256'}) is None
+
+
+def test_invalid_sha_rejected(monkeypatch):
+    monkeypatch(updater, '_http_get', lambda *a, **k: ('z'*64).encode())
+    assert updater._expected_sha('https://x/app.sha256', 1) is None
+
+
+def test_publish_requires_exact_tested_commit(monkeypatch, tmp_dir):
+    import build
+    exe = tmp_dir/'ChopSawHMI.exe'; exe.write_bytes(b'tested-build')
+    manifest = tmp_dir/'release-manifest.json'
+    manifest.write_text(json.dumps({'version':'1.1.0','source_commit':'tested','source_dirty':False,
+                                   'sha256':hashlib.sha256(exe.read_bytes()).hexdigest()}))
+    monkeypatch(build,'MANIFEST',manifest)
+    monkeypatch(build,'source_state',lambda:('tested',False))
+    assert build.verify_publish('1.1.0',exe)=='tested'
+    monkeypatch(build,'source_state',lambda:('different',False))
+    try: build.verify_publish('1.1.0',exe)
+    except SystemExit: pass
+    else: raise AssertionError('Publishing a different commit was accepted')
+
+
 # ---- tiny test harness (no pytest dependency) ----
 class _Patcher:
     def __init__(self):

@@ -32,27 +32,6 @@ w.auto_clamp_checkbox.setChecked(True)
 assert w.auto_clamp_enabled
 print("connected to virtual controller")
 
-# The retained Manual checkbox actually stops simulation; enabling does not
-# replay an abandoned keypad target. No physical serial port is involved.
-assert w.enable_chk.isChecked()
-w.keypad.button_clicked('1'); w.keypad.enter_value()
-assert w.ser.target == 1
-w.enable_chk.click()
-assert not w.ser.motor_enabled and w.ser.state == 'DISABLED'
-stopped = w.ser.pos
-w.keypad.value_entered.emit(2)
-w.home_motor()
-with w.ser._lock:
-    w.ser._step_motion(1)
-    assert w.ser.pos == stopped and w.ser.target == stopped
-    assert not w.ser.homed
-w.enable_chk.click()
-assert w.ser.motor_enabled and w.ser.state == 'IDLE'
-with w.ser._lock:
-    w.ser._step_motion(1)
-    assert w.ser.pos == stopped, 'Enable must not replay the old target'
-print('Manual keypad and motor enable/release OK')
-
 seen_bsen = {"v": False}
 w.signal_bridge.board_sensor_state_updated.connect(
     lambda s: seen_bsen.__setitem__("v", seen_bsen["v"] or s == 1))
@@ -81,6 +60,29 @@ w.home_motor()
 pump_until(lambda: w.homed_label.text() == "HOMED", 15, "homing")
 assert abs(w.current_position - 160.5) < 0.01
 print(f"homed at {w.current_position:.2f}")
+
+# Referenced keypad moves require Home. Exercise enable/release after homing,
+# then Home again because releasing the motor intentionally loses reference.
+assert w.enable_chk.isChecked()
+w.keypad.button_clicked('1'); w.keypad.enter_value()
+assert w.ser.target == 1
+w.enable_chk.click()
+assert not w.ser.motor_enabled and w.ser.state == 'DISABLED'
+stopped = w.ser.pos
+w.keypad.value_entered.emit(2)
+w.home_motor()
+with w.ser._lock:
+    w.ser._step_motion(1)
+    assert w.ser.pos == stopped and w.ser.target == stopped
+    assert not w.ser.homed
+w.enable_chk.click()
+assert w.ser.motor_enabled and w.ser.state == 'IDLE'
+with w.ser._lock:
+    w.ser._step_motion(1)
+    assert w.ser.pos == stopped, 'Enable must not replay the old target'
+w.home_motor()
+pump_until(lambda: w.homed_label.text() == 'HOMED', 15, 're-homing')
+print('Manual keypad and motor enable/release OK')
 
 w.load_cut_list_lines(["18 A", "24 B", "30 C"])
 w.start_auto_cycle()

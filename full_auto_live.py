@@ -67,7 +67,8 @@ def refresh_full_auto(w):
     if c.fresh and c.material.located:
         stock = c.material.stock
         remaining = stock.far-stock.near
-        index = max(0, d.sequence['index'] if d.sequence else d.progress_index)
+        raw_index = d.sequence.get('index') if d.sequence else d.progress_index
+        index = max(0, raw_index if isinstance(raw_index, int) else 0)
         cuts = d.sequence['cuts'][index:] if d.sequence else [float(length) for _, length, _ in w.cut_list[index:]]
         segments = []
         for offset, length in enumerate(cuts):

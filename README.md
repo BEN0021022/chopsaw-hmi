@@ -196,6 +196,10 @@ portable Zig compiler described in `docs/SENSOR_BENCH_GUIDE.md`.
 
 ## Build a Windows executable
 
+See [release procedure](docs/RELEASING.md) for tested-commit publishing and
+packaged updater verification. The first Teensy-focused EXE is **v1.1.0**,
+paired with custom controller firmware **0.27.0**, flashed separately.
+
 Build without publishing:
 
 ```powershell

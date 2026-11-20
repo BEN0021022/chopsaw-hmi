@@ -3305,6 +3305,10 @@ class MinimalHMI(QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
+    smoke_dir = os.environ.get('CHOPSAW_RELEASE_SMOKE_DIR')
+    if smoke_dir:
+        from release_smoke import run as run_release_smoke
+        sys.exit(run_release_smoke(MinimalHMI, smoke_dir))
     app = QApplication(sys.argv)
     icon_path = get_icon_path()
     if os.path.exists(icon_path):
