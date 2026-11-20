@@ -23,6 +23,21 @@ not establish physical machine safety or production-cutting readiness.
 See [feature mapping](docs/APP_FEATURE_MIGRATION.md) for each old app feature.
 Return sequence: [next bench session](docs/NEXT_BENCH_SESSION.md).
 
+## Full Auto machine view - app update
+
+- [x] Make the two-clamp live machine page the Full Auto landing page; retain
+      layout/scenarios and diagnostics as separate pages.
+- [x] Remove retired fence clamp from status, drawing, simulation and timing UI.
+- [x] Share Auto Start, next-board continuation and per-cut approvals; add a
+      prominent software Stop / Interrupt beside Start at the bottom.
+- [x] Follow native position/endpoints/output readback and shared stock model;
+      hide stale/unknown state; render without sending hardware commands.
+- [x] Actual-sketch/Qt Start/Stop, both-clamp/early-return and stale-display
+      checks; timing, workbench, second-clamp and fault-recovery tests pass.
+- [ ] Operator acceptance of live animation and Full Auto Start/Stop controls.
+
+See [Full Auto view](docs/FULL_AUTO_LIVE_VIEW.md). Firmware stays 0.27.
+
 ## Fault recovery - deployed 0.27
 
 - [x] Preserve counted carriage reference on controlled guard/saw-sensor stops;

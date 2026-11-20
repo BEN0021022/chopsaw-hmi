@@ -28,7 +28,11 @@ class SawSimWidget(QWidget):
         self.board_edge = 0.0          # leading edge, inches from blade
         self.segments = []             # [(length_in, color_hex or None=kerf, label)]
         self.saw_state = "--"          # UP / DOWN / CUTTING / --
-        self.clamps = (False, False, False)  # left, right, fence
+        self.clamps = (False, False)  # main / outfeed; None means unknown
+        self.clamp_positions = (9.25, -10.875)
+        self.clamp_enabled = (True, True)
+        self.live = False
+        self.material_note = ''
         self.board_sensor_on = False
         self._eject = None
         self._eject_timer = QTimer(self)
@@ -46,7 +50,7 @@ class SawSimWidget(QWidget):
         self.update()
 
     def set_carriage(self, pos):
-        self.carriage = float(pos)
+        self.carriage = None if pos is None else float(pos)
         self.update()
 
     def set_saw_state(self, state):
@@ -54,13 +58,13 @@ class SawSimWidget(QWidget):
             self.saw_state = state
             self.update()
 
-    def set_clamps(self, left, right, fence):
-        self.clamps = (left, right, fence)
+    def set_clamps(self, left, right):
+        self.clamps = (left, right)
         self.update()
 
     def set_board_sensor(self, on):
-        if bool(on) != self.board_sensor_on:
-            self.board_sensor_on = bool(on)
+        if on != self.board_sensor_on:
+            self.board_sensor_on = on
             self.update()
 
     def set_board(self, present, edge_pos, segments):
@@ -116,7 +120,7 @@ class SawSimWidget(QWidget):
 
         # Caption
         p.setPen(QPen(QColor("#64748b"), 1))
-        caption = f'Carriage: {self.carriage:.2f}"'
+        caption = 'Carriage: UNKNOWN' if self.carriage is None else f'Carriage: {self.carriage:.2f}"'
         if self.board_present:
             board_total = sum(s[0] for s in self.segments)
             caption += f'    Board: {board_total:.2f}"'
@@ -151,34 +155,39 @@ class SawSimWidget(QWidget):
                     p.setBrush(QColor(color))
                     p.drawRect(QRectF(x_left, b_top, w, board_h))
                     if label and w > 34:
+                        p.setPen(QColor('#e2e8f0'))
                         p.drawText(QRectF(x_left, b_top, w, board_h),
                                    int(Qt.AlignmentFlag.AlignCenter), label)
                 cursor += length
 
-        # Clamp indicators near the blade (Fence/Left infeed, Right outfeed)
-        for name, inch, on in (("F", 16.0, self.clamps[2]),
-                               ("L", 8.0, self.clamps[0]),
-                               ("R", -8.0, self.clamps[1])):
+        # Two measured clamp pads. A commanded ON is not measured grip.
+        for name, inch, on, enabled in zip(('MAIN', 'OUTFEED'), self.clamp_positions,
+                                          self.clamps, self.clamp_enabled):
             cx = X(inch)
-            p.setBrush(QColor("#2563eb") if on else QColor("#1e293b"))
+            p.setBrush(QColor('#2563eb' if on is True and enabled else '#475569' if on is None else '#1e293b'))
             p.setPen(QPen(QColor("#334155"), 1))
-            p.drawRect(QRectF(cx - 6, b_top - 17, 12, 12))
+            p.drawRect(QRectF(cx - 6, b_top - (8 if on is True and enabled else 24), 12, 12))
             p.setPen(QPen(QColor("#94a3b8"), 1))
-            p.drawText(QRectF(cx - 6, b_top - 18, 12, 12),
-                       int(Qt.AlignmentFlag.AlignCenter), name)
+            p.drawText(QRectF(cx - 34, b_top - 35, 68, 16),
+                       int(Qt.AlignmentFlag.AlignCenter), name if enabled else name+' OFFLINE')
 
         # Carriage (pusher): face at its position, body on the infeed side
-        cx = X(self.carriage)
-        p.setBrush(QColor("#2563eb"))
-        p.setPen(QPen(QColor("#1d4ed8"), 1))
-        p.drawRoundedRect(QRectF(cx - 26, b_top - 8, 26, board_h + 16), 4, 4)
-        p.setPen(QPen(QColor("#93c5fd"), 2))
-        p.drawLine(QPointF(cx, b_top - 8), QPointF(cx, b_top + board_h + 8))
+        if self.carriage is not None:
+            cx = X(self.carriage)
+            p.setBrush(QColor("#2563eb"))
+            p.setPen(QPen(QColor("#1d4ed8"), 1))
+            p.drawRoundedRect(QRectF(cx - 26, b_top - 8, 26, board_h + 16), 4, 4)
+            p.setPen(QPen(QColor("#93c5fd"), 2))
+            p.drawLine(QPointF(cx, b_top - 8), QPointF(cx, b_top + board_h + 8))
 
         # Saw head + blade
-        cutting = self.saw_state in ("CUTTING", "DOWN")
+        cutting = self.saw_state in ("CUTTING", "DOWN", 'MOVING DOWN')
         blade_color = QColor("#ef4444") if cutting else QColor("#94a3b8")
         head_y = (b_top - 4) if cutting else (rect.top() + 22)
+        if self.saw_state in ('MOVING DOWN', 'RETURNING UP'):
+            head_y = (b_top-4+rect.top()+22)/2
+        elif self.saw_state in ('UNKNOWN', 'CONFLICT', 'BETWEEN LIMITS', '--'):
+            head_y = (b_top-4+rect.top()+22)/2
         p.setBrush(QColor("#1e293b"))
         p.setPen(QPen(blade_color, 1))
         p.drawRoundedRect(QRectF(blade_x - 10, head_y - 16, 20, 14), 3, 3)
@@ -189,9 +198,14 @@ class SawSimWidget(QWidget):
         else:
             p.drawRect(QRectF(blade_x - 1.5, head_y - 2, 3, 12))
         p.setPen(QPen(QColor("#94a3b8"), 1))
-        p.drawText(QRectF(blade_x - 30, rect.top() + 2, 60, 12),
+        p.drawText(QRectF(blade_x - 65, rect.top() + 2, 130, 15),
                    int(Qt.AlignmentFlag.AlignCenter),
                    self.saw_state if self.saw_state != "--" else "SAW")
+
+        if self.material_note:
+            p.setPen(QColor('#94a3b8'))
+            p.drawText(QRectF(left, table_y+16, right-left, 44),
+                       Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap, self.material_note)
 
         # Ejected piece sliding into the outfeed lane
         if self._eject:

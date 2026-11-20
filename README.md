@@ -5,6 +5,11 @@ I/O, simulation, current monitoring, and packaged Windows releases.
 
 ## Current Teensy build (2026-11-19)
 
+Full Auto now opens on the two-clamp **Machine / live cycle** view. Start and
+Stop/Interrupt use the shared Auto sequence; live telemetry drives the carriage,
+clamps and saw display, with modeled stock explicitly identified. App-only update;
+firmware remains 0.27. See [Full Auto view](docs/FULL_AUTO_LIVE_VIEW.md).
+
 Deployed **0.27** retains counted carriage position on controlled guard/saw-sensor
 stops and preserves the unfinished cut list. After clearing the cause/error,
 manual jog/Load is available; explicit Resume gently reacquires and trues the

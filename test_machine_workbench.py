@@ -29,8 +29,9 @@ def run():
         before = (coordinator.geometry, coordinator.material, coordinator.paused, list(coordinator.events))
         settings = {key:w.settings.value(key) for key in w.settings.allKeys()}
         with patch.object(w, 'send_command', side_effect=AssertionError('Preview sent a hardware command')):
-            assert w.full_auto_tab.isEnabled() and not w.full_auto_legacy.isEnabled()
+            assert w.full_auto_tab.isEnabled() and w.full_auto_legacy.isEnabled()
             assert not w.fa_start_cycle_button.isEnabled()
+            assert not w.fa_stop_button.isEnabled()
             for index, scenario in enumerate(bench.scenarios):
                 bench.scenario.setCurrentIndex(index)
                 bench.refresh()
@@ -67,6 +68,7 @@ def run():
             w.cut_history.error = ''; w.refresh_cut_history_status()
             assert w.cut_history_warning.isHidden()
             bench.source.setCurrentIndex(1)
+            bench.pages.setCurrentIndex(1)
             w.tabs.setCurrentWidget(w.full_auto_tab)
             w.resize(1440,1000); w.show(); app.processEvents()
             output = Path('tmp/ui-workbench'); output.mkdir(parents=True, exist_ok=True)

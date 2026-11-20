@@ -63,7 +63,7 @@ def run():
         p = w.carriage_tab
         assert p.connected
         assert w.legacy_tab.isEnabled() and w.auto_tab.isEnabled() and w.full_auto_tab.isEnabled()
-        assert not w.full_auto_legacy.isEnabled(), 'Read-only workbench must not enable legacy actuation'
+        assert w.full_auto_legacy.isEnabled() and not w.fa_start_cycle_button.isEnabled(), 'Readable view cannot bypass readiness'
         assert not w.start_cycle_button.isEnabled() and not hasattr(w,'cut_complete_button')
         assert w.enable_chk.isHidden() and not w.enable_chk.isEnabled()
         assert not w.manual_home_button.isEnabled()
@@ -366,7 +366,7 @@ def run():
         w._save_settings()
         assert int(w.settings.value('fast_speed'))==4321, 'Do not overwrite archived simulator profile settings'
         assert w.auto_tab.isEnabled() and not w.start_cycle_button.isEnabled() and w.full_auto_tab.isEnabled()
-        assert not w.full_auto_legacy.isEnabled()
+        assert w.full_auto_legacy.isEnabled() and not w.fa_start_cycle_button.isEnabled()
 
         # AUTO exposes planning and guarded carriage controls, never a cycle.
         from PyQt6.QtWidgets import QPushButton

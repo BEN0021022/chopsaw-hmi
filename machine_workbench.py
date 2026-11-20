@@ -133,10 +133,11 @@ class MachineWorkbench(QWidget):
         self._diag_key = None
         self._forecast_input = None
         root = QVBoxLayout(self)
-        heading = QLabel('Machine layout & commissioning')
+        heading = QLabel('Full Auto — machine view')
         heading.setStyleSheet('font-size:22px;font-weight:600;color:#e2e8f0')
         root.addWidget(heading)
         self.pages = QTabWidget(); root.addWidget(self.pages)
+        self.pages.addTab(legacy, 'Machine / live cycle')
         layout_page = QWidget(); layout = QVBoxLayout(layout_page)
         bar = QHBoxLayout()
         self.source = QComboBox(); self.source.addItems(('Live machine readback', 'Offline scenarios'))
@@ -170,7 +171,6 @@ class MachineWorkbench(QWidget):
         self.pages.addTab(self.scrolled(layout_page), 'Layout / scenarios')
         self.build_diagnostics()
         self.build_report_fields()
-        self.pages.addTab(legacy, 'Legacy animation')
         self.source.currentIndexChanged.connect(self.refresh)
         self.scenario.currentIndexChanged.connect(self.load_scenario)
         self.position.valueChanged.connect(self.refresh)
@@ -298,7 +298,7 @@ class MachineWorkbench(QWidget):
 
     def refresh_diagnostics(self):
         # Recording is independent; don't rebuild a hidden table during motion.
-        if not self.isVisible() or self.pages.currentIndex() != 1: return
+        if not self.isVisible() or self.pages.tabText(self.pages.currentIndex()) != 'Cycle diagnostics': return
         d = self.owner.dry_run
         seq = d.sequence.get('stage', 'IDLE') if d.sequence else 'IDLE'
         phase = d.data.get('STATE', 'UNKNOWN') if d.fresh() else 'UNKNOWN / STALE'

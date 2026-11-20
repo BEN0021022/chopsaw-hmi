@@ -36,6 +36,7 @@ from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
 from machine_workbench import MachineWorkbench
+from full_auto_live import refresh_full_auto
 from cut_history import CutHistory
 from direct_controls import DirectControls
 from wheel_guard import install_wheel_guard
@@ -159,7 +160,6 @@ class MinimalHMI(QMainWindow):
         self.clamp_engaged = False
         self.clamp_left_engaged = False
         self.clamp_right_engaged = False
-        self.clamp_fence_engaged = False
         self.clamps_engaged_cutting = False   # True while saw is down, awaiting sensor return
         self.actuator_direction = "off"
         # Auto clamp/saw sequencing. OFF = manual mode: the HMI sends no cylinder
@@ -1220,15 +1220,15 @@ class MinimalHMI(QMainWindow):
         self.fa_board_sensor_label = self.pill("OFF", "#ef4444")
         pills_layout.addWidget(self.fa_board_sensor_label)
 
-        pills_layout.addWidget(QLabel("Outfeed:"))
-        self.fa_outfeed_sensor_label = self.pill("--", "#475569")
-        pills_layout.addWidget(self.fa_outfeed_sensor_label)
+        pills_layout.addWidget(QLabel("Driver:"))
+        self.fa_driver_label = self.pill("UNKNOWN", "#475569")
+        pills_layout.addWidget(self.fa_driver_label)
 
         pills_layout.addWidget(QLabel("Saw Pos:"))
         self.fa_saw_position_label = self.pill("--", "#475569")
         pills_layout.addWidget(self.fa_saw_position_label)
 
-        pills_layout.addWidget(QLabel("Fence Closed:"))
+        pills_layout.addWidget(QLabel("Guard door:"))
         self.fa_fence_closed_label = self.pill("--", "#475569")
         pills_layout.addWidget(self.fa_fence_closed_label)
 
@@ -1287,7 +1287,7 @@ class MinimalHMI(QMainWindow):
         io_and_cycle.setSpacing(6)
 
         # Cylinders — single compact row to leave room for the line simulation
-        cylinders_group = QGroupBox("Simulated Clamps")
+        cylinders_group = QGroupBox("Clamps — commanded outputs")
         cyl_layout = QHBoxLayout(cylinders_group)
         cyl_layout.setSpacing(8)
         cyl_layout.setContentsMargins(10, 4, 10, 4)
@@ -1295,7 +1295,6 @@ class MinimalHMI(QMainWindow):
         cyl_defs = [
             ("Main Clamp", 1, "fa_cyl1_status"),
             ("Outfeed Clamp", 2, "fa_cyl2_status"),
-            ("Fence Clamp", 3, "fa_cyl3_status"),
         ]
         for cyl_name, cyl_id, pill_attr in cyl_defs:
             name_lbl = QLabel(cyl_name)
@@ -1304,7 +1303,7 @@ class MinimalHMI(QMainWindow):
 
             status_pill = self.pill("RETRACTED", "#475569")
             status_pill.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            status_pill.setMinimumWidth(96)
+            status_pill.setMinimumWidth(160)
             setattr(self, pill_attr, status_pill)
             cyl_layout.addWidget(status_pill)
             cyl_layout.addSpacing(6)
@@ -1314,7 +1313,7 @@ class MinimalHMI(QMainWindow):
         io_and_cycle.addWidget(cylinders_group)
 
         # Line simulation: carriage, board segments, saw, ejected pieces
-        sim_group = QGroupBox("Line Simulation")
+        sim_group = QGroupBox("Machine view")
         sim_layout = QVBoxLayout(sim_group)
         sim_layout.setContentsMargins(8, 8, 8, 8)
         self.saw_sim = SawSimWidget(home_position=self.home_position)
@@ -1332,19 +1331,15 @@ class MinimalHMI(QMainWindow):
         bottom_row.setContentsMargins(4, 4, 4, 4)
 
         self.fa_auto_status_label = QLabel("STATUS: Waiting to Start")
-        self.fa_auto_status_label.setWordWrap(False)
+        self.fa_auto_status_label.setWordWrap(True)
         self.fa_auto_status_label.setStyleSheet("font-weight: bold; font-size: 15px; color: #e2e8f0;")
         bottom_row.addWidget(self.fa_auto_status_label, 1)
 
-        fa_jog_right_btn = QPushButton("0.1\" ▶")
-        fa_jog_right_btn.setFixedHeight(50)
-        fa_jog_right_btn.setMinimumWidth(110)
-        fa_jog_right_btn.setStyleSheet("""
-            QPushButton { background-color: #1e293b; color: #e2e8f0; font-weight: bold; font-size: 16px; border-radius: 10px; border: 1px solid #334155; padding: 0 12px; }
-            QPushButton:hover { background-color: #243142; }
-        """)
-        fa_jog_right_btn.clicked.connect(lambda: self.auto_jog(-0.1))
-        bottom_row.addWidget(fa_jog_right_btn)
+        self.fa_operator_cut_button = QPushButton('Clamp / Cut / Advance')
+        self.fa_operator_cut_button.setMinimumHeight(54)
+        self.fa_operator_cut_button.setStyleSheet('QPushButton {background:#f59e0b;color:#0b1222;font-weight:bold;padding:8px;} QPushButton:disabled {background:#334155;color:#94a3b8;}')
+        self.fa_operator_cut_button.clicked.connect(self.operator_cut_button.click)
+        bottom_row.addWidget(self.fa_operator_cut_button)
 
         self.fa_start_cycle_button = QPushButton("START CYCLE")
         self.fa_start_cycle_button.setFixedHeight(50)
@@ -1357,15 +1352,22 @@ class MinimalHMI(QMainWindow):
         self.fa_start_cycle_button.clicked.connect(self.start_auto_cycle)
         bottom_row.addWidget(self.fa_start_cycle_button)
 
+        self.fa_stop_button = QPushButton('STOP / INTERRUPT')
+        self.fa_stop_button.setMinimumSize(190, 54)
+        self.fa_stop_button.setStyleSheet('QPushButton {background:#dc2626;color:white;font-size:17px;font-weight:bold;border-radius:10px;padding:10px;} QPushButton:hover {background:#ef4444;} QPushButton:disabled {background:#7f1d1d;color:#cbd5e1;}')
+        self.fa_stop_button.setToolTip('Software interrupt: stop carriage and cycle, release trigger, retain engaged clamps. Use the independent hardware emergency stop for emergencies.')
+        self.fa_stop_button.clicked.connect(self.cancel_auto_cycle)
+        bottom_row.addWidget(self.fa_stop_button)
 
         bottom_widget = QWidget()
         bottom_widget.setLayout(bottom_row)
-        bottom_widget.setFixedHeight(58)
+        bottom_widget.setMinimumHeight(82)
         root_layout.addWidget(bottom_widget)
 
         return w
 
     def cylinder_extend(self, cyl_id):
+        if cyl_id not in (1,2):return False
         if not self.send_backend_commands(
             self.active_controller().clamp_extend(cyl_id),
             f"extend cylinder {cyl_id}",
@@ -1375,12 +1377,11 @@ class MinimalHMI(QMainWindow):
             self.clamp_left_engaged = True
         elif cyl_id == 2:
             self.clamp_right_engaged = True
-        elif cyl_id == 3:
-            self.clamp_fence_engaged = True
         self._update_cylinder_ui(cyl_id)
         return True
 
     def cylinder_retract(self, cyl_id):
+        if cyl_id not in (1,2):return False
         if not self.send_backend_commands(
             self.active_controller().clamp_retract(cyl_id),
             f"retract cylinder {cyl_id}",
@@ -1390,8 +1391,6 @@ class MinimalHMI(QMainWindow):
             self.clamp_left_engaged = False
         elif cyl_id == 2:
             self.clamp_right_engaged = False
-        elif cyl_id == 3:
-            self.clamp_fence_engaged = False
         self._update_cylinder_ui(cyl_id)
         return True
 
@@ -1419,9 +1418,8 @@ class MinimalHMI(QMainWindow):
         engaged_map = {
             1: self.clamp_left_engaged,
             2: self.clamp_right_engaged,
-            3: self.clamp_fence_engaged,
         }
-        pill_map = {1: "fa_cyl1_status", 2: "fa_cyl2_status", 3: "fa_cyl3_status"}
+        pill_map = {1: "fa_cyl1_status", 2: "fa_cyl2_status"}
         engaged = engaged_map[cyl_id]
         pill_attr = pill_map[cyl_id]
         if hasattr(self, pill_attr):
@@ -1431,8 +1429,7 @@ class MinimalHMI(QMainWindow):
             else:
                 self.set_pill(pill_widget, "RETRACTED", "#475569", fg="#e2e8f0")
         if hasattr(self, 'saw_sim'):
-            self.saw_sim.set_clamps(self.clamp_left_engaged, self.clamp_right_engaged,
-                                    self.clamp_fence_engaged)
+            self.saw_sim.set_clamps(self.clamp_left_engaged, self.clamp_right_engaged)
 
     def _update_saw_sensor_pill(self, text, color):
         if hasattr(self, 'fa_saw_position_label'):
@@ -1523,7 +1520,6 @@ class MinimalHMI(QMainWindow):
             return
         self.cylinder_retract(1)
         self.cylinder_retract(2)
-        self.cylinder_retract(3)
 
     def _on_auto_clamp_toggled(self, checked):
         controller = self.active_controller()
@@ -1640,7 +1636,7 @@ class MinimalHMI(QMainWindow):
         QTimer.singleShot(int(delay_ms), run)
 
     def _engage_clamps_for_cut(self, early_return=False):
-        """Three-clamp virtual fixture only; native eligibility/feedback remains uncommissioned."""
+        """Two-clamp virtual fixture; real holding is selected by the native coordinator."""
         if not isinstance(self.ser, VirtualController) or not self.auto_clamp_enabled:
             return False
         position = self.current_position
@@ -1776,10 +1772,9 @@ class MinimalHMI(QMainWindow):
                            self.qjog_left_01,self.qjog_right_01,self.qjog_left_025,self.qjog_right_025,
                            self.qjog_left_1,self.qjog_right_1,self.qjog_left_2,self.qjog_right_2): widget.setEnabled(True)
         if hasattr(self, "full_auto_tab"):
-            # The workbench is read-only and available offline. Legacy actuation
-            # remains subject to the existing backend capability gate.
+            # The view stays readable offline; action buttons share Auto's gates.
             self.full_auto_tab.setEnabled(True)
-            self.full_auto_legacy.setEnabled(auto_ready)
+            self.full_auto_legacy.setEnabled(True)
 
         if hasattr(self, "auto_clamp_checkbox"):
             cutting_ready = auto_ready and capabilities.automatic_cutting_ready
@@ -1797,6 +1792,7 @@ class MinimalHMI(QMainWindow):
         self.refresh_teensy_tabs()
         self.manual_pneumatics.refresh()
         self.refresh_manual_motion_locks()
+        refresh_full_auto(self)
 
     def refresh_manual_motion_locks(self):
         if not isinstance(self.ser, VirtualController):
@@ -2686,8 +2682,6 @@ class MinimalHMI(QMainWindow):
         elif not busy: self.auto_position_label.setText(self.position_label.text())
         saw=p.safety.get("SAW_POSITION","UNKNOWN") if p.fresh("SAFETY") else "UNKNOWN"
         self.set_pill(self.fa_saw_position_label,saw,"#22c55e" if saw == "UP" else "#ef4444" if saw == "CONFLICT" else "#475569")
-        for label in (self.fa_outfeed_sensor_label,self.fa_fence_closed_label):
-            self.set_pill(label,"UNKNOWN","#475569")  # uncommissioned inputs are not confirmed feedback
         self.auto_isolation.blockSignals(True)
         self.auto_isolation.setChecked(p.consent.isChecked()); self.auto_isolation.blockSignals(False)
         self.auto_configure.setEnabled(p.allowed("XCONFIG 0 1"))
@@ -2714,8 +2708,8 @@ class MinimalHMI(QMainWindow):
         if getattr(self,'_native_progress_rendered',None)!=progress:
             self._native_progress_rendered=progress
             self.update_cut_list_display()
-        self.fa_start_cycle_button.setEnabled(False)
         self.auto_status_label.setText(self.dry_run.message if self.dry_run.sequence else self.dry_run.supervision.summary()+' '+self.dry_run.message)
+        refresh_full_auto(self)
         self.load_button.setEnabled(self.direct_controls.can_motion('load'))
         self.load_button.setToolTip("Return to Load using the stored FAST profile.")
         jogs=((self.auto_jog_left_btn,self.auto_jog_input.value()),(self.auto_jog_right_btn,-self.auto_jog_input.value()),

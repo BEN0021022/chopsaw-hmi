@@ -50,6 +50,7 @@ def main():
                    "-o", str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_native_dry_run.py"), str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_fault_recovery.py"), str(server)], check=True, cwd=root)
+    subprocess.run([sys.executable, str(root / "test_full_auto_live.py"), str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_native_multiboard.py"), str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_direct_controls.py"), str(server)], check=True, cwd=root)
     subprocess.run([sys.executable, str(root / "test_operator_return.py"), str(server)], check=True, cwd=root)

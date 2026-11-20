@@ -43,7 +43,7 @@ def run():
         w.health_timer.stop(); w.carriage_tab.timer.stop()
         fields = w.cylinder_timing.fields
         assert fields['board.settle'].value() == 475
-        for device in ('main','outfeed','fence'):
+        for device in ('main','outfeed'):
             assert fields[f'{device}.engage_settle'].value() == 925
         assert not hasattr(w, 'fa_clamp_engage_delay') and not hasattr(w, 'fa_saw_start_delay')
         assert w.speed_tab.isAncestorOf(w.cylinder_timing)
@@ -74,11 +74,10 @@ def run():
             if not field.planned_limit:
                 fields[field.key].setValue(0)
         values = {'board.settle':20, 'main.engage_delay':40, 'main.engage_settle':60,
-                  'outfeed.engage_delay':10, 'outfeed.engage_settle':120, 'fence.engage_settle':30,
+                  'outfeed.engage_delay':10, 'outfeed.engage_settle':120,
                   'saw.up_settle':25, 'trigger.release_delay':35, 'trigger.brake_wait':45,
                   'main.release_delay':30, 'main.release_clearance':40,
-                  'outfeed.release_delay':5, 'outfeed.release_clearance':60,
-                  'fence.release_clearance':10}
+                  'outfeed.release_delay':5, 'outfeed.release_clearance':60}
         for key, value in values.items(): fields[key].setValue(value)
         scheduler = Scheduler()
         sent = []
@@ -94,7 +93,7 @@ def run():
             scheduler.until(19)
             assert not sent
             scheduler.until(149)
-            assert [item for item in sent if item[1].startswith('C')] == [(20,'C3'),(30,'C2'),(60,'C1')]
+            assert [item for item in sent if item[1].startswith('C')] == [(30,'C2'),(60,'C1')]
             assert not any(command == 'V1' for _,command in sent)
             scheduler.until(150)
             assert sent[-1] == (150,'V1'), 'Wait for the slowest participating clamp'
@@ -106,7 +105,7 @@ def run():
             scheduler.until(254)
             assert not any(command.startswith('D') for _,command in sent)
             scheduler.until(324)
-            assert [item for item in sent if item[1].startswith('D')] == [(255,'D3'),(260,'D2'),(285,'D1')]
+            assert [item for item in sent if item[1].startswith('D')] == [(260,'D2'),(285,'D1')]
             assert not completed
             scheduler.until(325)
             assert completed == [325] and not w._simulation_pneumatic_pending
@@ -124,8 +123,8 @@ def run():
             sent.clear(); scheduler.until(4000)
             assert not sent
 
-        assert simulation_clamps(10, True) == (1,3)
-        assert simulation_clamps(10, False) == (1,2,3)
+        assert simulation_clamps(10, True) == (1,)
+        assert simulation_clamps(10, False) == (1,2)
         assert simulation_clamps(2, False) == (2,)
         # Saw timing is injected into the virtual travel model, not hard-coded waits.
         sim.is_open = True

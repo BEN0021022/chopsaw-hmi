@@ -74,7 +74,7 @@ for sb in (w.norm_speed, w.gentle_speed, w.fast_speed):
 for sb in (w.norm_accel, w.gentle_accel, w.fast_accel):
     sb.setValue(50000)
 w.cylinder_timing.fields['board.settle'].setValue(40)
-for device in ('main','outfeed','fence'):
+for device in ('main','outfeed'):
     w.cylinder_timing.fields[f'{device}.engage_settle'].setValue(60)
 
 w.home_motor()

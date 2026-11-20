@@ -13,7 +13,7 @@ class TimingField:
     planned_limit: bool = False
 
 
-CLAMPS = {1:'main', 2:'outfeed', 3:'fence'}  # virtual fixture IDs, NOT Teensy output indices
+CLAMPS = {1:'main', 2:'outfeed'}  # virtual fixture IDs, NOT Teensy output indices
 
 
 def clamp_fields(device):
@@ -44,14 +44,13 @@ DEVICES = (
         TimingField('trigger.brake_wait', 'Wait after trigger release'),
     )),
     ('Second / outfeed clamp — Mist D18', clamp_fields('outfeed')),
-    ('Backstop / fence clamp — planned', clamp_fields('fence')),
 )
 FIELDS = tuple(field for _, fields in DEVICES for field in fields)
 
 
 def simulation_clamps(position, truing):
-    """Archived three-clamp virtual fixture only; never authorize real stock holding."""
-    return (1,3) if truing else (1,2,3) if position >= 3.0 else (2,)
+    """Two-clamp virtual fixture only; never authorize real stock holding."""
+    return (1,) if truing else (1,2) if position >= 3.0 else (2,)
 
 
 class CylinderTimingPanel(QGroupBox):
@@ -114,7 +113,7 @@ class CylinderTimingPanel(QGroupBox):
             'Delays 0–5000 ms; travel limits 100–5000 ms. Full cycle includes spin-up and brake waits. '
             'Held-trigger individual tests remain hold-to-test. Timers do not verify grip or blade stop. '
             'Second/outfeed delays are independent on firmware 0.24+, enabled separately in Machine dimensions. '
-            'Clamp confirmation feedback and the fence clamp remain planned.'
+            'Clamp confirmation feedback remains planned.'
         )
 
     def snapshot(self):

@@ -44,7 +44,8 @@ def main_test():
         assert not window.legacy_tab.isEnabled()
         assert not window.auto_tab.isEnabled()
         assert window.full_auto_tab.isEnabled()  # Read-only layout/scenarios stay accessible.
-        assert not window.full_auto_legacy.isEnabled()
+        assert window.full_auto_legacy.isEnabled()  # View remains readable; actuation is gated per button.
+        assert not window.fa_start_cycle_button.isEnabled()
         assert not window.controller_combo.isEnabled()
 
         window.clamp_left_engaged = False
