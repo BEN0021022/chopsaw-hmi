@@ -37,3 +37,9 @@ relaunches it. Settings, cut lists and logs are not replaced by the updater.
 For v1.1.0, the paired custom controller is **0.27.0 / CARRIAGE_V20**. The app
 does not flash firmware. Preserve old releases and the legacy Mega source tag
 for rollback; do not overwrite a published version with different bytes.
+
+Qt integration cases with independent fake clocks/settings run in separate OS
+processes (`qt_test_cases.py`), preventing stale Qt objects from one fixture from
+entering the next. Preserve failed pre-fix logs separately from final test
+results. The v1.1.0 fixes also cover manual material registration without a
+cut-list index, simulator keypad re-enabling and redundant status-pill restyling.

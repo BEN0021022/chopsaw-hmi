@@ -163,4 +163,5 @@ def run(exe,overlap=False):
 
 if __name__=='__main__':
     executable=Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe')
-    run(executable);run(executable,overlap=True)
+    from qt_test_cases import isolated_cases
+    isolated_cases(2,lambda i:run(executable,overlap=bool(i)),executable)

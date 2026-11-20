@@ -291,10 +291,11 @@ class MinimalHMI(QMainWindow):
 
     def set_pill(self, widget, text, bg, fg="white"):
         """Set the text and background of any status pill label."""
-        widget.setText(text)
-        widget.setStyleSheet(
-            f"background-color:{bg}; color:{fg}; font-weight:bold; border-radius:10px; padding:4px 8px;"
-        )
+        if widget.text() != text:
+            widget.setText(text)
+        style = f"background-color:{bg}; color:{fg}; font-weight:bold; border-radius:10px; padding:4px 8px;"
+        if widget.styleSheet() != style:
+            widget.setStyleSheet(style)
 
     # ---------- UI ----------
     def init_ui(self):
@@ -1809,6 +1810,7 @@ class MinimalHMI(QMainWindow):
                                self.qjog_left_1,self.qjog_right_1,self.qjog_left_2,self.qjog_right_2): widget.setEnabled(False)
             return
         free = self.is_connected() and not self.manual_pneumatics.motion_locked()
+        self.keypad.enter_button.setEnabled(free and self.ser.motor_enabled)
         for widget in (self.manual_home_button,self.keypad,self.enable_chk,self.load_button,self.resume_on_reset_button,
                        self.auto_jog_left_btn,self.auto_jog_right_btn,self.qjog_left_01,self.qjog_right_01,
                        self.qjog_left_025,self.qjog_right_025,self.qjog_left_1,self.qjog_right_1,

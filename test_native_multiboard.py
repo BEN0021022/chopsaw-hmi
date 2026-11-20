@@ -107,5 +107,5 @@ def run_case(exe, lengths, needs_cleanup):
 
 if __name__=='__main__':
     executable=Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe')
-    run_case(executable,[57.75,57.75,24.,24.,17.5],False)
-    run_case(executable,[90.,90.],True)
+    from qt_test_cases import isolated_cases
+    isolated_cases(2,lambda i:run_case(executable,[90.,90.] if i else [57.75,57.75,24.,24.,17.5],bool(i)),executable)

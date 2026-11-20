@@ -143,4 +143,5 @@ def run(exe,legacy=False,old_return=False):
 
 if __name__=='__main__':
  policies();exe=Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe')
- run(exe);run(exe,old_return=True);run(exe,legacy=True)
+ from qt_test_cases import isolated_cases
+ isolated_cases(3,lambda i:run(exe,old_return=i==1,legacy=i==2),exe)

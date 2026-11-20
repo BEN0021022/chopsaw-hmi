@@ -73,4 +73,5 @@ def case(exe,legacy=False,drop_ack=False):
 
 if __name__=='__main__':
     exe=Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe')
-    case(exe);case(exe,legacy=True);case(exe,drop_ack=True)
+    from qt_test_cases import isolated_cases
+    isolated_cases(3,lambda i:case(exe,legacy=i==1,drop_ack=i==2),exe)

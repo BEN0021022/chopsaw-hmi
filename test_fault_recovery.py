@@ -87,4 +87,5 @@ def run(exe,during_saw=False):
 
 if __name__=='__main__':
  exe=Path(sys.argv[1]) if len(sys.argv)>1 else Path('tmp/firmware-tests/dry_run_server.exe')
- run(exe);run(exe,during_saw=True)
+ from qt_test_cases import isolated_cases
+ isolated_cases(2,lambda i:run(exe,during_saw=i==1),exe)
