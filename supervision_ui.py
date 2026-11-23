@@ -7,7 +7,17 @@ import json
 import math
 import time
 from dataclasses import replace
-from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QFormLayout, QLabel, QDoubleSpinBox, QCheckBox, QPushButton
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+)
 from automation_supervision import AutomationCoordinator, Geometry, Clamp, Span, Context, Outcome
 
 
@@ -49,38 +59,99 @@ class SupervisionAdapter:
             max_clear_push=float(d['max_clear_push']),automatic_clearance=d.get('automatic_clearance',False))
 
     def controls(self):
-        group=QGroupBox('Machine dimensions')
-        layout=QVBoxLayout(group)
-        note=QLabel('Physical dimensions in inches from the blade, positive toward Home. Second-clamp distances below are measured outward from the blade on the outfeed side.')
-        note.setWordWrap(True); layout.addWidget(note)
-        form=QFormLayout(); self.fields={}
-        g=self.coordinator.geometry; main=next(iter(g.clamps),None)
-        values={'main_near':main.footprint.near if main else 0,'main_far':main.footprint.far if main else 0,
-                'front_offset':g.pusher_front_offset,'rear_extent':g.pusher_rear_extent,'keepout':g.cut_keepout,
-                'margin':g.margin,'max_clear_push':g.max_clear_push}
-        labels=('Main clamp pad near edge','Main clamp pad far edge','Pusher projection toward blade',
-                'Pusher body extent toward Home','Blade swept-area keepout','Geometry clearance margin',
-                'Maximum cleanup push')
-        for (key,value),label in zip(values.items(),labels):
-            spin=QDoubleSpinBox(); spin.setRange(0,162); spin.setDecimals(4); spin.setValue(value); spin.setSuffix(' in')
-            spin.setMinimumHeight(36); self.fields[key]=spin; form.addRow(label,spin)
-            if key=='rear_extent': spin.setToolTip('Physical moving assembly length behind the pushing face toward Home. This is NOT carriage travel or cleanup distance.')
-        layout.addLayout(form)
-        outfeed=next((c for c in g.clamps if c.key=='outfeed'),None)
-        self.second_enabled=QCheckBox('Enable second / outfeed clamp — Mist TTL D18 (after wiring and testing)')
+        group = QGroupBox('Machine dimensions')
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        note = QLabel(
+            'Set once during machine setup (inches from blade, positive toward Home; outfeed distances measured outward on the outfeed side).'
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet('color:#94a3b8; font-size:13px;')
+        layout.addWidget(note)
+
+        self.fields = {}
+        g = self.coordinator.geometry
+        main = next(iter(g.clamps), None)
+        outfeed = next((c for c in g.clamps if c.key == 'outfeed'), None)
+
+        def _make_spin(value, tooltip=''):
+            spin = QDoubleSpinBox()
+            spin.setRange(0, 162)
+            spin.setDecimals(4)
+            spin.setValue(value)
+            spin.setSuffix(' in')
+            spin.setMinimumHeight(34)
+            spin.setMaximumWidth(165)
+            if tooltip:
+                spin.setToolTip(tooltip)
+            return spin
+
+        columns = QHBoxLayout()
+        columns.setSpacing(20)
+
+        left_form = QFormLayout()
+        left_form.setHorizontalSpacing(10)
+        left_form.setVerticalSpacing(6)
+        left_specs = (
+            ('main_near', 'Main clamp near edge:', main.footprint.near if main else 0, ''),
+            ('main_far', 'Main clamp far edge:', main.footprint.far if main else 0, ''),
+            ('front_offset', 'Pusher front projection:', g.pusher_front_offset, ''),
+            (
+                'rear_extent',
+                'Pusher rear extent:',
+                g.pusher_rear_extent,
+                'Physical moving assembly length behind the pushing face toward Home. This is NOT carriage travel or cleanup distance.',
+            ),
+            ('keepout', 'Blade swept keepout:', g.cut_keepout, ''),
+        )
+        for key, label, value, tip in left_specs:
+            spin = _make_spin(value, tip)
+            self.fields[key] = spin
+            left_form.addRow(label, spin)
+
+        right_form = QFormLayout()
+        right_form.setHorizontalSpacing(10)
+        right_form.setVerticalSpacing(6)
+        right_specs = (
+            ('margin', 'Geometry clearance margin:', g.margin, ''),
+            ('max_clear_push', 'Maximum cleanup push:', g.max_clear_push, ''),
+        )
+        for key, label, value, tip in right_specs:
+            spin = _make_spin(value, tip)
+            self.fields[key] = spin
+            right_form.addRow(label, spin)
+
+        self.second_enabled = QCheckBox('Enable second / outfeed clamp (Mist D18)')
         self.second_enabled.setChecked(bool(outfeed and outfeed.installed and outfeed.commissioned))
-        layout.addWidget(self.second_enabled)
-        second_form=QFormLayout()
-        for key,label,value in (('outfeed_near','Outfeed pad near edge — distance from blade',-outfeed.footprint.far if outfeed else 0),
-                                ('outfeed_far','Outfeed pad far edge — distance from blade',-outfeed.footprint.near if outfeed else 0)):
-            spin=QDoubleSpinBox();spin.setRange(0,162);spin.setDecimals(4);spin.setSuffix(' in');spin.setValue(value)
-            spin.setMinimumHeight(36);self.fields[key]=spin;second_form.addRow(label,spin)
-        layout.addLayout(second_form)
-        self.second_note=QLabel('Second clamp is disabled until enabled and dimensions saved. ON must clamp; OFF must release. Timers report commanded state, not verified grip.')
-        self.second_note.setWordWrap(True);layout.addWidget(self.second_note)
-        save=QPushButton('Save machine dimensions'); save.clicked.connect(self.save); layout.addWidget(save)
-        self.feedback=QLabel('Dimensions loaded.' if g.verified else 'Enter the physical machine dimensions once.')
-        self.feedback.setWordWrap(True); layout.addWidget(self.feedback)
+        self.second_enabled.setToolTip(
+            'Second clamp stays disabled until enabled and dimensions are saved. Timers report commanded state, not verified grip.'
+        )
+        right_form.addRow(self.second_enabled)
+        for key, label, value in (
+            ('outfeed_near', 'Outfeed pad near edge:', -outfeed.footprint.far if outfeed else 0),
+            ('outfeed_far', 'Outfeed pad far edge:', -outfeed.footprint.near if outfeed else 0),
+        ):
+            spin = _make_spin(value)
+            self.fields[key] = spin
+            right_form.addRow(label, spin)
+
+        columns.addLayout(left_form, 1)
+        columns.addLayout(right_form, 1)
+        layout.addLayout(columns)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(12)
+        save = QPushButton('Save machine dimensions')
+        save.setProperty('class', 'primary')
+        save.clicked.connect(self.save)
+        footer.addWidget(save)
+        self.feedback = QLabel('Dimensions loaded.' if g.verified else 'Enter the physical machine dimensions once.')
+        self.feedback.setWordWrap(True)
+        self.feedback.setStyleSheet('color:#94a3b8; font-size:13px;')
+        footer.addWidget(self.feedback, 1)
+        layout.addLayout(footer)
+        self.second_note = note
         return group
 
     def save(self):

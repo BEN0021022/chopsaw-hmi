@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -612,9 +613,10 @@ def build_auto_tab(w):
 
 
 def build_settings_tab(w):
-    """Build the Settings tab and attach its widgets onto window `w`."""
+    """Build the speed-first, low-clutter Settings tab and attach its widgets onto `w`."""
     tab = QWidget()
     outer = QVBoxLayout(tab)
+    outer.setContentsMargins(6, 6, 6, 6)
     w.settings_scroll = QScrollArea()
     w.settings_scroll.setWidgetResizable(True)
     w.settings_scroll.setStyleSheet('QScrollArea { background:#0f172a; border:0; }')
@@ -622,137 +624,240 @@ def build_settings_tab(w):
     body.setObjectName('settingsBody')
     body.setStyleSheet('QWidget#settingsBody { background:#0f172a; }')
     root = QVBoxLayout(body)
+    root.setContentsMargins(6, 6, 6, 6)
+    root.setSpacing(10)
     w.settings_scroll.setWidget(body)
     outer.addWidget(w.settings_scroll)
 
-    cutting = QGroupBox("Cutting and Sensors")
-    geometry = QFormLayout(cutting)
-    w.kerf_input = QDoubleSpinBox()
-    w.kerf_input.setRange(0.0, 0.5)
-    w.kerf_input.setDecimals(4)
-    w.kerf_input.setValue(0.100)
-    w.kerf_input.setToolTip("Blade cut width used in cut-list and stock calculations.")
-    geometry.addRow("Blade Kerf (in):", w.kerf_input)
-    initial_sensor_distance = w.dry_run.supervision.sensor_distance()
-    w.board_sensor_location_input = QDoubleSpinBox()
-    w.board_sensor_location_input.setRange(0, 2000)
-    w.board_sensor_location_input.setDecimals(4)
-    w.board_sensor_location_input.setValue(initial_sensor_distance)
-    w.board_sensor_location_input.setToolTip(
-        "Distance from the saw blade to the laser board sensor. Used for truing motion, board tracking and sensor-zone clearing."
+    # ── 1. TOP PRIORITY: Motion Speeds & Accelerations (3-card layout) ──────
+    profiles = QGroupBox("Motion Speeds & Accelerations")
+    profiles_layout = QVBoxLayout(profiles)
+    profiles_layout.setContentsMargins(10, 10, 10, 10)
+    profiles_layout.setSpacing(8)
+
+    cards_row = QHBoxLayout()
+    cards_row.setSpacing(10)
+
+    def _profile_card(title, subtitle, accent, speed_val, accel_val):
+        card = QFrame()
+        card.setObjectName("profileCard")
+        card.setStyleSheet(
+            f"QFrame#profileCard {{ background:#0b1222; border:1px solid #334155; "
+            f"border-top:3px solid {accent}; border-radius:10px; }}"
+        )
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(12, 8, 12, 10)
+        cl.setSpacing(6)
+        hdr = QLabel(title)
+        hdr.setStyleSheet(f"color:{accent}; font-size:15px; font-weight:800; border:none;")
+        sub = QLabel(subtitle)
+        sub.setStyleSheet("color:#94a3b8; font-size:12px; border:none;")
+        cl.addWidget(hdr)
+        cl.addWidget(sub)
+        form = QFormLayout()
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(6)
+        spd = QDoubleSpinBox()
+        spd.setRange(1, 20000)
+        spd.setDecimals(0)
+        spd.setValue(speed_val)
+        spd.setSuffix(" p/s")
+        spd.setMinimumHeight(36)
+        spd.setStyleSheet("font-size:16px; font-weight:600;")
+        acc = QDoubleSpinBox()
+        acc.setRange(1, 50000)
+        acc.setDecimals(0)
+        acc.setValue(accel_val)
+        acc.setSuffix(" p/s²")
+        acc.setMinimumHeight(36)
+        acc.setStyleSheet("font-size:16px; font-weight:600;")
+        form.addRow("Speed:", spd)
+        form.addRow("Accel:", acc)
+        cl.addLayout(form)
+        return card, spd, acc
+
+    gentle_card, w.gentle_speed, w.gentle_accel = _profile_card(
+        "GENTLE", "Board approach & truing", "#38bdf8", 600, 600
     )
-    geometry.addRow("Board Sensor Distance (in):", w.board_sensor_location_input)
-    for field in (w.kerf_input, w.board_sensor_location_input):
-        field.setMinimumHeight(44)
-        field.setMaximumWidth(320)
-        field.setStyleSheet("font-size: 18px;")
-    root.addWidget(cutting)
-
-    w.cylinder_timing = CylinderTimingPanel(w.settings)
-    w.supervision_settings = w.dry_run.supervision.controls()
-    w.board_sensor_location_input.valueChanged.connect(w.dry_run.supervision.sync_reference)
-    w.kerf_input.valueChanged.connect(w.dry_run.supervision.sync_reference)
-    root.addWidget(w.supervision_settings)
-    root.addWidget(w.cylinder_timing)
-
-    history_note = QLabel(
-        'Cut history: ' + str(w.cut_history.path) + '\n'
-        'Automatic CSV of confirmed cycles. Lengths are inches; unknown lengths stay blank. '
-        'Simulator exercises are excluded.'
+    norm_card, w.norm_speed, w.norm_accel = _profile_card(
+        "NORMAL", "Production board feed", "#22c55e", 2500, 900
     )
-    history_note.setWordWrap(True)
-    history_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    root.addWidget(history_note)
-
-    w.auto_clamp_checkbox = QCheckBox('Automatic clamp/saw simulation')
-    w.auto_clamp_checkbox.setToolTip(
-        'Simulator only. Live automatic clamp/saw operation uses Teensy controller sequencing.'
+    fast_card, w.fast_speed, w.fast_accel = _profile_card(
+        "FAST", "Carriage return to Load", "#f59e0b", 3500, 2000
     )
-    w.auto_clamp_checkbox.toggled.connect(w._on_auto_clamp_toggled)
-    root.addWidget(w.auto_clamp_checkbox)
+    cards_row.addWidget(gentle_card, 1)
+    cards_row.addWidget(norm_card, 1)
+    cards_row.addWidget(fast_card, 1)
+    profiles_layout.addLayout(cards_row)
 
-    profiles = QGroupBox("Motion Profiles - Pulse Rates & Accelerations")
-    pg = QGridLayout(profiles)
-    pg.addWidget(QLabel("NORMAL - board feed"), 0, 0, 1, 2)
-    pg.addWidget(QLabel("Pulse rate (pulses/s)"), 1, 0)
-    w.norm_speed = QDoubleSpinBox(); w.norm_speed.setRange(1, 20000); w.norm_speed.setDecimals(0); w.norm_speed.setValue(2500); pg.addWidget(w.norm_speed, 1, 1)
-    pg.addWidget(QLabel("Acceleration (pulses/s^2)"), 2, 0)
-    w.norm_accel = QDoubleSpinBox(); w.norm_accel.setRange(1, 50000); w.norm_accel.setDecimals(0); w.norm_accel.setValue(900); pg.addWidget(w.norm_accel, 2, 1)
-
-    pg.addWidget(QLabel("GENTLE - approach"), 0, 2, 1, 2)
-    pg.addWidget(QLabel("Pulse rate (pulses/s)"), 1, 2)
-    w.gentle_speed = QDoubleSpinBox(); w.gentle_speed.setRange(1, 20000); w.gentle_speed.setDecimals(0); w.gentle_speed.setValue(600); pg.addWidget(w.gentle_speed, 1, 3)
-    pg.addWidget(QLabel("Acceleration (pulses/s^2)"), 2, 2)
-    w.gentle_accel = QDoubleSpinBox(); w.gentle_accel.setRange(1, 50000); w.gentle_accel.setDecimals(0); w.gentle_accel.setValue(600); pg.addWidget(w.gentle_accel, 2, 3)
-
-    pg.addWidget(QLabel("FAST - carriage return"), 0, 4, 1, 2)
-    pg.addWidget(QLabel("Pulse rate (pulses/s)"), 1, 4)
-    w.fast_speed = QDoubleSpinBox(); w.fast_speed.setRange(1, 20000); w.fast_speed.setDecimals(0); w.fast_speed.setValue(3500); pg.addWidget(w.fast_speed, 1, 5)
-    pg.addWidget(QLabel("Acceleration (pulses/s^2)"), 2, 4)
-    w.fast_accel = QDoubleSpinBox(); w.fast_accel.setRange(1, 50000); w.fast_accel.setDecimals(0); w.fast_accel.setValue(2000); pg.addWidget(w.fast_accel, 2, 5)
-
+    apply_row = QHBoxLayout()
+    apply_row.setSpacing(10)
+    apply_row.addWidget(QLabel("Profile to apply:"))
     w.settings_profile_combo = QComboBox()
+    w.settings_profile_combo.setMinimumWidth(140)
     w.settings_profile_combo.setStyleSheet(
-        "QComboBox { background:#0b1222; color:#e2e8f0; border:1px solid #334155; padding:8px; }"
+        "QComboBox { background:#0b1222; color:#e2e8f0; border:1px solid #334155; padding:6px 10px; }"
         "QComboBox QAbstractItemView { background:#0b1222; color:#e2e8f0; selection-background-color:#1e40af; }"
     )
     for name in ("NORMAL", "GENTLE", "FAST"):
         w.settings_profile_combo.addItem(name, name)
     w.settings_profile_combo.currentIndexChanged.connect(lambda: w.refresh_teensy_tabs())
-    pg.addWidget(QLabel("Profile to apply:"), 3, 0)
-    pg.addWidget(w.settings_profile_combo, 3, 1)
+    apply_row.addWidget(w.settings_profile_combo)
     w.apply_profile_btn = QPushButton("Apply Selected Profile Settings Now")
+    w.apply_profile_btn.setProperty("class", "primary")
     w.apply_profile_btn.clicked.connect(w.apply_current_profile_params)
-    pg.addWidget(w.apply_profile_btn, 3, 2, 1, 4)
+    apply_row.addWidget(w.apply_profile_btn)
+    apply_row.addStretch()
+    profiles_layout.addLayout(apply_row)
+
     w.settings_profile_feedback = QLabel()
     w.settings_profile_feedback.setWordWrap(True)
-    pg.addWidget(w.settings_profile_feedback, 4, 0, 1, 6)
+    w.settings_profile_feedback.setStyleSheet("color:#94a3b8; font-size:12px;")
+    profiles_layout.addWidget(w.settings_profile_feedback)
     root.addWidget(profiles)
 
-    homing = QGroupBox('Homing approach — Teensy')
+    # ── 2. SECOND ROW: Homing Approach | Cutting & Sensors (1:1 split) ──────
+    mid_row = QHBoxLayout()
+    mid_row.setSpacing(10)
+
+    homing = QGroupBox('Homing Approach — Teensy')
     w.homing_group = homing
-    hf = QFormLayout(homing)
+    hl = QVBoxLayout(homing)
+    hl.setContentsMargins(10, 10, 10, 10)
+    hl.setSpacing(6)
+    hgrid = QGridLayout()
+    hgrid.setHorizontalSpacing(10)
+    hgrid.setVerticalSpacing(6)
     saved_rate, saved_accel = w.saved_homing_settings()
-    w.homing_speed = QDoubleSpinBox(); w.homing_speed.setDecimals(0); w.homing_speed.setRange(1, 20000); w.homing_speed.setValue(saved_rate)
-    w.homing_accel = QDoubleSpinBox(); w.homing_accel.setDecimals(0); w.homing_accel.setRange(1, 50000); w.homing_accel.setValue(saved_accel)
-    hf.addRow('Approach speed (pulses/s)', w.homing_speed)
-    hf.addRow('Acceleration (pulses/s²)', w.homing_accel)
-    home_note = QLabel(
-        'Approach uses these settings. Final latch remains 10 pulses/s; release/backoff/pull-off remain 40 pulses/s for repeatability.'
-    )
-    home_note.setWordWrap(True)
-    hf.addRow(home_note)
-    w.save_homing_button = QPushButton('Save / apply homing settings')
+    w.homing_speed = QDoubleSpinBox()
+    w.homing_speed.setDecimals(0)
+    w.homing_speed.setRange(1, 20000)
+    w.homing_speed.setValue(saved_rate)
+    w.homing_speed.setSuffix(" p/s")
+    w.homing_speed.setMinimumHeight(34)
+    w.homing_accel = QDoubleSpinBox()
+    w.homing_accel.setDecimals(0)
+    w.homing_accel.setRange(1, 50000)
+    w.homing_accel.setValue(saved_accel)
+    w.homing_accel.setSuffix(" p/s²")
+    w.homing_accel.setMinimumHeight(34)
+    hgrid.addWidget(QLabel("Approach speed:"), 0, 0)
+    hgrid.addWidget(w.homing_speed, 0, 1)
+    hgrid.addWidget(QLabel("Acceleration:"), 0, 2)
+    hgrid.addWidget(w.homing_accel, 0, 3)
+    hl.addLayout(hgrid)
+
+    h_actions = QHBoxLayout()
+    w.save_homing_button = QPushButton('Save / Apply Homing')
+    w.save_homing_button.setProperty("class", "primary")
     w.save_homing_button.clicked.connect(w.save_homing_settings)
-    hf.addRow(w.save_homing_button)
-    w.homing_feedback = QLabel('Saved on this PC. Adjustable homing requires controller firmware 0.23.0 or newer.')
+    h_actions.addWidget(w.save_homing_button)
+    h_actions.addStretch()
+    hl.addLayout(h_actions)
+
+    w.homing_feedback = QLabel(
+        'Saved on this PC. Final latch stays 10 p/s; backoff stays 40 p/s.'
+    )
     w.homing_feedback.setWordWrap(True)
-    hf.addRow(w.homing_feedback)
+    w.homing_feedback.setStyleSheet("color:#94a3b8; font-size:12px;")
+    hl.addWidget(w.homing_feedback)
     w.homing_speed.valueChanged.connect(w.refresh_homing_settings)
     w.homing_accel.valueChanged.connect(w.refresh_homing_settings)
-    root.addWidget(homing)
+    mid_row.addWidget(homing, 1)
 
-    updates_group = QGroupBox("Software")
-    ug = QHBoxLayout(updates_group)
-    w.version_label = QLabel(f"Version {APP_VERSION}")
-    ug.addWidget(w.version_label)
-    ug.addStretch()
+    cutting = QGroupBox("Cutting & Sensors")
+    cl = QVBoxLayout(cutting)
+    cl.setContentsMargins(10, 10, 10, 10)
+    cl.setSpacing(6)
+    cgrid = QGridLayout()
+    cgrid.setHorizontalSpacing(10)
+    cgrid.setVerticalSpacing(6)
+    w.kerf_input = QDoubleSpinBox()
+    w.kerf_input.setRange(0.0, 0.5)
+    w.kerf_input.setDecimals(4)
+    w.kerf_input.setValue(0.100)
+    w.kerf_input.setSuffix(" in")
+    w.kerf_input.setMinimumHeight(34)
+    w.kerf_input.setToolTip("Blade cut width used in cut-list, optimizer, and stock calculations.")
+    initial_sensor_distance = w.dry_run.supervision.sensor_distance()
+    w.board_sensor_location_input = QDoubleSpinBox()
+    w.board_sensor_location_input.setRange(0, 2000)
+    w.board_sensor_location_input.setDecimals(4)
+    w.board_sensor_location_input.setValue(initial_sensor_distance)
+    w.board_sensor_location_input.setSuffix(" in")
+    w.board_sensor_location_input.setMinimumHeight(34)
+    w.board_sensor_location_input.setToolTip(
+        "Distance from the saw blade to the laser board sensor. Used for truing motion, board tracking and sensor-zone clearing."
+    )
+    cgrid.addWidget(QLabel("Blade Kerf:"), 0, 0)
+    cgrid.addWidget(w.kerf_input, 0, 1)
+    cgrid.addWidget(QLabel("Sensor Distance:"), 0, 2)
+    cgrid.addWidget(w.board_sensor_location_input, 0, 3)
+    cl.addLayout(cgrid)
+
+    w.auto_clamp_checkbox = QCheckBox('Automatic clamp/saw simulation (offline Simulator only)')
+    w.auto_clamp_checkbox.setToolTip(
+        'Simulator only. Live automatic clamp/saw operation uses Teensy controller sequencing.'
+    )
+    w.auto_clamp_checkbox.toggled.connect(w._on_auto_clamp_toggled)
+    cl.addWidget(w.auto_clamp_checkbox)
+    cl.addStretch()
+    mid_row.addWidget(cutting, 1)
+
+    root.addLayout(mid_row)
+
+    # ── 3. BOTTOM SECTION: Organized Sub-Tabs for Set-Once & Diagnostics ────
+    w.cylinder_timing = CylinderTimingPanel(w.settings)
+    w.supervision_settings = w.dry_run.supervision.controls()
+    w.board_sensor_location_input.valueChanged.connect(w.dry_run.supervision.sync_reference)
+    w.kerf_input.valueChanged.connect(w.dry_run.supervision.sync_reference)
+
+    w.settings_advanced_tabs = QTabWidget()
+
+    timings_page = QWidget()
+    tl = QVBoxLayout(timings_page)
+    tl.setContentsMargins(6, 6, 6, 6)
+    tl.addWidget(w.cylinder_timing)
+    tl.addStretch()
+    w.settings_advanced_tabs.addTab(timings_page, "Cylinder Timings")
+
+    dims_page = QWidget()
+    dl = QVBoxLayout(dims_page)
+    dl.setContentsMargins(6, 6, 6, 6)
+    dl.addWidget(w.supervision_settings)
+    dl.addStretch()
+    w.settings_advanced_tabs.addTab(dims_page, "Machine Dimensions")
+
+    diag_page = QWidget()
+    dgl = QVBoxLayout(diag_page)
+    dgl.setContentsMargins(6, 6, 6, 6)
+    dgl.setSpacing(8)
+
+    updates_row = QHBoxLayout()
+    w.version_label = QLabel(f"Software Version {APP_VERSION}")
+    w.version_label.setStyleSheet("font-weight:700;")
+    updates_row.addWidget(w.version_label)
+    history_note = QLabel(f"•  Cut history CSV: {w.cut_history.path}")
+    history_note.setStyleSheet("color:#94a3b8; font-size:12px;")
+    history_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    updates_row.addSpacing(10)
+    updates_row.addWidget(history_note, 1)
     w.check_updates_btn = QPushButton("Check for Updates")
     w.check_updates_btn.clicked.connect(w.check_updates_manual)
-    ug.addWidget(w.check_updates_btn)
-    root.addWidget(updates_group)
+    updates_row.addWidget(w.check_updates_btn)
+    dgl.addLayout(updates_row)
 
-    serial_group = QGroupBox("Serial Monitor")
-    serial_layout = QVBoxLayout(serial_group)
-    serial_hint = QLabel("Live inbound serial messages from the controller.")
-    serial_hint.setStyleSheet("color:#94a3b8; font-size:13px;")
-    serial_layout.addWidget(serial_hint)
+    serial_hint = QLabel("Serial Monitor — live inbound messages from the controller:")
+    serial_hint.setStyleSheet("color:#94a3b8; font-size:12px;")
+    dgl.addWidget(serial_hint)
     w.speed_serial_console = QTextBrowser()
     w.speed_serial_console.setMinimumHeight(180)
     w.speed_serial_console.document().setMaximumBlockCount(500)
     w.speed_serial_console.setOpenExternalLinks(False)
-    serial_layout.addWidget(w.speed_serial_console)
-    root.addWidget(serial_group, stretch=1)
+    dgl.addWidget(w.speed_serial_console, 1)
+    w.settings_advanced_tabs.addTab(diag_page, "Serial Monitor & Software")
+
+    root.addWidget(w.settings_advanced_tabs, 1)
     return tab
 
 

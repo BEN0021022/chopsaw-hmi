@@ -1,7 +1,18 @@
 """Shared timing configuration; physical clamp eligibility is a separate policy."""
 from dataclasses import dataclass
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QFormLayout, QLabel, QComboBox, QWidget, QSpinBox, QPushButton, QSizePolicy
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 @dataclass(frozen=True)
@@ -60,46 +71,76 @@ class CylinderTimingPanel(QGroupBox):
         self.fields = {}
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(self)
-        hint = QLabel('Shared across motion profiles. Select an actuator to edit its independent timings; all values are milliseconds.')
-        hint.setWordWrap(True); layout.addWidget(hint)
-        self.mode_hint = QLabel()
-        self.mode_hint.setWordWrap(True)
-        self.mode_hint.setStyleSheet('color:#fbbf24; font-size:14px;')
-        layout.addWidget(self.mode_hint)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        header.addWidget(QLabel('Actuator:'))
         self.device_combo = QComboBox()
-        self.device_combo.setMinimumHeight(40)
-        self.device_combo.setStyleSheet('QComboBox {background:#0b1222;color:#e2e8f0;border:1px solid #334155;padding:8px;} QComboBox QAbstractItemView {background:#0b1222;color:#e2e8f0;selection-background-color:#1e40af;}')
+        self.device_combo.setMinimumHeight(36)
+        self.device_combo.setMinimumWidth(280)
+        self.device_combo.setStyleSheet(
+            'QComboBox {background:#0b1222;color:#e2e8f0;border:1px solid #334155;padding:6px 10px;} '
+            'QComboBox QAbstractItemView {background:#0b1222;color:#e2e8f0;selection-background-color:#1e40af;}'
+        )
+        header.addWidget(self.device_combo, 1)
+        self.save_button = QPushButton('Save Timing Settings')
+        self.save_button.setProperty('class', 'primary')
+        self.save_button.clicked.connect(self.save)
+        header.addWidget(self.save_button)
+        layout.addLayout(header)
+
         self.pages = QWidget()
         page_layout = QVBoxLayout(self.pages)
         page_layout.setContentsMargins(0, 0, 0, 0)
         self.device_pages = []
         for index, (title, fields) in enumerate(DEVICES):
             self.device_combo.addItem(title)
-            page = QWidget(); form = QFormLayout(page)
-            for field in fields:
+            page = QWidget()
+            grid = QGridLayout(page)
+            grid.setContentsMargins(0, 4, 0, 4)
+            grid.setHorizontalSpacing(18)
+            grid.setVerticalSpacing(6)
+            for idx, field in enumerate(fields):
                 spin = QSpinBox()
                 spin.setRange(1 if field.planned_limit else 0, 60000)
                 spin.setValue(field.default)
                 spin.setSuffix(' ms')
-                spin.setMinimumHeight(36)
-                spin.setMaximumWidth(260)
-                spin.setStyleSheet('QSpinBox { background:#0b1222;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:6px;font-size:16px; }')
+                spin.setMinimumHeight(34)
+                spin.setMaximumWidth(150)
+                spin.setStyleSheet(
+                    'QSpinBox { background:#0b1222;color:#e2e8f0;border:1px solid #334155;'
+                    'border-radius:8px;padding:4px 8px;font-size:15px; }'
+                )
                 if field.planned_limit:
-                    spin.setToolTip('Saw travel limits are enforced in the controller (100–5000 ms). Clamp confirmation limits require future feedback; they remain planned.')
+                    spin.setToolTip(
+                        'Saw travel limits are enforced in the controller (100–5000 ms). '
+                        'Clamp confirmation limits require future feedback; they remain planned.'
+                    )
                 self.fields[field.key] = spin
-                form.addRow(field.label + ':', spin)
+                row = idx // 2
+                col = (idx % 2) * 2
+                grid.addWidget(QLabel(field.label + ':'), row, col)
+                grid.addWidget(spin, row, col + 1)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(2, 1)
             page_layout.addWidget(page)
             page.setVisible(index == 0)
             self.device_pages.append(page)
         self.device_combo.currentIndexChanged.connect(self.show_device)
-        layout.addWidget(self.device_combo)
         layout.addWidget(self.pages)
-        self.save_button = QPushButton('Save Timing Settings')
-        self.save_button.clicked.connect(self.save)
-        layout.addWidget(self.save_button)
-        self.feedback = QLabel('Save retains settings on this PC. Timings load automatically to the controller before Manual enable or Start Auto.')
+
+        self.mode_hint = QLabel()
+        self.mode_hint.setWordWrap(True)
+        self.mode_hint.setStyleSheet('color:#fbbf24; font-size:12px;')
+        layout.addWidget(self.mode_hint)
+
+        self.feedback = QLabel(
+            'Save retains settings on this PC. Timings load automatically to the controller before Manual enable or Start Auto.'
+        )
         self.feedback.setWordWrap(True)
-        self.feedback.setStyleSheet('color:#94a3b8; font-size:13px;')
+        self.feedback.setStyleSheet('color:#94a3b8; font-size:12px;')
         layout.addWidget(self.feedback)
 
     def show_device(self, index):
