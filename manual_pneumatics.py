@@ -74,9 +74,14 @@ class ManualPneumatics(QGroupBox):
         self.recover_ack.clicked.connect(lambda: self.owner.dry_run.acknowledge())
         layout.addWidget(self.recover_release,8,0,1,2); layout.addWidget(self.recover_ack,8,2,1,2)
         self.timer = QTimer(self)
-        self.timer.setInterval(50)
-        self.timer.timeout.connect(self.refresh)
+        self.timer.setInterval(100)
+        self.timer.timeout.connect(self._on_timer)
         self.timer.start()
+
+    def _on_timer(self):
+        # Native mode is already driven synchronously by telemetry and dry_run.changed.
+        if self.simulator() is not None:
+            self.refresh()
 
     def simulator(self):
         port = self.owner.ser
@@ -246,7 +251,27 @@ class ManualPneumatics(QGroupBox):
             self.recover_ack.setText('Reset fault'); self.recover_ack.setVisible(actual_fault)
             self.recover_release.setEnabled(native.allowed('DRELEASE'))
             self.recover_ack.setEnabled(native.native() and self.owner.carriage_tab.safety.get('RESET_READY')=='1')
-            self.state_changed.emit()
+            native_view = (
+                'native',
+                fresh,
+                native.data.get('STATE'),
+                native.data.get('ARMED'),
+                native.data.get('CLAMP'),
+                native.data.get('MAIN_CLAMP'),
+                native.data.get('SECOND_CLAMP'),
+                native.data.get('TRIGGER'),
+                native.data.get('CYCLE'),
+                native.data.get('FAULT'),
+                native.motion_locked(),
+                bool(self.owner.direct_controls.intent),
+                self.owner.carriage_tab.ready_link(),
+                self.owner.carriage_tab.armed,
+                self.owner.carriage_tab.x.get('POS_KNOWN'),
+                self.owner.carriage_tab.x.get('REMAINING'),
+            )
+            if native_view != self.last_view:
+                self.last_view = native_view
+                self.state_changed.emit()
             return
         self.cycle_button.setText('Manual Saw Cycle'); self.stop_button.setText('STOP')
         for action in ('second_engage','second_release'):self.buttons[action].setEnabled(False)

@@ -3,6 +3,7 @@
 import sys
 import os
 from collections import deque
+from contextlib import contextmanager
 import serial
 import serial.tools.list_ports
 import time
@@ -67,16 +68,29 @@ class _MemoryLog:
 
 
 class _UpdateChecker(QThread):
-    """Background check for a newer GitHub release; won't freeze startup."""
+    """Background check for a newer GitHub release; never blocks the UI thread."""
     update_found = pyqtSignal(dict)
+    check_finished = pyqtSignal(object, str)  # (info or None, error_detail)
+
+    def __init__(self, parent=None, diagnose_errors=False):
+        super().__init__(parent)
+        self._diagnose_errors = diagnose_errors
 
     def run(self):
+        error_detail = ""
         try:
             info = updater.check_for_update()
-        except Exception:
+        except Exception as exc:
             info = None
+            error_detail = f"{type(exc).__name__}: {exc}"
+        if info is None and self._diagnose_errors and not error_detail:
+            try:
+                updater._http_get(updater.API_LATEST, updater.DEFAULT_TIMEOUT)
+            except Exception as exc:
+                error_detail = f"{type(exc).__name__}: {exc}"
         if info:
             self.update_found.emit(info)
+        self.check_finished.emit(info, error_detail)
 
 
 class _UpdateDownloader(QThread):
@@ -91,7 +105,9 @@ class _UpdateDownloader(QThread):
     def run(self):
         try:
             path = updater.download_update(
-                self._info, progress_cb=lambda d, t: self.progress.emit(d, t)
+                self._info,
+                progress_cb=lambda d, t: self.progress.emit(d, t),
+                cancel_cb=self.isInterruptionRequested,
             )
         except Exception:
             path = None
@@ -219,6 +235,11 @@ class MinimalHMI(QMainWindow):
         self._sim_health_fields = {}
         self._sim_health_received = self._sim_activity_received = None
         self._health_activity = TelemetryActivity()
+        self._ui_batch_depth = 0
+        self._ui_dirty_teensy = False
+        self._ui_dirty_dry = False
+        self._manual_update_checker = None
+        self._downloader = None
         self.dry_run = NativeDryRun(self)
         self.direct_controls = DirectControls(self)
         self.init_ui()
@@ -226,15 +247,20 @@ class MinimalHMI(QMainWindow):
         self._load_settings()
         self.update_current_monitor_ui()
         self.health_timer = QTimer(self)
-        self.health_timer.setInterval(50)
+        self.health_timer.setInterval(100)
         self.health_timer.timeout.connect(self.refresh_live_health)
         self.health_timer.start()
         self.refresh_live_health()
 
-        # Background update check (silent; only surfaces a banner if newer)
+        # Defer background update check to the first event-loop tick so headless
+        # tests that stop child QTimers do not spawn background QThreads.
         self._update_checker = _UpdateChecker(self)
         self._update_checker.update_found.connect(self._on_update_found)
-        self._update_checker.start()
+        self._startup_update_timer = QTimer(self)
+        self._startup_update_timer.setSingleShot(True)
+        self._startup_update_timer.setInterval(0)
+        self._startup_update_timer.timeout.connect(self._update_checker.start)
+        self._startup_update_timer.start()
 
     # ---------- Theme ----------
     def apply_theme(self):
@@ -389,7 +415,7 @@ class MinimalHMI(QMainWindow):
         self._teensy_settings_dirty = set()
         self._teensy_settings_snapshot = None
         self._teensy_settings_active = None
-        self.carriage_tab.state_changed.connect(self.refresh_teensy_tabs)
+        self.carriage_tab.state_changed.connect(self._on_carriage_state_changed)
         for profile, widgets in self.profile_setting_widgets().items():
             for widget in widgets:
                 widget.valueChanged.connect(lambda _value, p=profile: self.mark_teensy_profile_edit(p))
@@ -407,17 +433,50 @@ class MinimalHMI(QMainWindow):
 
         self.log = _MemoryLog(maxlen=500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
-        self.dry_run.changed.connect(self.manual_pneumatics.refresh)
-        self.dry_run.changed.connect(self.refresh_teensy_tabs)
-        self.dry_run.changed.connect(self.machine_workbench.refresh)
+        self.dry_run.changed.connect(self._on_dry_run_changed)
         self.cut_history_warning = QLabel()
         self.cut_history_warning.setWordWrap(True)
         self.cut_history_warning.setStyleSheet('color:#fbbf24;padding:4px;')
         self.cut_history_warning.hide()
         root.addWidget(self.cut_history_warning)
-        self.dry_run.changed.connect(self.refresh_cut_history_status)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
+
+    @contextmanager
+    def _batch_ui_refresh(self):
+        self._ui_batch_depth += 1
+        try:
+            yield
+        finally:
+            self._ui_batch_depth -= 1
+            if self._ui_batch_depth == 0:
+                dry_dirty = self._ui_dirty_dry
+                teensy_dirty = self._ui_dirty_teensy
+                self._ui_dirty_dry = False
+                self._ui_dirty_teensy = False
+                if dry_dirty:
+                    self._flush_dry_run_ui()
+                elif teensy_dirty:
+                    self.refresh_teensy_tabs()
+
+    def _on_carriage_state_changed(self):
+        if self._ui_batch_depth > 0:
+            self._ui_dirty_teensy = True
+            return
+        self.refresh_teensy_tabs()
+
+    def _on_dry_run_changed(self):
+        if self._ui_batch_depth > 0:
+            self._ui_dirty_dry = True
+            return
+        self._flush_dry_run_ui()
+
+    def _flush_dry_run_ui(self):
+        self.manual_pneumatics.refresh()
+        self.refresh_teensy_tabs()
+        if self.machine_workbench.isVisible():
+            self.machine_workbench.refresh()
+        self.refresh_cut_history_status()
 
     def refresh_cut_history_status(self):
         warning = self.cut_history.warning
@@ -2716,8 +2775,9 @@ class MinimalHMI(QMainWindow):
     # ---------- Position updates ----------
     def update_message_log(self, msg):
         if self.active_controller().key == TEENSY_CARRIAGE:
-            self.carriage_tab.handle_line(msg)
-            self.dry_run.handle(msg)
+            with self._batch_ui_refresh():
+                self.carriage_tab.handle_line(msg)
+                self.dry_run.handle(msg)
         elif isinstance(self.ser, VirtualController) and self.is_connected() and msg.startswith("POS:"):
             self.refresh_live_health()  # establish this connection's session before storing data
             self._sim_health_fields = dict(part.split(":", 1) for part in msg.split(",") if ":" in part)
@@ -3060,41 +3120,34 @@ class MinimalHMI(QMainWindow):
         self.update_banner.setVisible(True)
 
     def check_updates_manual(self):
+        if self._manual_update_checker and self._manual_update_checker.isRunning():
+            return
         self.check_updates_btn.setEnabled(False)
         self.check_updates_btn.setText("Checking…")
-        QApplication.processEvents()
-        try:
-            info = updater.check_for_update()
-        except Exception:
-            info = None
+        self._manual_update_checker = _UpdateChecker(self, diagnose_errors=True)
+        self._manual_update_checker.check_finished.connect(self._on_manual_update_check_done)
+        self._manual_update_checker.start()
+
+    def _on_manual_update_check_done(self, info, error_detail):
         self.check_updates_btn.setEnabled(True)
         self.check_updates_btn.setText("Check for Updates")
-
         if info:
             self._on_update_found(info)
             QMessageBox.information(
                 self, "Update Available",
                 f"Version {info.get('version')} is available.\n\n"
                 "Use the banner at the top to install and restart.")
+        elif not error_detail:
+            QMessageBox.information(
+                self, "Up to Date",
+                f"You are running the latest version (v{APP_VERSION}).")
         else:
-            # Distinguish "offline / error" from "genuinely up to date", and
-            # surface the real error so it can be diagnosed from the field.
-            error_detail = None
-            try:
-                updater._http_get(updater.API_LATEST, updater.DEFAULT_TIMEOUT)
-            except Exception as exc:
-                error_detail = f"{type(exc).__name__}: {exc}"
-            if error_detail is None:
-                QMessageBox.information(
-                    self, "Up to Date",
-                    f"You are running the latest version (v{APP_VERSION}).")
-            else:
-                QMessageBox.warning(
-                    self, "Update Check Failed",
-                    "Could not reach the update server.\n\n"
-                    f"Update source:\n{updater.API_LATEST}\n\n"
-                    f"Details:\n{error_detail}\n\n"
-                    "Check the internet connection / firewall and try again.")
+            QMessageBox.warning(
+                self, "Update Check Failed",
+                "Could not reach the update server.\n\n"
+                f"Update source:\n{updater.API_LATEST}\n\n"
+                f"Details:\n{error_detail}\n\n"
+                "Check the internet connection / firewall and try again.")
 
     def _install_update(self):
         info = self._pending_update
@@ -3127,11 +3180,14 @@ class MinimalHMI(QMainWindow):
             self._update_dialog.setValue(int(downloaded * 100 / total))
 
     def _on_download_finished(self, path):
+        was_cancelled = bool(self._downloader and self._downloader.isInterruptionRequested())
         if self._update_dialog:
             self._update_dialog.close()
             self._update_dialog = None
         self.update_install_btn.setEnabled(True)
 
+        if was_cancelled:
+            return
         if not path:
             QMessageBox.critical(
                 self, "Update Failed",
@@ -3152,9 +3208,12 @@ class MinimalHMI(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
-        self.health_timer.stop()
-        self.manual_pneumatics.timer.stop()
-        self.dry_run.timer.stop()
+        for timer in self.findChildren(QTimer):
+            timer.stop()
+        for worker in (self._update_checker, self._manual_update_checker, self._downloader):
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(3000)
         self._save_settings()
         self._stop_listener()
         self.cut_history.close()

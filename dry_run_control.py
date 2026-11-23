@@ -75,6 +75,7 @@ class NativeDryRun(QObject):
         self.trigger_held = False
         self.last_trigger_hold = 0
         self.authorized = False
+        self._last_tick_sig = None
         self.progress_index=None; self.progress_batch=None
         self.message = 'Connect compatible Teensy firmware. Second clamp requires 0.24+.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
@@ -596,7 +597,34 @@ class NativeDryRun(QObject):
             self.owner.start_cycle_button.setEnabled(self.can_begin_auto() or self.owner.direct_controls.can_motion('auto'))
         self.owner.direct_controls.tick()
         self.capture_diagnostics()
-        self.changed.emit()
+        tick_sig = (
+            self.native(),
+            self.compatible,
+            self.fresh(),
+            self.data.get('STATE'),
+            self.data.get('ARMED'),
+            self.data.get('CLAMP'),
+            self.data.get('SECOND_CLAMP'),
+            self.data.get('TRIGGER'),
+            self.data.get('CYCLE'),
+            self.data.get('FAULT'),
+            self.data.get('DONE'),
+            self.local_fault,
+            self.message,
+            self.pending['kind'] if self.pending else None,
+            self.manual_start,
+            self.auto_start,
+            self.awaiting_stop,
+            self.authorized,
+            self.sequence.stage if self.sequence else None,
+            self.sequence.index if self.sequence else None,
+            self.sequence.next_index if self.sequence else None,
+            self.owner.direct_controls.intent['phase'] if self.owner.direct_controls.intent else None,
+            self.owner.direct_controls.message,
+        )
+        if tick_sig != self._last_tick_sig:
+            self._last_tick_sig = tick_sig
+            self.changed.emit()
 
     def acknowledge(self):
         if self.native() and self.data.get('CLAMP')=='0' and self.owner.carriage_tab.ready_link() and self.owner.carriage_tab.safety.get('RESET_READY')=='1':

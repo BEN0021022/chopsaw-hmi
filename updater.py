@@ -146,12 +146,13 @@ def _expected_sha(sha256_url, timeout):
         return None
 
 
-def download_update(info, progress_cb=None, timeout=60.0):
+def download_update(info, progress_cb=None, timeout=60.0, cancel_cb=None):
     """
     Download the release EXE into the update cache, verifying the published
     SHA-256 if one is available. progress_cb(downloaded, total) is called as
-    bytes arrive. Returns the local Path on success, or None on failure /
-    checksum mismatch (a mismatched partial file is deleted).
+    bytes arrive. cancel_cb(), if provided, aborts and removes the partial file
+    when it returns True. Returns the local Path on success, or None on failure /
+    checksum mismatch / cancellation.
     """
     url = info.get("download_url")
     if not url:
@@ -161,6 +162,7 @@ def download_update(info, progress_cb=None, timeout=60.0):
     if info.get('sha256_url') and expected is None:
         return None  # A published checksum must verify; never silently downgrade.
     hasher = hashlib.sha256()
+    cancelled = False
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         context = _ssl_context()
@@ -169,6 +171,9 @@ def download_update(info, progress_cb=None, timeout=60.0):
             downloaded = 0
             with open(dest, "wb") as f:
                 while True:
+                    if cancel_cb and cancel_cb():
+                        cancelled = True
+                        break
                     chunk = resp.read(262144)
                     if not chunk:
                         break
@@ -178,11 +183,15 @@ def download_update(info, progress_cb=None, timeout=60.0):
                     if progress_cb:
                         progress_cb(downloaded, total)
     except Exception:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
 
-    if (expected and hasher.hexdigest().lower() != expected) or (total and downloaded != total):
+    if cancelled or (expected and hasher.hexdigest().lower() != expected) or (total and downloaded != total):
         try:
-            dest.unlink()
+            dest.unlink(missing_ok=True)
         except OSError:
             pass
         return None
