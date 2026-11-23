@@ -62,6 +62,8 @@ def run():
         w.set_controls_enabled(True)
         p = w.carriage_tab
         assert p.connected
+        assert w.tabs.indexOf(p) == -1, "CARRIAGE prototyping tab must not appear in operator tabs"
+        assert w.tabs.currentWidget() is w.auto_tab, "Production UI should default to AUTO"
         assert w.legacy_tab.isEnabled() and w.auto_tab.isEnabled() and w.full_auto_tab.isEnabled()
         assert w.full_auto_legacy.isEnabled() and not w.fa_start_cycle_button.isEnabled(), 'Readable view cannot bypass readiness'
         assert not w.start_cycle_button.isEnabled() and not hasattr(w,'cut_complete_button')

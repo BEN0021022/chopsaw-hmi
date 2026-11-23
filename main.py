@@ -343,9 +343,11 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
             self.cut_history.path, flush_fn=self.cut_history.flush
         )
 
+        # Hidden Teensy carriage protocol/state controller (no longer shown as a prototyping tab)
         self.carriage_tab = TeensyCarriagePanel(
             self.send_command, lambda line: self.log.append(line), self
         )
+        self.carriage_tab.hide()
         self.carriage_tab.home_preferences = self.saved_homing_settings
         self.carriage_tab.profile_changed.connect(self.update_teensy_profile)
         self.carriage_tab.profile_parameters_confirmed.connect(self.save_confirmed_profile)
@@ -365,14 +367,14 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         for radio, _, _ in self.board_size_radios:
             radio.toggled.connect(self.refresh_teensy_tabs)
 
-        self.tabs.addTab(self.carriage_tab, "CARRIAGE")
-        self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
-        self.tabs.currentChanged.connect(self._on_main_tab_changed)
         self.tabs.addTab(self.full_auto_tab, "FULL AUTO")
-        self.tabs.addTab(self.speed_tab, "SETTINGS")
+        self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.preset_tab, "CUT LISTS")
         self.tabs.addTab(self.dashboard_tab, "STATS")
+        self.tabs.addTab(self.speed_tab, "SETTINGS")
+        self.tabs.currentChanged.connect(self._on_main_tab_changed)
+        self.tabs.setCurrentWidget(self.auto_tab)
 
         self.log = _MemoryLog(maxlen=500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
@@ -506,11 +508,8 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         capabilities = controller.capabilities
         if hasattr(self, "carriage_tab"):
             carriage_selected = controller.key == TEENSY_CARRIAGE
-            self.tabs.setTabVisible(self.tabs.indexOf(self.carriage_tab), carriage_selected)
             if self.carriage_tab.connected != (connected and carriage_selected):
                 self.carriage_tab.session(connected and carriage_selected)
-            if carriage_selected:
-                self.tabs.setCurrentWidget(self.carriage_tab)
 
         if hasattr(self, "controller_combo"):
             self.controller_combo.setEnabled(not connected)
