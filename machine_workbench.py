@@ -213,7 +213,7 @@ class MachineWorkbench(QWidget):
             c = dry.supervision.context()
             if not c.fresh:
                 c = replace(c, position=None, reference_known=False, sensor_clear=None)
-            stage = dry.sequence.get('stage') if dry.sequence else None
+            stage = dry.sequence.stage if dry.sequence else None
             action = 'clear_sensor' if stage in ('PNEU_OFF','CLEARANCE_REQUIRED','CLEAR_PROFILE',
                       'CLEAR_ARM','CLEAR_MOVE','CLEAR_VERIFY','LOAD_ARM','LOAD_WAIT','DONE') else 'cut'
             self.source_note.setText('LIVE READBACK — measured geometry and modeled material. Unknown/stale state stays unknown. '
@@ -299,7 +299,7 @@ class MachineWorkbench(QWidget):
         # Recording is independent; don't rebuild a hidden table during motion.
         if not self.isVisible() or self.pages.tabText(self.pages.currentIndex()) != 'Cycle diagnostics': return
         d = self.owner.dry_run
-        seq = d.sequence.get('stage', 'IDLE') if d.sequence else 'IDLE'
+        seq = str(d.sequence.stage) if d.sequence else 'IDLE'
         phase = d.data.get('STATE', 'UNKNOWN') if d.fresh() else 'UNKNOWN / STALE'
         self.live_phase.setText(f'{seq}  /  {phase}\n{d.message}')
         # Render at most once per observed half second; recording is independent.

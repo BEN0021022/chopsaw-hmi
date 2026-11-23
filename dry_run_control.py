@@ -1,4 +1,5 @@
-"""Acknowledged native unloaded-pneumatic adapter and real-input cut-list runner."""
+"""Acknowledged native pneumatic adapter and real-input cut-list runner."""
+from contextlib import contextmanager
 import math
 import re
 import secrets
@@ -13,6 +14,17 @@ from supervision_ui import SupervisionAdapter
 from automation_supervision import Decision, Outcome, plan_board_feed, assess_manual_cycle
 from cycle_diagnostics import CycleDiagnostics
 from cycle_intervention import CycleIntervention
+from sequence_state import (
+    ACQUISITION_STAGES,
+    CLEANUP_AND_BOARD_STAGES,
+    CUT_CYCLE_STAGES,
+    EARLY_RETURN_STAGES,
+    POSITIONING_STAGES,
+    SequenceStage,
+    SequenceState,
+)
+
+DEFAULT_STOP_MESSAGE = 'Stopped; trigger released, engaged clamp retained.'
 
 TIMING_KEYS = ('board.settle','main.engage_delay','main.engage_settle','main.release_delay',
                'main.release_clearance','saw.down_delay','saw.down_timeout','saw.bottom_dwell',
@@ -73,6 +85,15 @@ class NativeDryRun(QObject):
         note=QLabel('Controller-sequenced pneumatics — verify guard, stock and air before operating.')
         note.setWordWrap(True); layout.addWidget(note)
         return self.widget
+
+    @contextmanager
+    def sequence_command_scope(self):
+        previous = self.issuing_sequence
+        self.issuing_sequence = True
+        try:
+            yield
+        finally:
+            self.issuing_sequence = previous
 
     def set_authorized(self, enabled):
         enabled = bool(enabled)
@@ -206,25 +227,31 @@ class NativeDryRun(QObject):
             return (command==requested and not self.pending and not p.armed and not p.pending and p.x.get('REMAINING')=='0'
                     and state=='OFF' and self.data.get('CFG')==str(self.token) and self.settings_match())
         if command.startswith('DRETURN '):
-            s=self.sequence
-            return bool(s and s['stage']=='EARLY_RETURN_WAIT' and s.get('operator_confirmed') and
-                        self.owner.carriage_tab.parallel_supported() and self.owner.carriage_tab.armed and
-                        self.operator_snapshot_valid(True) and self.settings_match() and not self.pending and
-                        self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0' and
-                        p.x.get('RETURN_PERMIT')=='1' and p.x.get('RETURN_USED')=='0' and
-                        command==f"DRETURN {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {p.x['MOVE_ID']}")
+            s = self.sequence
+            return bool(
+                s and s.stage == SequenceStage.EARLY_RETURN_WAIT and s.operator_confirmed
+                and self.owner.carriage_tab.parallel_supported() and self.owner.carriage_tab.armed
+                and self.operator_snapshot_valid(True) and self.settings_match() and not self.pending
+                and self.data.get('STATE') == 'OFF' and self.data.get('ARMED') == '0'
+                and p.x.get('RETURN_PERMIT') == '1' and p.x.get('RETURN_USED') == '0'
+                and command == f"DRETURN {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {p.x['MOVE_ID']}"
+            )
         if self.pending or self.data.get('ARMED')!='1' or self.data.get('CFG')!=str(self.token): return False
         if command=='DTPRESS':
             return self.can_hold_trigger() and self.operator_holding_trigger()
         if command=='DCUT' or command.startswith(('DCUTM ','DCUTRET ')):
             mask=self.cycle_clamp_mask()
             if command.startswith('DCUTRET '):
-                s=self.sequence
-                if (not s or not s.get('automatic_cut_return') or not p.automatic_return_supported() or
-                    not self.supervision.coordinator.still_valid(s['cut_return_plan']) or
-                    command!=f"DCUTRET {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {mask} {s['cut_return_target']} {s['cut_return_min']}"):
+                s = self.sequence
+                if (
+                    not s or not s.automatic_cut_return or not p.automatic_return_supported()
+                    or s.cut_return_plan is None
+                    or not self.supervision.coordinator.still_valid(s.cut_return_plan)
+                    or command != f"DCUTRET {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {mask} {s.cut_return_target} {s.cut_return_min}"
+                ):
                     return False
-                if mask!=s['cut_return_mask']:return False
+                if mask != s.cut_return_mask:
+                    return False
             elif command.startswith('DCUTM '):
                 if command!=f"DCUTM {self.token} {(int(self.data['REQ'])+1)&0xffffffff} {mask}":return False
                 if mask & 2 and (not self.supervision.second_requested() or self.data.get('SECOND_ENABLED')!='1'):return False
@@ -233,12 +260,14 @@ class NativeDryRun(QObject):
                     and self.data.get('TRIGGER')=='0' and (self.supervision.review().proceeds if self.sequence else
                                                          assess_manual_cycle(self.supervision.context()).proceeds))
         if command.startswith('DOPCUT '):
-            s=self.sequence
-            return bool(s and s['stage']=='OPERATOR_ARMED' and s.get('operator_confirmed')
-                        and self.operator_snapshot_valid() and self.settings_match()
-                        and state=='READY' and self.data.get('MANUAL')=='0' and self.data.get('CLAMP')=='0'
-                        and self.data.get('TRIGGER')=='0' and self.data.get('CYCLE')=='0'
-                        and command==f"DOPCUT {self.token} {(int(self.data['REQ'])+1)&0xffffffff}")
+            s = self.sequence
+            return bool(
+                s and s.stage == SequenceStage.OPERATOR_ARMED and s.operator_confirmed
+                and self.operator_snapshot_valid() and self.settings_match()
+                and state == 'READY' and self.data.get('MANUAL') == '0' and self.data.get('CLAMP') == '0'
+                and self.data.get('TRIGGER') == '0' and self.data.get('CYCLE') == '0'
+                and command == f"DOPCUT {self.token} {(int(self.data['REQ'])+1)&0xffffffff}"
+            )
         if self.data.get('CYCLE')=='1': return command=='DUP'
         if self.data.get('TRIGGER')!='0': return False
         if command.startswith('DCLAMP2 '):
@@ -272,15 +301,16 @@ class NativeDryRun(QObject):
         self.message='Waiting for controller timing acknowledgment.'; self.changed.emit(); return True
 
     def request(self, action):
-        if action=='cycle' and self.sequence and self.sequence.get('stage')=='OPERATOR_REQUIRED':
-            decision=self.supervision.review()
+        if action == 'cycle' and self.sequence and self.sequence.stage == SequenceStage.OPERATOR_REQUIRED:
+            decision = self.supervision.review()
             if not decision.proceeds:
-                self.message='Operator recovery required: '+decision.reason+' No clamp-free stroke is authorized.'
-                self.changed.emit(); return False
+                self.message = 'Operator recovery required: ' + decision.reason + ' No clamp-free stroke is authorized.'
+                self.changed.emit()
+                return False
             # An explicit gesture may resume only a newly valid holding plan;
             # geometry/material changes never resume automation by themselves.
-            self.sequence['stage']='DISARM'; self.sequence['at']=time.monotonic()
-            self.supervision.coordinator.paused=None
+            self.sequence.transition(SequenceStage.DISARM)
+            self.supervision.coordinator.paused = None
             return True
         commands={'arm':f'DARM {self.token}','engage':'DCLAMP 1','release':'DCLAMP 0',
                   'lower':'DDOWN','up':'DUP','cycle':'DCUT','manual_arm':f'DMANUAL {self.token}',
@@ -288,9 +318,12 @@ class NativeDryRun(QObject):
         commands.update(second_engage='DCLAMP2 1',second_release='DCLAMP2 0')
         if action=='cycle' and self.second_supported and self.cycle_clamp_mask()!=1:
             commands['cycle']=f"DCUTM {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} {self.cycle_clamp_mask()}"
-        if action=='cycle' and self.sequence and self.sequence.get('automatic_cut_return'):
-            s=self.sequence
-            commands['cycle']=f"DCUTRET {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} {self.cycle_clamp_mask()} {s['cut_return_target']} {s['cut_return_min']}"
+        if action == 'cycle' and self.sequence and self.sequence.automatic_cut_return:
+            s = self.sequence
+            commands['cycle'] = (
+                f"DCUTRET {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} "
+                f"{self.cycle_clamp_mask()} {s.cut_return_target} {s.cut_return_min}"
+            )
         if action=='return_operator_cycle':commands[action]=f"DRETURN {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff} {self.owner.carriage_tab.x['MOVE_ID']}"
         command=(f"DOPCUT {self.token} {(int(self.data.get('REQ','0'))+1)&0xffffffff}" if action=='operator_cycle' else commands.get(action,''))
         if not self.allowed(command):
@@ -302,18 +335,26 @@ class NativeDryRun(QObject):
         if not self.owner.send_command(command): return False
         if action in ('cycle','operator_cycle','return_operator_cycle'):
             s = self.sequence
-            index = s['index'] if s else None
+            index = s.index if s else None
+            length = None
+            if s:
+                length = s.kerf if index == -1 else (
+                    s.adjusted_length if s.adjusted_length is not None else s.cuts[index]
+                )
             self.owner.cut_history.prepare_cycle(
                 expected_done=(int(self.data['DONE'])+1)&0xffffffff,
                 mode='auto' if s else 'manual',
                 cut_type='truing' if index == -1 else 'cut',
                 cut_number=index+1 if index is not None and index >= 0 else None,
-                length=(s['kerf'] if index == -1 else
-                        s.get('adjusted_length',s['cuts'][index]) if s else None),
-                length_source='truing_kerf' if index == -1 else
-                              'operator_adjusted_feed_estimate' if s and 'adjusted_length' in s else 'cut_list_target' if s else 'unknown_manual_length',
+                length=length,
+                length_source=(
+                    'truing_kerf' if index == -1 else
+                    'operator_adjusted_feed_estimate' if s and s.adjusted_length is not None else
+                    'cut_list_target' if s else 'unknown_manual_length'
+                ),
                 board_preset=self.owner.get_active_board_length(),
-                kerf=s['kerf'] if s else self.owner.kerf_input.value())
+                kerf=s.kerf if s else self.owner.kerf_input.value(),
+            )
         self.pending={'kind':'action','req':expected,'at':time.monotonic()}
         self.message='Waiting for controller acknowledgment.'; self.changed.emit(); return True
 
@@ -420,7 +461,7 @@ class NativeDryRun(QObject):
         decision = self.supervision.last_decision
         snapshot = {
             'fresh': self.fresh() and p.ready_link() and p.fresh('INPUTS'),
-            'sequence': self.sequence.get('stage','IDLE') if self.sequence else 'IDLE',
+            'sequence': str(self.sequence.stage) if self.sequence else 'IDLE',
             'controller': self.data.get('STATE','UNKNOWN'), 'message': self.message,
             'timing_source': 'controller hash acknowledged' if acknowledged else 'not acknowledged',
             'acknowledged_timings_ms': timings,
@@ -433,24 +474,42 @@ class NativeDryRun(QObject):
         }
         self.diagnostics.observe(snapshot, timings, time.monotonic())
 
-    def stop(self, reason='Stopped; trigger released, engaged clamp retained.', *, recover_cycle=False,discard_recovery=False):
-        retain=bool(self.sequence and not discard_recovery and (recover_cycle or self.intervention.recovering() or reason!='Stopped; trigger released, engaged clamp retained.'))
-        if retain:self.intervention.capture_fault(reason)
-        else:self.intervention.clear()
-        if hasattr(self.owner,'direct_controls'):self.owner.direct_controls.cancel()
+    def stop(self, reason=None, *, fault=None, recover_cycle=False, discard_recovery=False):
+        if fault is None:
+            fault = reason is not None
+        message = DEFAULT_STOP_MESSAGE if reason is None else reason
+        retain = bool(
+            self.sequence
+            and not discard_recovery
+            and (recover_cycle or self.intervention.recovering() or fault)
+        )
+        if retain:
+            self.intervention.capture_fault(message)
+        else:
+            self.intervention.clear()
+        if hasattr(self.owner, 'direct_controls'):
+            self.owner.direct_controls.cancel()
         if self.native() and self.owner.ser and self.owner.ser.is_open:
-            self.awaiting_stop=True
-            old=self.issuing_sequence;self.issuing_sequence=True
-            try:self.owner.send_command('OFF')
-            finally:self.issuing_sequence=old
-        p=self.owner.carriage_tab
-        if p.armed or p.homing or p.x.get('REMAINING','0')!='0':p.stopping=True
-        p.pending=None;p.profile_pending=None;p.full_home_pending=None
-        if not retain:self.sequence=None
-        self.pending=None; self.manual_start=None; self.auto_start=None; self.trigger_held=False; self.message=reason
+            self.awaiting_stop = True
+            with self.sequence_command_scope():
+                self.owner.send_command('OFF')
+        p = self.owner.carriage_tab
+        if p.armed or p.homing or p.x.get('REMAINING', '0') != '0':
+            p.stopping = True
+        p.pending = None
+        p.profile_pending = None
+        p.full_home_pending = None
+        if not retain:
+            self.sequence = None
+        self.pending = None
+        self.manual_start = None
+        self.auto_start = None
+        self.trigger_held = False
+        self.message = message
         self.supervision.coordinator.invalidate('Stopped; reconcile material before another automatic cycle.')
-        if reason!='Stopped; trigger released, engaged clamp retained.': self.local_fault=reason
-        self.diagnostics.note('STOP', reason, time.monotonic())
+        if fault:
+            self.local_fault = message
+        self.diagnostics.note('STOP', message, time.monotonic())
         self.capture_diagnostics()
         self.changed.emit()
 
@@ -492,20 +551,25 @@ class NativeDryRun(QObject):
                 if not self.request('manual_arm'): self.stop('Manual enable rejected')
             elif self.manual_start=='arm' and self.data.get('MANUAL')=='1': self.manual_start=None
         if self.auto_start and not self.pending:
-            self.issuing_sequence=True
-            try:
-                if not self.safe_link(): self.stop(self.feedback_problem())
-                elif self.auto_start=='off' and now-self.auto_start_at>2: self.stop('Auto stop acknowledgment timed out')
-                elif self.auto_start=='off' and self.data.get('STATE')=='OFF':
-                    self.auto_start='config'
-                    if not self.configure(): self.stop('Auto timing load rejected')
-                elif self.auto_start=='config' and self.data.get('CFG')==str(self.token):
-                    prepared=self.owner.prepare_saved_profiles()
-                    if prepared is None:return
-                    if not prepared:self.stop('Saved motion profiles could not be acknowledged.');return
-                    self.auto_start=None
-                    if not self.start_sequence(): self.stop('Auto start rejected')
-            finally: self.issuing_sequence=False
+            with self.sequence_command_scope():
+                if not self.safe_link():
+                    self.stop(self.feedback_problem())
+                elif self.auto_start == 'off' and now - self.auto_start_at > 2:
+                    self.stop('Auto stop acknowledgment timed out')
+                elif self.auto_start == 'off' and self.data.get('STATE') == 'OFF':
+                    self.auto_start = 'config'
+                    if not self.configure():
+                        self.stop('Auto timing load rejected')
+                elif self.auto_start == 'config' and self.data.get('CFG') == str(self.token):
+                    prepared = self.owner.prepare_saved_profiles()
+                    if prepared is None:
+                        return
+                    if not prepared:
+                        self.stop('Saved motion profiles could not be acknowledged.')
+                        return
+                    self.auto_start = None
+                    if not self.start_sequence():
+                        self.stop('Auto start rejected')
         if self.trigger_held:
             if not self.operator_holding_trigger(): self.end_trigger_hold()
             elif self.data.get('TRIGGER')=='1' and now-self.last_trigger_hold>=.1:
@@ -514,19 +578,20 @@ class NativeDryRun(QObject):
                 # An expired/lost hold never presses itself again.
                 self.trigger_held=False
         if self.sequence:
-            if not self.batch_unchanged() or self.sequence.get('reference_signature')!=self.supervision.current_reference_signature():
+            if not self.batch_unchanged() or self.sequence.reference_signature != self.supervision.current_reference_signature():
                 if self.intervention.recovering():
-                    self.message='RECOVERY — cut list or reference settings changed. Cancel to start the edited batch.'
-                    self.changed.emit();return
-                self.stop('Cut list or reference settings changed; batch cancelled.');return
+                    self.message = 'RECOVERY — cut list or reference settings changed. Cancel to start the edited batch.'
+                    self.changed.emit()
+                    return
+                self.stop('Cut list or reference settings changed; batch cancelled.')
+                return
             if not self.supervision.coordinator.geometry.verified:
                 self.stop('Supervision geometry/reference changed during sequence; no automatic restart')
                 return
-            self.issuing_sequence=True
-            try:
+            with self.sequence_command_scope():
                 self.intervention.tick()
-                if self.sequence['stage'] not in ('PAUSING','PAUSED','FAULT_RECOVERY'):self.advance_sequence()
-            finally: self.issuing_sequence=False
+                if self.sequence.stage not in (SequenceStage.PAUSING, SequenceStage.PAUSED, SequenceStage.FAULT_RECOVERY):
+                    self.advance_sequence()
         if self.native() and hasattr(self.owner, 'start_cycle_button'):
             self.owner.start_cycle_button.setEnabled(self.can_begin_auto() or self.owner.direct_controls.can_motion('auto'))
         self.owner.direct_controls.tick()
@@ -541,26 +606,37 @@ class NativeDryRun(QObject):
         self.stop(discard_recovery=True);self.message='Cycle canceled; cut list retained. Start begins a new batch.';self.changed.emit()
 
     def approve_cut(self):
-        if self.intervention.paused():return self.intervention.resume(approve_cut=True)
-        if not self.sequence or self.sequence['stage']!='WAIT_CUT_APPROVAL' or not self.can_approve_cut():return False
-        self.sequence.update(stage='DISARM',cut_approved=True,at=time.monotonic())
-        self.changed.emit();return True
+        if self.intervention.paused():
+            return self.intervention.resume(approve_cut=True)
+        if not self.sequence or self.sequence.stage != SequenceStage.WAIT_CUT_APPROVAL or not self.can_approve_cut():
+            return False
+        self.sequence.cut_approved = True
+        self.sequence.transition(SequenceStage.DISARM)
+        self.changed.emit()
+        return True
 
     def can_approve_cut(self):
         if self.intervention.paused():
-            plan=self.intervention.resume_plan()
-            return bool(plan and plan[0]=='cut')
-        return bool(self.sequence and self.sequence['stage']=='WAIT_CUT_APPROVAL' and self.safe_link()
-                    and not self.pending and not self.owner.carriage_tab.armed
-                    and not self.owner.direct_controls.intent and self.data.get('STATE')=='OFF'
-                    and self.supervision.review().proceeds)
+            plan = self.intervention.resume_plan()
+            return bool(plan and plan[0] == 'cut')
+        return bool(
+            self.sequence and self.sequence.stage == SequenceStage.WAIT_CUT_APPROVAL and self.safe_link()
+            and not self.pending and not self.owner.carriage_tab.armed
+            and not self.owner.direct_controls.intent and self.data.get('STATE') == 'OFF'
+            and self.supervision.review().proceeds
+        )
 
     def waiting_for_board(self):
-        return bool(self.sequence and self.sequence['stage'] in ('WAIT_NEW_BOARD','BOARD_TOO_SHORT'))
+        return bool(self.sequence and self.sequence.stage in (SequenceStage.WAIT_NEW_BOARD, SequenceStage.BOARD_TOO_SHORT))
 
     def batch_unchanged(self):
-        return (not self.sequence or (tuple(self.owner.cut_list)==self.sequence['list_snapshot'] and
-                self.owner.kerf_input.value()==self.sequence['kerf']))
+        return (
+            not self.sequence
+            or (
+                tuple(self.owner.cut_list) == self.sequence.list_snapshot
+                and self.owner.kerf_input.value() == self.sequence.kerf
+            )
+        )
 
     def can_begin_auto(self):
         p=self.owner.carriage_tab
@@ -594,42 +670,54 @@ class NativeDryRun(QObject):
         except (ValueError,KeyError,OverflowError):return None
 
     def begin_auto(self):
-        if not self.can_begin_auto(): return False
-        self.set_authorized(True); self.owner.carriage_tab.consent.setChecked(True)
-        self.auto_start='off'; self.auto_start_at=time.monotonic()
-        self.issuing_sequence=True
-        try: sent=self.owner.send_command('DOFF')
-        finally: self.issuing_sequence=False
-        if not sent: self.stop('Cannot prepare Auto'); return False
+        if not self.can_begin_auto():
+            return False
+        self.set_authorized(True)
+        self.owner.carriage_tab.consent.setChecked(True)
+        self.auto_start = 'off'
+        self.auto_start_at = time.monotonic()
+        with self.sequence_command_scope():
+            sent = self.owner.send_command('DOFF')
+        if not sent:
+            self.stop('Cannot prepare Auto')
+            return False
         return True
 
     def start_sequence(self):
-        p=self.owner.carriage_tab
-        if not self.can_start(): return False
-        previous=self.sequence if self.waiting_for_board() else None
-        cuts=previous['cuts'] if previous else [float(length) for _,length,_ in self.owner.cut_list]
-        if any(not math.isfinite(x) or x<=0 for x in cuts): return False
+        p = self.owner.carriage_tab
+        if not self.can_start():
+            return False
+        previous = self.sequence if self.waiting_for_board() else None
+        cuts = previous.cuts if previous else [float(length) for _, length, _ in self.owner.cut_list]
+        if any(not math.isfinite(x) or x <= 0 for x in cuts):
+            return False
         self.supervision.coordinator.invalidate('New board acquisition requested.')
         self.owner.cut_history.clear_board()
-        self.sequence={'stage':'SEARCH_PROFILE','at':time.monotonic(),'cuts':cuts,'kerf':self.owner.kerf_input.value(),
-                       'index':-1,'next_index':previous['next_index'] if previous else 0,
-                       'board':(previous['board'] if previous.get('reacquire') else previous['board']+1) if previous else 1,
-                       'semi':previous['semi'] if previous else self.owner.auto_modes.currentIndex()==1,
-                       'repeat':previous['repeat'] if previous else self.owner.repeat_pattern.isChecked(),
-                       'clear_between':previous['clear_between'] if previous else self.owner.clear_between_boards.isChecked(),
-                       'clear_end':previous['clear_end'] if previous else self.owner.clear_at_list_end.isChecked(),
-                       'list_snapshot':previous['list_snapshot'] if previous else tuple(self.owner.cut_list),
-                       'reference_signature':self.supervision.current_reference_signature(),
-                       'move_id':int(p.x['MOVE_ID']),
-                       'edge_command':self.acquisition_command()}
-        self.progress_batch=self.sequence['list_snapshot']; self.progress_index=self.sequence['next_index']
-        # The explicit Run Dry List gesture authorizes this sequence's arming.
-        self.issuing_sequence=True
-        try: sent=p.select_profile(1)
-        finally: self.issuing_sequence=False
+        self.sequence = SequenceState(
+            stage=SequenceStage.SEARCH_PROFILE,
+            at=time.monotonic(),
+            cuts=cuts,
+            kerf=self.owner.kerf_input.value(),
+            index=-1,
+            next_index=previous.next_index if previous else 0,
+            board=(previous.board if previous.reacquire else previous.board + 1) if previous else 1,
+            semi=previous.semi if previous else self.owner.auto_modes.currentIndex() == 1,
+            repeat=previous.repeat if previous else self.owner.repeat_pattern.isChecked(),
+            clear_between=previous.clear_between if previous else self.owner.clear_between_boards.isChecked(),
+            clear_end=previous.clear_end if previous else self.owner.clear_at_list_end.isChecked(),
+            list_snapshot=previous.list_snapshot if previous else tuple(self.owner.cut_list),
+            reference_signature=self.supervision.current_reference_signature(),
+            move_id=int(p.x['MOVE_ID']),
+            edge_command=self.acquisition_command(),
+        )
+        self.progress_batch = self.sequence.list_snapshot
+        self.progress_index = self.sequence.next_index
+        with self.sequence_command_scope():
+            sent = p.select_profile(1)
         if not sent:
-            self.stop('Cannot select Gentle acquisition profile'); return False
-        self.message='Dry list: arming acquisition; keep board detector clear until SEARCH.'
+            self.stop('Cannot select Gentle acquisition profile')
+            return False
+        self.message = 'Dry list: arming acquisition; keep board detector clear until SEARCH.'
         return True
 
     def can_start(self):
@@ -644,328 +732,585 @@ class NativeDryRun(QObject):
 
     def acquisition_rejected(self, decision, context):
         """Retain the first actual rejection; capture data without actuator writes."""
-        s=self.sequence
-        if not s:return
-        if s.get('acquisition_rejection'):return
-        detail={'code':decision.code,'reason':decision.reason,'context':asdict(context),
-                'decision':asdict(decision),'carriage_readback':dict(self.owner.carriage_tab.x),
-                'controller_readback':dict(self.data),'inputs_raw':dict(self.owner.carriage_tab.inputs),
-                'sequence_before_rejection':dict(s)}
-        s['acquisition_rejection']={'code':decision.code,'reason':decision.reason}
-        s['stage']='BOARD_TOO_SHORT' if decision.code=='NEXT_BOARD_REQUIRED' else 'OPERATOR_REQUIRED'
-        s['at']=time.monotonic()
-        self.supervision.coordinator.paused=decision
-        self.supervision.last_decision=decision
-        self.diagnostics.note('ACQUISITION_REJECTED',decision.code+': '+decision.reason,time.monotonic(),detail)
+        s = self.sequence
+        if not s or s.acquisition_rejection:
+            return
+        detail = {
+            'code': decision.code,
+            'reason': decision.reason,
+            'context': asdict(context),
+            'decision': asdict(decision),
+            'carriage_readback': dict(self.owner.carriage_tab.x),
+            'controller_readback': dict(self.data),
+            'inputs_raw': dict(self.owner.carriage_tab.inputs),
+            'sequence_before_rejection': s.to_dict(),
+        }
+        s.acquisition_rejection = {'code': decision.code, 'reason': decision.reason}
+        s.transition(
+            SequenceStage.BOARD_TOO_SHORT
+            if decision.code == 'NEXT_BOARD_REQUIRED'
+            else SequenceStage.OPERATOR_REQUIRED
+        )
+        self.supervision.coordinator.paused = decision
+        self.supervision.last_decision = decision
+        self.diagnostics.note('ACQUISITION_REJECTED', decision.code + ': ' + decision.reason, time.monotonic(), detail)
         try:
-            folder=self.owner.cut_history.path.parent/'diagnostics'
-            folder.mkdir(parents=True,exist_ok=True)
-            path=folder/('acquisition-rejected-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')+'.json')
-            self.diagnostics.write_report(path,time.monotonic(),{'acquisition_rejection':detail})
-            s['acquisition_rejection']['snapshot_path']=str(path)
-        except (OSError,ValueError,TypeError) as error:
-            s['acquisition_rejection']['write_error']=str(error)
-        self.owner.log.append('ACQUISITION REJECTED ['+decision.code+']: '+decision.reason+' '+
-                              s['acquisition_rejection'].get('snapshot_path',s['acquisition_rejection'].get('write_error','')))
-        self.message=self.acquisition_rejection_message()
+            folder = self.owner.cut_history.path.parent / 'diagnostics'
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / ('acquisition-rejected-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.json')
+            self.diagnostics.write_report(path, time.monotonic(), {'acquisition_rejection': detail})
+            s.acquisition_rejection['snapshot_path'] = str(path)
+        except (OSError, ValueError, TypeError) as error:
+            s.acquisition_rejection['write_error'] = str(error)
+        self.owner.log.append(
+            'ACQUISITION REJECTED [' + decision.code + ']: ' + decision.reason + ' '
+            + s.acquisition_rejection.get('snapshot_path', s.acquisition_rejection.get('write_error', ''))
+        )
+        self.message = self.acquisition_rejection_message()
 
     def acquisition_rejection_message(self):
-        result=self.sequence['acquisition_rejection']
-        message=f"Acquisition paused [{result['code']}]: {result['reason']} No saw cycle was sent."
-        if result['code']=='NEXT_BOARD_REQUIRED':message+=' Load suitable stock with detector clear before starting a new acquisition.'
-        if result.get('snapshot_path'):message+=' Diagnostic saved: '+result['snapshot_path']
-        elif result.get('write_error'):message+=' Diagnostic could not be saved: '+result['write_error']
+        result = self.sequence.acquisition_rejection
+        message = f"Acquisition paused [{result['code']}]: {result['reason']} No saw cycle was sent."
+        if result['code'] == 'NEXT_BOARD_REQUIRED':
+            message += ' Load suitable stock with detector clear before starting a new acquisition.'
+        if result.get('snapshot_path'):
+            message += ' Diagnostic saved: ' + result['snapshot_path']
+        elif result.get('write_error'):
+            message += ' Diagnostic could not be saved: ' + result['write_error']
         return message
 
     def advance_sequence(self):
         # Implemented as ACK/state transitions, never PC timers commanding valve phases.
-        s=self.sequence; p=self.owner.carriage_tab
-        if not s or self.pending or p.profile_pending: return
-        if not self.safe_link(): self.stop(self.feedback_problem()); return
-        stage=s['stage']
-        def next_stage(name): s['stage']=name; s['at']=time.monotonic()
-        if stage=='SEARCH_PROFILE' and p.x.get('PROFILE_ID')=='1':
-            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm board acquisition');return
-            next_stage('SEARCH_ARM')
-        elif stage=='SEARCH_ARM' and p.armed and p.x.get('JOG_READY')=='1':
-            if not p.request_move(s['edge_command']): self.stop('Board detector must be clear before acquisition'); return
-            next_stage('SEARCH')
-        elif stage=='SEARCH' and p.x.get('EDGE_VALID')=='1' and p.x.get('EDGE_STATE')=='FOUND' and (not p.armed or p.x.get('ACQUIRE_CONTINUOUS')=='1'):
-            if p.x.get('ACQUIRE_CONTINUOUS')=='1':
-                s['move_id']=int(p.x['MOVE_ID'])-1;next_stage('MOVE');return
+        s = self.sequence
+        p = self.owner.carriage_tab
+        if not s or self.pending or p.profile_pending:
+            return
+        if not self.safe_link():
+            self.stop(self.feedback_problem())
+            return
+
+        stage = s.stage
+        handled_exclusively = False
+        if stage in ACQUISITION_STAGES:
+            handled_exclusively = self._advance_acquisition(s, p)
+        elif stage in POSITIONING_STAGES:
+            handled_exclusively = self._advance_positioning(s, p)
+        elif stage in CUT_CYCLE_STAGES:
+            handled_exclusively = self._advance_cut_cycle(s, p)
+        elif stage in EARLY_RETURN_STAGES:
+            handled_exclusively = self._advance_early_return(s, p)
+        elif stage in CLEANUP_AND_BOARD_STAGES:
+            handled_exclusively = self._advance_cleanup_and_board(s, p)
+
+        if handled_exclusively or not self.sequence:
+            return
+        label = (
+            f"SEARCH — Gentle approach, up to {int(s.edge_command.split()[1]) / 127.12:.2f} in; waiting for board detector"
+            if s.stage == SequenceStage.SEARCH
+            else str(s.stage)
+        )
+        self.message = (
+            f"Dry list board {s.board}: {label} — "
+            f"{'truing' if s.index < 0 else 'cut ' + str(s.index + 1)}; saw mains MUST stay unplugged."
+        )
+        if time.monotonic() - s.at > 180:
+            self.stop('Dry-list phase exceeded 180 seconds')
+
+    def _advance_acquisition(self, s: SequenceState, p) -> bool:
+        stage = s.stage
+        if stage == SequenceStage.SEARCH_PROFILE and p.x.get('PROFILE_ID') == '1':
+            if not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm board acquisition')
+                return True
+            s.transition(SequenceStage.SEARCH_ARM)
+        elif stage == SequenceStage.SEARCH_ARM and p.armed and p.x.get('JOG_READY') == '1':
+            if not p.request_move(s.edge_command):
+                self.stop('Board detector must be clear before acquisition')
+                return True
+            s.transition(SequenceStage.SEARCH)
+        elif (
+            stage == SequenceStage.SEARCH
+            and p.x.get('EDGE_VALID') == '1'
+            and p.x.get('EDGE_STATE') == 'FOUND'
+            and (not p.armed or p.x.get('ACQUIRE_CONTINUOUS') == '1')
+        ):
+            if p.x.get('ACQUIRE_CONTINUOUS') == '1':
+                s.move_id = int(p.x['MOVE_ID']) - 1
+                s.transition(SequenceStage.MOVE)
+                return True
             # Preview ONE next cut on the captured board. Future boards in the
             # queue do not have to fit this board's available carriage travel.
-            c=self.supervision.context()
-            proposed=int(p.x['TRUING_MILLI'])/1000
-            material=c.material
+            c = self.supervision.context()
+            proposed = int(p.x['TRUING_MILLI']) / 1000
+            material = c.material
             if material.located:
-                material=replace(material,stock=material.stock.shifted(proposed-c.position))
-            decision=plan_board_feed(replace(c,position=proposed,material=material),s['cuts'][s['next_index']],s['kerf'])
-            if not decision.proceeds or decision.code=='NEXT_BOARD_REQUIRED':
-                self.acquisition_rejected(decision,replace(c,position=proposed,material=material))
-                return
-            if not p.select_profile(1): self.stop('Cannot retain Gentle truing profile'); return
-            next_stage('TRUE_PROFILE')
-        elif stage=='TRUE_PROFILE' and p.x.get('PROFILE_ID')=='1':
-            if not self.owner.send_command('XARM 1'): self.stop('Cannot arm truing move'); return
-            next_stage('TRUE_ARM')
-        elif stage=='TRUE_ARM' and p.armed and p.x.get('JOG_READY')=='1':
-            if not p.move_to_truing(): self.stop('Keep the board detector active until truing starts'); return
-            s['move_id']=int(p.x['MOVE_ID']); next_stage('MOVE')
-        elif stage=='FEED_ARM' and p.armed and p.x.get('JOG_READY')=='1':
-            if not p.move_to(s['target']): self.stop('Dry-list feed rejected'); return
-            s['move_id']=int(p.x['MOVE_ID']); next_stage('MOVE')
-        elif stage=='MOVE' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
-            self.owner.send_command('XARM 0'); next_stage('DISARM')
-        elif stage=='DISARM' and not p.armed and not p.stopping:
-            if s['index']==-1 and p.continuous_supported():
-                reference=self.supervision.context()
-                if (not reference.material.located or reference.sensor_clear is None or
-                        reference.material.stock.overlaps(reference.geometry.sensor)==reference.sensor_clear):
-                    self.acquisition_rejected(Decision(Outcome.OPERATOR_REQUIRED,'DETECTOR_REFERENCE_MISMATCH',
-                        'Truing position reached; board detector and material reference disagree. Reconcile before the first stroke.'),reference);return
-                capacity=plan_board_feed(reference,s['cuts'][s['next_index']],s['kerf'])
-                if not capacity.proceeds or capacity.code=='NEXT_BOARD_REQUIRED':
-                    self.acquisition_rejected(capacity,reference);return
-            # Captured stock was translated by the real sensor+kerf advance.
-            # Do not fabricate a new material origin to hide a truing mismatch.
-            decision=self.supervision.review()
-            if not decision.proceeds:
-                if s['index']>=0:
-                    following=s['cuts'][s['index']+1] if s['index']+1<len(s['cuts']) else None
-                    plan=self.supervision.review('operator_cut',length=following,kerf=s['kerf'])
-                    if plan.proceeds:
-                        s['operator_stock']=self.supervision.coordinator.material.stock
-                        s['operator_cut_position']=self.supervision.context().position
-                        s['operator_config']=self.supervision.coordinator.config_revision
-                        s['early_return']=plan.code=='OPERATOR_CUT_RETURN'
-                        s['operator_confirmed']=False
-                        if s['early_return']:
-                            s['operator_position']=self.owner.native_load_target()
-                            if s['operator_position']<=s['operator_cut_position']:
-                                self.stop('Load position must be behind the positioned cut for early return.');return
-                            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm early return');return
-                            next_stage('EARLY_RETURN_ARM')
-                        else:
-                            s['operator_position']=s['operator_cut_position'];next_stage('WAIT_OPERATOR_CUT')
-                        return
-                next_stage('OPERATOR_REQUIRED')
-                self.message='Operator intervention required: '+decision.reason
-                self.changed.emit(); return
-            if s['semi'] and not s.pop('cut_approved',False):
-                next_stage('WAIT_CUT_APPROVAL');self.message='Position ready. Jog to adjust if needed, then approve the pending stroke.';return
-            s['automatic_cut_return']=False
-            if s['index']>=0 and p.automatic_return_supported():
-                following=s['cuts'][s['index']+1] if s['index']+1<len(s['cuts']) else None
-                clear_after=s['clear_between'] if following is not None or s['repeat'] else s['clear_end']
-                plan=self.supervision.review('cut_return',length=following,kerf=s['kerf'],
-                                             load_position=self.owner.native_load_target(),clear_after=clear_after)
-                if plan.code=='CLAMPED_CUT_RETURN':
-                    g=self.supervision.coordinator.geometry
-                    selected=[c for c in g.clamps if c.key in plan.permitted_clamps]
-                    minimum=max([g.cut_keepout+g.pusher_front_offset]+
-                                [c.footprint.far+g.margin+g.pusher_front_offset for c in selected])
-                    s.update(automatic_cut_return=True,early_return=True,cut_return_plan=plan,
-                             cut_return_mask=sum({'main':1,'outfeed':2}[c.key] for c in selected),
-                             cut_return_target=round(plan.target*1000),cut_return_min=math.ceil(minimum*1000))
-            if not self.request('arm'): self.stop('Cannot arm unloaded pneumatics'); return
-            next_stage('CLAMP')
-        elif stage=='CLAMP' and self.data.get('STATE')=='READY':
-            s['done']=int(self.data['DONE'])
-            if not self.request('cycle'): self.stop('Saw cycle rejected'); return
-            next_stage('SAW_ACK')
-        elif stage=='SAW_ACK':
-            # REQ acknowledgment completes before this branch; next status may
-            # still be DOWN_DELAY, but the cycle must actually leave CLAMPED.
-            if self.data.get('CYCLE')=='1': next_stage('RETURN_CUT_WAIT' if s.get('automatic_cut_return') else 'SAW_WAIT')
-        elif stage=='SAW_WAIT' and self.data.get('STATE')=='READY' and int(self.data['DONE'])!=s['done']:
-            self.owner.send_command('DOFF'); next_stage('PNEU_OFF')
-        elif stage=='PNEU_OFF' and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0':
-            early=s.get('early_return',False)
-            s['index']=s['next_index'] if s['index']==-1 else s['index']+1
-            s['next_index']=s['index']
-            self.progress_index=s['next_index']
-            s.pop('operator_confirmed',None)
-            s.pop('adjusted_length',None)
+                material = replace(material, stock=material.stock.shifted(proposed - c.position))
+            decision = plan_board_feed(
+                replace(c, position=proposed, material=material), s.cuts[s.next_index], s.kerf
+            )
+            if not decision.proceeds or decision.code == 'NEXT_BOARD_REQUIRED':
+                self.acquisition_rejected(decision, replace(c, position=proposed, material=material))
+                return True
+            if not p.select_profile(1):
+                self.stop('Cannot retain Gentle truing profile')
+                return True
+            s.transition(SequenceStage.TRUE_PROFILE)
+        elif stage == SequenceStage.TRUE_PROFILE and p.x.get('PROFILE_ID') == '1':
+            if not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm truing move')
+                return True
+            s.transition(SequenceStage.TRUE_ARM)
+        elif stage == SequenceStage.TRUE_ARM and p.armed and p.x.get('JOG_READY') == '1':
+            if not p.move_to_truing():
+                self.stop('Keep the board detector active until truing starts')
+                return True
+            s.move_id = int(p.x['MOVE_ID'])
+            s.transition(SequenceStage.MOVE)
+        return False
+
+    def _advance_positioning(self, s: SequenceState, p) -> bool:
+        stage = s.stage
+        if stage == SequenceStage.FEED_PROFILE and p.x.get('PROFILE_ID') == '2':
+            if not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm dry-list feed')
+                return True
+            s.transition(SequenceStage.FEED_ARM)
+        elif stage == SequenceStage.RESUME_POSITION_PROFILE and p.x.get('PROFILE_ID') == str(s.resume_profile):
+            if not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm paused positioning')
+                return True
+            s.transition(SequenceStage.FEED_ARM)
+        elif stage == SequenceStage.FEED_ARM and p.armed and p.x.get('JOG_READY') == '1':
+            if not p.move_to(s.target):
+                self.stop('Dry-list feed rejected')
+                return True
+            s.move_id = int(p.x['MOVE_ID'])
+            s.transition(SequenceStage.MOVE)
+        elif stage == SequenceStage.MOVE and not p.pending and int(p.x['MOVE_ID']) != s.move_id and p.x.get('REMAINING') == '0':
+            self.owner.send_command('XARM 0')
+            s.transition(SequenceStage.DISARM)
+        elif stage == SequenceStage.DISARM and not p.armed and not p.stopping:
+            return self._handle_disarm(s, p)
+        return False
+
+    def _handle_disarm(self, s: SequenceState, p) -> bool:
+        if s.index == -1 and p.continuous_supported():
+            reference = self.supervision.context()
+            if (
+                not reference.material.located
+                or reference.sensor_clear is None
+                or reference.material.stock.overlaps(reference.geometry.sensor) == reference.sensor_clear
+            ):
+                self.acquisition_rejected(
+                    Decision(
+                        Outcome.OPERATOR_REQUIRED,
+                        'DETECTOR_REFERENCE_MISMATCH',
+                        'Truing position reached; board detector and material reference disagree. Reconcile before the first stroke.',
+                    ),
+                    reference,
+                )
+                return True
+            capacity = plan_board_feed(reference, s.cuts[s.next_index], s.kerf)
+            if not capacity.proceeds or capacity.code == 'NEXT_BOARD_REQUIRED':
+                self.acquisition_rejected(capacity, reference)
+                return True
+        # Captured stock was translated by the real sensor+kerf advance.
+        # Do not fabricate a new material origin to hide a truing mismatch.
+        decision = self.supervision.review()
+        if not decision.proceeds:
+            if s.index >= 0:
+                following = s.cuts[s.index + 1] if s.index + 1 < len(s.cuts) else None
+                plan = self.supervision.review('operator_cut', length=following, kerf=s.kerf)
+                if plan.proceeds:
+                    s.operator_stock = self.supervision.coordinator.material.stock
+                    s.operator_cut_position = self.supervision.context().position
+                    s.operator_config = self.supervision.coordinator.config_revision
+                    s.early_return = plan.code == 'OPERATOR_CUT_RETURN'
+                    s.operator_confirmed = False
+                    if s.early_return:
+                        s.operator_position = self.owner.native_load_target()
+                        if s.operator_position <= s.operator_cut_position:
+                            self.stop('Load position must be behind the positioned cut for early return.')
+                            return True
+                        if not self.owner.send_command('XARM 1'):
+                            self.stop('Cannot arm early return')
+                            return True
+                        s.transition(SequenceStage.EARLY_RETURN_ARM)
+                    else:
+                        s.operator_position = s.operator_cut_position
+                        s.transition(SequenceStage.WAIT_OPERATOR_CUT)
+                    return True
+            s.transition(SequenceStage.OPERATOR_REQUIRED)
+            self.message = 'Operator intervention required: ' + decision.reason
+            self.changed.emit()
+            return True
+        if s.semi and not s.cut_approved:
+            s.transition(SequenceStage.WAIT_CUT_APPROVAL)
+            self.message = 'Position ready. Jog to adjust if needed, then approve the pending stroke.'
+            return True
+        s.cut_approved = False
+        s.automatic_cut_return = False
+        if s.index >= 0 and p.automatic_return_supported():
+            following = s.cuts[s.index + 1] if s.index + 1 < len(s.cuts) else None
+            clear_after = s.clear_between if following is not None or s.repeat else s.clear_end
+            plan = self.supervision.review(
+                'cut_return',
+                length=following,
+                kerf=s.kerf,
+                load_position=self.owner.native_load_target(),
+                clear_after=clear_after,
+            )
+            if plan.code == 'CLAMPED_CUT_RETURN':
+                g = self.supervision.coordinator.geometry
+                selected = [c for c in g.clamps if c.key in plan.permitted_clamps]
+                minimum = max(
+                    [g.cut_keepout + g.pusher_front_offset]
+                    + [c.footprint.far + g.margin + g.pusher_front_offset for c in selected]
+                )
+                s.automatic_cut_return = True
+                s.early_return = True
+                s.cut_return_plan = plan
+                s.cut_return_mask = sum({'main': 1, 'outfeed': 2}[c.key] for c in selected)
+                s.cut_return_target = round(plan.target * 1000)
+                s.cut_return_min = math.ceil(minimum * 1000)
+        if not self.request('arm'):
+            self.stop('Cannot arm unloaded pneumatics')
+            return True
+        s.transition(SequenceStage.CLAMP)
+        return False
+
+    def _advance_cut_cycle(self, s: SequenceState, p) -> bool:
+        stage = s.stage
+        if stage == SequenceStage.WAIT_CUT_APPROVAL:
+            self.message = (
+                'Truing position ready. Press True-up / advance.'
+                if s.index < 0
+                else f"Cut {s.index + 1} positioned. Jog to adjust if needed, then press Clamp / Cut / Advance."
+            )
+            return True
+        if stage == SequenceStage.CLAMP and self.data.get('STATE') == 'READY':
+            s.done = int(self.data['DONE'])
+            if not self.request('cycle'):
+                self.stop('Saw cycle rejected')
+                return True
+            s.transition(SequenceStage.SAW_ACK)
+        elif stage == SequenceStage.SAW_ACK:
+            if self.data.get('CYCLE') == '1':
+                s.transition(
+                    SequenceStage.RETURN_CUT_WAIT if s.automatic_cut_return else SequenceStage.SAW_WAIT
+                )
+        elif stage == SequenceStage.SAW_WAIT and self.data.get('STATE') == 'READY' and int(self.data['DONE']) != s.done:
+            self.owner.send_command('DOFF')
+            s.transition(SequenceStage.PNEU_OFF)
+        elif stage == SequenceStage.PNEU_OFF and self.data.get('STATE') == 'OFF' and self.data.get('ARMED') == '0':
+            early = s.early_return
+            s.index = s.next_index if s.index == -1 else s.index + 1
+            s.next_index = s.index
+            self.progress_index = s.next_index
+            s.operator_confirmed = False
+            s.adjusted_length = None
             if self.intervention.after_cut:
-                self.intervention.pause(after_cut=True);return
+                self.intervention.pause(after_cut=True)
+                return True
             if early:
                 # Carriage is already at Load. Never push/cut again using a
                 # material reference whose contact was lost on early return.
-                s['early_return']=False;next_stage('DONE');return
-            next_stage('NEXT_ACTION');return
-        elif stage=='NEXT_ACTION':
-            if s['index']>=len(s['cuts']):
-                self.finish_board(next_stage); return
-            else:
-                decision=self.supervision.review('feed',length=s['cuts'][s['index']],kerf=s['kerf'])
-                if decision.code=='NEXT_BOARD_REQUIRED':
-                    self.finish_board(next_stage); return
-                if not decision.proceeds:
-                    self.stop(decision.reason); return
-                s['target']=decision.target
-                if not p.select_profile(2): self.stop('Cannot select Normal feed profile'); return
-                next_stage('FEED_PROFILE')
-        elif stage=='RESUME_POSITION_PROFILE' and p.x.get('PROFILE_ID')==str(s['resume_profile']):
-            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm paused positioning');return
-            next_stage('FEED_ARM')
-        elif stage=='WAIT_CUT_APPROVAL':
-            self.message=('Truing position ready. Press True-up / advance.' if s['index']<0 else
-                          f"Cut {s['index']+1} positioned. Jog to adjust if needed, then press Clamp / Cut / Advance.");return
-        elif stage=='FINISH_BOARD':
-            self.finish_board(next_stage);return
-        elif stage=='FEED_PROFILE' and p.x.get('PROFILE_ID')=='2':
-            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm dry-list feed');return
-            next_stage('FEED_ARM')
-        elif stage=='EARLY_RETURN_ARM' and p.armed and p.x.get('JOG_READY')=='1':
+                s.early_return = False
+                s.transition(SequenceStage.DONE)
+                return True
+            s.transition(SequenceStage.NEXT_ACTION)
+            return True
+        elif stage == SequenceStage.NEXT_ACTION:
+            if s.index >= len(s.cuts):
+                self.finish_board(s.transition)
+                return True
+            decision = self.supervision.review('feed', length=s.cuts[s.index], kerf=s.kerf)
+            if decision.code == 'NEXT_BOARD_REQUIRED':
+                self.finish_board(s.transition)
+                return True
+            if not decision.proceeds:
+                self.stop(decision.reason)
+                return True
+            s.target = decision.target
+            if not p.select_profile(2):
+                self.stop('Cannot select Normal feed profile')
+                return True
+            s.transition(SequenceStage.FEED_PROFILE)
+        return False
+
+    def _advance_early_return(self, s: SequenceState, p) -> bool:
+        stage = s.stage
+        if stage == SequenceStage.EARLY_RETURN_ARM and p.armed and p.x.get('JOG_READY') == '1':
             if p.parallel_supported():
-                g=self.supervision.coordinator.geometry
-                command=f"XRETURN {round(s['operator_position']*1000)} {math.ceil((g.cut_keepout+g.pusher_front_offset)*1000)}"
-                sent=p.request_move(command)
-            else:sent=p.move_load_to(s['operator_position'])
-            if not sent:self.stop('Early return rejected');return
-            s['move_id']=int(p.x['MOVE_ID']);next_stage('EARLY_RETURN_WAIT')
-        elif stage=='EARLY_RETURN_WAIT' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
-            self.owner.send_command('XARM 0');next_stage('EARLY_RETURN_DISARM')
-        elif stage=='EARLY_RETURN_DISARM' and not p.armed and not p.stopping:
-            if not self.operator_snapshot_valid():self.stop('Early-return stock/detector reference changed.');return
-            next_stage('WAIT_OPERATOR_CUT')
-        elif stage=='RETURN_CUT_ACK':
-            if self.data.get('CYCLE')=='1' or int(self.data['DONE'])!=s['done']:next_stage('RETURN_CUT_WAIT')
-        elif stage=='RETURN_CUT_WAIT':
-            self.message=('Last cut: settling clamps, then Fast carriage return; waiting for cut and return to finish.'
-                          if s.get('automatic_cut_return') else 'Operator cut running while carriage returns; waiting for both to finish.')
-            if (p.x.get('RETURN_AT_LOAD')=='1' and not p.armed and p.x.get('REMAINING')=='0' and
-                    self.data.get('STATE')=='READY' and self.data.get('CYCLE')=='0' and int(self.data['DONE'])!=s['done']):
-                self.owner.send_command('DOFF');next_stage('PNEU_OFF')
-        elif stage=='WAIT_OPERATOR_CUT':
-            if s['early_return'] and self.supervision.context().sensor_clear is not True:
-                self.message='PENDING CUT — detector is blocked. Finish this cut before loading the next board; no stroke will start.'
-                return
-            self.message=('WAITING FOR OPERATOR — secure unclamped wood, then press Wood secured / run cut. '
-                          +('Carriage is at Load. Load the next board after this cut finishes.' if s['early_return'] else
-                            'Carriage stays forward; more cuts fit this board.')+' Saw mains stay unplugged.')
-            return
-        elif stage=='OPERATOR_ARM' and not p.armed:
-            if not self.operator_snapshot_valid():self.stop('Operator cut reference changed; action cancelled.');return
-            if not self.request('arm'):self.stop('Cannot prepare operator-controlled stroke');return
-            next_stage('OPERATOR_ARMED')
-        elif stage=='OPERATOR_ARMED' and self.data.get('STATE')=='READY':
-            s['done']=int(self.data['DONE'])
-            if not self.request('operator_cycle'):self.stop('Operator-controlled stroke rejected');return
-            s['operator_confirmed']=False;next_stage('SAW_ACK')
-        elif stage=='CLEAR_PROFILE' and not p.profile_pending and p.x.get('PROFILE_ID')=='1':
-            decision=self.supervision.review('clear_sensor')
-            if (not decision.proceeds or decision.target!=s['clear_target'] or
-                    not self.supervision.coordinator.still_valid(s['clear_plan'])):
-                self.stop('Cleanup plan changed; operator reconciliation required'); return
-            if not self.owner.send_command('XARM 1'): self.stop('Cannot arm bounded cleanup'); return
-            next_stage('CLEAR_ARM')
-        elif stage=='CLEAR_ARM' and p.armed and p.x.get('JOG_READY')=='1':
-            decision=self.supervision.review('clear_sensor')
-            if not decision.proceeds or not self.supervision.coordinator.still_valid(s['clear_plan']):
-                self.stop('Cleanup eligibility changed before movement; no retry'); return
-            if not p.move_to(s['clear_target']): self.stop('Cleanup target rejected'); return
-            s['move_id']=int(p.x['MOVE_ID']); next_stage('CLEAR_MOVE')
-        elif stage=='CLEAR_MOVE' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
-            self.owner.send_command('XARM 0'); next_stage('CLEAR_VERIFY')
-        elif stage=='CLEAR_VERIFY' and not p.armed:
-            if p.fresh('INPUTS') and p.inputs.get('BOARD_EDGE')=='1':
-                if 'clear_since' not in s: s['clear_since']=time.monotonic()
-                if time.monotonic()-s['clear_since']>=.25:
-                    if not self.owner.send_command('XARM 1'): self.stop('Cannot arm return after clearance'); return
-                    next_stage('LOAD_ARM')
-            else: s.pop('clear_since',None)
-            if time.monotonic()-s['at']>2: self.stop('Detector did not clear after bounded push; no retry'); return
-        elif stage=='LOAD_ARM' and p.armed and p.x.get('JOG_READY')=='1':
-            if not p.move_load_to(self.owner.native_load_target()): self.stop('Return-to-load rejected'); return
-            s['move_id']=int(p.x['MOVE_ID']); next_stage('LOAD_WAIT')
-        elif stage=='LOAD_WAIT' and not p.pending and int(p.x['MOVE_ID'])!=s['move_id'] and p.x.get('REMAINING')=='0':
-            self.owner.send_command('XARM 0'); next_stage('DONE')
-        elif stage=='DONE' and not p.armed:
-            if s['next_index']>=len(s['cuts']) and s['repeat']:
-                s['index']=s['next_index']=0;self.progress_index=0
-            if s['next_index']<len(s['cuts']):
-                next_stage('WAIT_NEW_BOARD')
-                self.message=f"Board {s['board']} complete. Load the next board; next cut is {s['next_index']+1}. Press Start next board when ready."
+                g = self.supervision.coordinator.geometry
+                command = (
+                    f"XRETURN {round(s.operator_position * 1000)} "
+                    f"{math.ceil((g.cut_keepout + g.pusher_front_offset) * 1000)}"
+                )
+                sent = p.request_move(command)
             else:
-                self.sequence=None; self.message='Unloaded dry list complete; production cut-list progress unchanged.'
-            return
-        elif stage in ('BOARD_TOO_SHORT','OPERATOR_REQUIRED') and s.get('acquisition_rejection'):
-            self.message=self.acquisition_rejection_message()
-            return
-        elif stage in ('WAIT_NEW_BOARD','BOARD_TOO_SHORT'):
-            self.message=(f"Board {s['board']}: waiting for suitable stock for cut {s['next_index']+1}. "
-                          'Detector must be clear; press Start next board to acquire. '+
-                          ('Cut list/kerf changed; restore them or Stop to begin a new batch.' if not self.batch_unchanged() else ''))
-            return
-        elif stage in ('OPERATOR_REQUIRED','CLEARANCE_REQUIRED'):
-            decision=self.supervision.coordinator.paused
-            self.message='OPERATOR REQUIRED — '+(decision.reason if decision else 'Reconcile material/holding and restart.')
-            return  # Unenergized human pause has no arbitrary 180-second expiry.
-        if self.sequence:
-            label = (f"SEARCH — Gentle approach, up to {int(s['edge_command'].split()[1])/127.12:.2f} in; waiting for board detector"
-                     if s['stage']=='SEARCH' else s['stage'])
-            self.message=f"Dry list board {s['board']}: {label} — {'truing' if s['index']<0 else 'cut '+str(s['index']+1)}; saw mains MUST stay unplugged."
-            if time.monotonic()-s['at']>180:
-                self.stop('Dry-list phase exceeded 180 seconds')
+                sent = p.move_load_to(s.operator_position)
+            if not sent:
+                self.stop('Early return rejected')
+                return True
+            s.move_id = int(p.x['MOVE_ID'])
+            s.transition(SequenceStage.EARLY_RETURN_WAIT)
+        elif stage == SequenceStage.EARLY_RETURN_WAIT and not p.pending and int(p.x['MOVE_ID']) != s.move_id and p.x.get('REMAINING') == '0':
+            self.owner.send_command('XARM 0')
+            s.transition(SequenceStage.EARLY_RETURN_DISARM)
+        elif stage == SequenceStage.EARLY_RETURN_DISARM and not p.armed and not p.stopping:
+            if not self.operator_snapshot_valid():
+                self.stop('Early-return stock/detector reference changed.')
+                return True
+            s.transition(SequenceStage.WAIT_OPERATOR_CUT)
+        elif stage == SequenceStage.RETURN_CUT_ACK:
+            if self.data.get('CYCLE') == '1' or int(self.data['DONE']) != s.done:
+                s.transition(SequenceStage.RETURN_CUT_WAIT)
+        elif stage == SequenceStage.RETURN_CUT_WAIT:
+            self.message = (
+                'Last cut: settling clamps, then Fast carriage return; waiting for cut and return to finish.'
+                if s.automatic_cut_return
+                else 'Operator cut running while carriage returns; waiting for both to finish.'
+            )
+            if (
+                p.x.get('RETURN_AT_LOAD') == '1'
+                and not p.armed
+                and p.x.get('REMAINING') == '0'
+                and self.data.get('STATE') == 'READY'
+                and self.data.get('CYCLE') == '0'
+                and int(self.data['DONE']) != s.done
+            ):
+                self.owner.send_command('DOFF')
+                s.transition(SequenceStage.PNEU_OFF)
+        elif stage == SequenceStage.WAIT_OPERATOR_CUT:
+            if s.early_return and self.supervision.context().sensor_clear is not True:
+                self.message = 'PENDING CUT — detector is blocked. Finish this cut before loading the next board; no stroke will start.'
+                return True
+            self.message = (
+                'WAITING FOR OPERATOR — secure unclamped wood, then press Wood secured / run cut. '
+                + (
+                    'Carriage is at Load. Load the next board after this cut finishes.'
+                    if s.early_return
+                    else 'Carriage stays forward; more cuts fit this board.'
+                )
+                + ' Saw mains stay unplugged.'
+            )
+            return True
+        elif stage == SequenceStage.OPERATOR_ARM and not p.armed:
+            if not self.operator_snapshot_valid():
+                self.stop('Operator cut reference changed; action cancelled.')
+                return True
+            if not self.request('arm'):
+                self.stop('Cannot prepare operator-controlled stroke')
+                return True
+            s.transition(SequenceStage.OPERATOR_ARMED)
+        elif stage == SequenceStage.OPERATOR_ARMED and self.data.get('STATE') == 'READY':
+            s.done = int(self.data['DONE'])
+            if not self.request('operator_cycle'):
+                self.stop('Operator-controlled stroke rejected')
+                return True
+            s.operator_confirmed = False
+            s.transition(SequenceStage.SAW_ACK)
+        return False
+
+    def _advance_cleanup_and_board(self, s: SequenceState, p) -> bool:
+        stage = s.stage
+        if stage == SequenceStage.FINISH_BOARD:
+            self.finish_board(s.transition)
+            return True
+        if stage == SequenceStage.CLEAR_PROFILE and not p.profile_pending and p.x.get('PROFILE_ID') == '1':
+            decision = self.supervision.review('clear_sensor')
+            if (
+                not decision.proceeds
+                or decision.target != s.clear_target
+                or s.clear_plan is None
+                or not self.supervision.coordinator.still_valid(s.clear_plan)
+            ):
+                self.stop('Cleanup plan changed; operator reconciliation required')
+                return True
+            if not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm bounded cleanup')
+                return True
+            s.transition(SequenceStage.CLEAR_ARM)
+        elif stage == SequenceStage.CLEAR_ARM and p.armed and p.x.get('JOG_READY') == '1':
+            decision = self.supervision.review('clear_sensor')
+            if not decision.proceeds or s.clear_plan is None or not self.supervision.coordinator.still_valid(s.clear_plan):
+                self.stop('Cleanup eligibility changed before movement; no retry')
+                return True
+            if not p.move_to(s.clear_target):
+                self.stop('Cleanup target rejected')
+                return True
+            s.move_id = int(p.x['MOVE_ID'])
+            s.transition(SequenceStage.CLEAR_MOVE)
+        elif stage == SequenceStage.CLEAR_MOVE and not p.pending and int(p.x['MOVE_ID']) != s.move_id and p.x.get('REMAINING') == '0':
+            self.owner.send_command('XARM 0')
+            s.transition(SequenceStage.CLEAR_VERIFY)
+        elif stage == SequenceStage.CLEAR_VERIFY and not p.armed:
+            if p.fresh('INPUTS') and p.inputs.get('BOARD_EDGE') == '1':
+                if s.clear_since is None:
+                    s.clear_since = time.monotonic()
+                if time.monotonic() - s.clear_since >= 0.25:
+                    if not self.owner.send_command('XARM 1'):
+                        self.stop('Cannot arm return after clearance')
+                        return True
+                    s.transition(SequenceStage.LOAD_ARM)
+            else:
+                s.clear_since = None
+            if time.monotonic() - s.at > 2:
+                self.stop('Detector did not clear after bounded push; no retry')
+                return True
+        elif stage == SequenceStage.LOAD_ARM and p.armed and p.x.get('JOG_READY') == '1':
+            if not p.move_load_to(self.owner.native_load_target()):
+                self.stop('Return-to-load rejected')
+                return True
+            s.move_id = int(p.x['MOVE_ID'])
+            s.transition(SequenceStage.LOAD_WAIT)
+        elif stage == SequenceStage.LOAD_WAIT and not p.pending and int(p.x['MOVE_ID']) != s.move_id and p.x.get('REMAINING') == '0':
+            self.owner.send_command('XARM 0')
+            s.transition(SequenceStage.DONE)
+        elif stage == SequenceStage.DONE and not p.armed:
+            if s.next_index >= len(s.cuts) and s.repeat:
+                s.index = s.next_index = 0
+                self.progress_index = 0
+            if s.next_index < len(s.cuts):
+                s.transition(SequenceStage.WAIT_NEW_BOARD)
+                self.message = f"Board {s.board} complete. Load the next board; next cut is {s.next_index + 1}. Press Start next board when ready."
+            else:
+                self.sequence = None
+                self.message = 'Unloaded dry list complete; production cut-list progress unchanged.'
+            return True
+        elif stage in (SequenceStage.BOARD_TOO_SHORT, SequenceStage.OPERATOR_REQUIRED) and s.acquisition_rejection:
+            self.message = self.acquisition_rejection_message()
+            return True
+        elif stage in (SequenceStage.WAIT_NEW_BOARD, SequenceStage.BOARD_TOO_SHORT):
+            self.message = (
+                f"Board {s.board}: waiting for suitable stock for cut {s.next_index + 1}. "
+                'Detector must be clear; press Start next board to acquire. '
+                + ('Cut list/kerf changed; restore them or Stop to begin a new batch.' if not self.batch_unchanged() else '')
+            )
+            return True
+        elif stage in (SequenceStage.OPERATOR_REQUIRED, SequenceStage.CLEARANCE_REQUIRED):
+            decision = self.supervision.coordinator.paused
+            self.message = 'OPERATOR REQUIRED — ' + (decision.reason if decision else 'Reconcile material/holding and restart.')
+            return True  # Unenergized human pause has no arbitrary 180-second expiry.
+        return False
 
     def finish_board(self, next_stage):
         """Same bounded cleanup/verified return at end of EACH board."""
-        s=self.sequence; p=self.owner.carriage_tab
-        clear=s['clear_between'] if (s['repeat'] or s['next_index']<len(s['cuts'])) else s['clear_end']
+        s = self.sequence
+        p = self.owner.carriage_tab
+        clear = s.clear_between if (s.repeat or s.next_index < len(s.cuts)) else s.clear_end
         if not clear:
-            if not self.owner.send_command('XARM 1'):self.stop('Cannot arm return with remainder retained');return
-            next_stage('LOAD_ARM');return
-        decision=self.supervision.review('clear_sensor')
+            if not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm return with remainder retained')
+                return
+            next_stage(SequenceStage.LOAD_ARM)
+            return
+        decision = self.supervision.review('clear_sensor')
         if not decision.proceeds:
-            next_stage('CLEARANCE_REQUIRED'); self.message=decision.reason; return
-        if decision.outcome==Outcome.ADAPT:
-            s['clear_target']=decision.target; s['clear_plan']=decision
-            if not p.select_profile(1): self.stop('Cannot select cleanup Gentle profile'); return
-            next_stage('CLEAR_PROFILE')
+            next_stage(SequenceStage.CLEARANCE_REQUIRED)
+            self.message = decision.reason
+            return
+        if decision.outcome == Outcome.ADAPT:
+            s.clear_target = decision.target
+            s.clear_plan = decision
+            if not p.select_profile(1):
+                self.stop('Cannot select cleanup Gentle profile')
+                return
+            next_stage(SequenceStage.CLEAR_PROFILE)
         else:
-            if not self.owner.send_command('XARM 1'): self.stop('Cannot arm carriage return'); return
-            next_stage('LOAD_ARM')
+            if not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm carriage return')
+                return
+            next_stage(SequenceStage.LOAD_ARM)
 
-    def operator_snapshot_valid(self,allow_return=False):
-        s=self.sequence;p=self.owner.carriage_tab;c=self.supervision.context()
-        if not s or 'operator_stock' not in s:return False
-        returning=(allow_return and s.get('early_return') and p.parallel_supported() and p.x.get('RETURN_PERMIT')=='1'
-                   and p.x.get('DIR')=='1' and p.x.get('RETURN_USED')=='0' and p.x.get('REMAINING')!='0'
-                   and c.position is not None
-                   and s['operator_cut_position']<=c.position<=s['operator_position']+.02)
-        return (self.safe_link(False) and self.batch_unchanged() and c.reference_known and (c.carriage_idle or returning)
-                and c.saw_up and c.trigger_off and c.clamps_off and c.fault_free and c.door_closed
-                and c.config_revision==s['operator_config'] and c.material.located
-                and c.material.stock==s['operator_stock']
-                and c.sensor_clear is not None and c.material.stock.overlaps(c.geometry.sensor)!=c.sensor_clear
-                and (returning or abs(c.position-s['operator_position'])<.02)
-                and (not s['early_return'] or c.sensor_clear is True)
-                and self.data.get('CLAMP')=='0' and self.data.get('SAW')=='0' and self.data.get('TRIGGER')=='0')
+    def operator_snapshot_valid(self, allow_return=False):
+        s = self.sequence
+        p = self.owner.carriage_tab
+        c = self.supervision.context()
+        if not s or s.operator_stock is None:
+            return False
+        returning = (
+            allow_return
+            and s.early_return
+            and p.parallel_supported()
+            and p.x.get('RETURN_PERMIT') == '1'
+            and p.x.get('DIR') == '1'
+            and p.x.get('RETURN_USED') == '0'
+            and p.x.get('REMAINING') != '0'
+            and c.position is not None
+            and s.operator_cut_position <= c.position <= s.operator_position + 0.02
+        )
+        return (
+            self.safe_link(False)
+            and self.batch_unchanged()
+            and c.reference_known
+            and (c.carriage_idle or returning)
+            and c.saw_up
+            and c.trigger_off
+            and c.clamps_off
+            and c.fault_free
+            and c.door_closed
+            and c.config_revision == s.operator_config
+            and c.material.located
+            and c.material.stock == s.operator_stock
+            and c.sensor_clear is not None
+            and c.material.stock.overlaps(c.geometry.sensor) != c.sensor_clear
+            and (returning or abs(c.position - s.operator_position) < 0.02)
+            and (not s.early_return or c.sensor_clear is True)
+            and self.data.get('CLAMP') == '0'
+            and self.data.get('SAW') == '0'
+            and self.data.get('TRIGGER') == '0'
+        )
 
     def can_confirm_operator_cut(self):
-        if self.sequence and self.sequence['stage']=='EARLY_RETURN_WAIT':
-            return bool(not self.pending and self.owner.carriage_tab.armed and self.operator_snapshot_valid(True)
-                        and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0')
-        return bool(self.sequence and self.sequence['stage']=='WAIT_OPERATOR_CUT' and not self.pending
-                    and not self.owner.carriage_tab.armed and self.operator_snapshot_valid()
-                    and self.data.get('STATE')=='OFF' and self.data.get('ARMED')=='0')
+        if self.sequence and self.sequence.stage == SequenceStage.EARLY_RETURN_WAIT:
+            return bool(
+                not self.pending
+                and self.owner.carriage_tab.armed
+                and self.operator_snapshot_valid(True)
+                and self.data.get('STATE') == 'OFF'
+                and self.data.get('ARMED') == '0'
+            )
+        return bool(
+            self.sequence
+            and self.sequence.stage == SequenceStage.WAIT_OPERATOR_CUT
+            and not self.pending
+            and not self.owner.carriage_tab.armed
+            and self.operator_snapshot_valid()
+            and self.data.get('STATE') == 'OFF'
+            and self.data.get('ARMED') == '0'
+        )
 
     def confirm_operator_cut(self):
-        if not self.can_confirm_operator_cut():return False
-        if self.sequence['stage']=='EARLY_RETURN_WAIT':
-            s=self.sequence;s['operator_confirmed']=True;s['done']=int(self.data['DONE'])
-            old=self.issuing_sequence;self.issuing_sequence=True
-            try:sent=self.request('return_operator_cycle')
-            finally:self.issuing_sequence=old
-            s['operator_confirmed']=False
-            if not sent:return False
-            s.update(stage='RETURN_CUT_ACK',at=time.monotonic());self.changed.emit();return True
-        self.sequence.update(operator_confirmed=True,stage='OPERATOR_ARM',at=time.monotonic())
-        self.supervision.coordinator.paused=None
-        self.diagnostics.note('OPERATOR_CUT_REQUEST','One unplugged stroke requested; main clamp inhibited, grip not measured.',time.monotonic(),
-                              {'cut_index':self.sequence['index'],'early_return':self.sequence['early_return'],
-                               'cut_position':self.sequence['operator_cut_position'],'carriage_position':self.supervision.context().position})
-        self.message='Operator requested one unplugged stroke; main clamp inhibited.'
-        self.changed.emit();return True
+        if not self.can_confirm_operator_cut():
+            return False
+        s = self.sequence
+        if s.stage == SequenceStage.EARLY_RETURN_WAIT:
+            s.operator_confirmed = True
+            s.done = int(self.data['DONE'])
+            with self.sequence_command_scope():
+                sent = self.request('return_operator_cycle')
+            s.operator_confirmed = False
+            if not sent:
+                return False
+            s.transition(SequenceStage.RETURN_CUT_ACK)
+            self.changed.emit()
+            return True
+        s.operator_confirmed = True
+        s.transition(SequenceStage.OPERATOR_ARM)
+        self.supervision.coordinator.paused = None
+        self.diagnostics.note(
+            'OPERATOR_CUT_REQUEST',
+            'One unplugged stroke requested; main clamp inhibited, grip not measured.',
+            time.monotonic(),
+            {
+                'cut_index': s.index,
+                'early_return': s.early_return,
+                'cut_position': s.operator_cut_position,
+                'carriage_position': self.supervision.context().position,
+            },
+        )
+        self.message = 'Operator requested one unplugged stroke; main clamp inhibited.'
+        self.changed.emit()
+        return True

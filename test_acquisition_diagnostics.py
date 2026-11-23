@@ -8,6 +8,7 @@ from types import MethodType, SimpleNamespace as NS
 from automation_supervision import Geometry,Clamp,Span,Material,Context,AutomationCoordinator,plan_board_feed
 from cycle_diagnostics import CycleDiagnostics
 from dry_run_control import NativeDryRun
+from sequence_state import SequenceStage, SequenceState
 
 
 def context():
@@ -26,10 +27,11 @@ class AcquisitionDiagnosticsTest(unittest.TestCase):
              inputs={'BOARD_EDGE':'0','SAW_UP':'0','SAW_DOWN':'1'},continuous_supported=lambda:True)
         owner=NS(carriage_tab=p,cut_history=NS(path=Path(folder)/'cut_history.csv'),log=NS(append=lambda text:None),send_command=forbidden)
         runner=NS(owner=owner,pending=None,data={'STATE':'OFF','CLAMP':'0','SAW':'0','TRIGGER':'0'},
-                  sequence={'stage':'DISARM','index':-1,'next_index':0,'cuts':[38.313,38.313],'kerf':.12},
+                  sequence=SequenceState(stage=SequenceStage.DISARM,index=-1,next_index=0,cuts=[38.313,38.313],kerf=.12),
                   safe_link=lambda:True,diagnostics=CycleDiagnostics(),
                   supervision=NS(context=lambda:ctx,coordinator=AutomationCoordinator(ctx.geometry),last_decision=None))
-        for name in ('acquisition_rejected','acquisition_rejection_message','advance_sequence'):
+        for name in ('acquisition_rejected','acquisition_rejection_message','advance_sequence',
+                     '_advance_positioning','_handle_disarm','_advance_cleanup_and_board'):
             setattr(runner,name,MethodType(getattr(NativeDryRun,name),runner))
         return runner
 

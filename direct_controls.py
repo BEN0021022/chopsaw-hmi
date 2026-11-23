@@ -108,8 +108,7 @@ class DirectControls(QObject):
             if not d.intervention.paused() or d.awaiting_stop:return
             s['phase']='prepare'
         if self.dispatch_ready_move():return
-        old=d.issuing_sequence;d.issuing_sequence=True
-        try:
+        with d.sequence_command_scope():
             kind,value=s['kind'],s['value']
             if s['phase']=='running':
                 if p.pending or p.profile_pending or p.full_home_pending or p.homing or p.x.get('REMAINING')!='0':return
@@ -176,18 +175,15 @@ class DirectControls(QObject):
             # The next phase sends exactly this one target after ready readback.
             if not self.owner.send_command('XARM 1'):self.fail('Carriage preparation rejected.');return
             s['phase']='move_ready'
-        finally:d.issuing_sequence=old
 
     def dispatch_ready_move(self):
         s=self.intent
         if not s or s['phase']!='move_ready':return False
         d=self.owner.dry_run;p=self.owner.carriage_tab
         if not p.armed or p.x.get('JOG_READY')!='1':return True
-        old=d.issuing_sequence;d.issuing_sequence=True
-        try:
+        with d.sequence_command_scope():
             s['move_id']=p.x.get('MOVE_ID')
             method={'move':p.move_to,'load':p.move_load_to,'jog':p.jog_distance}[s['kind']]
             if not method(s['value']):self.fail('Requested carriage target was rejected.');return True
             s['phase']='running';self.message='Carriage moving.'
-        finally:d.issuing_sequence=old
         return True

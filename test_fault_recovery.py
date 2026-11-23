@@ -8,6 +8,7 @@ from PyQt6.QtCore import QSettings,QTimer
 from PyQt6.QtWidgets import QApplication
 import main
 from controller_backends import TEENSY_CARRIAGE
+from sequence_state import SequenceStage, SequenceState
 from test_native_dry_run import Sketch
 
 
@@ -76,7 +77,7 @@ def run(exe,during_saw=False):
     assert [int(row['cut_number']) for row in cuts]==[1,2,3],cuts
     assert sum(row['cut_type']=='truing' for row in rows)==2
     # A fault captured after a confirmed DONE advances exactly once.
-    d.sequence=dict(stage='SAW_WAIT',index=1,next_index=1,done=4)
+    d.sequence=SequenceState(stage=SequenceStage.SAW_WAIT,index=1,next_index=1,done=4)
     d.intervention.capture_fault('late door readback');d.intervention.observe_fault_completion()
     assert d.sequence['next_index']==2
     d.cancel_cycle();flush();tick();assert d.sequence is None and d.intervention.checkpoint is None

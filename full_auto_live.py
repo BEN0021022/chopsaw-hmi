@@ -18,7 +18,7 @@ def refresh_full_auto(w):
     w.fa_start_cycle_button.setText(w.start_cycle_button.text().replace('Start Auto', 'Start Cycle'))
     w.fa_stop_button.setEnabled(w.is_connected())
     w.fa_operator_cut_button.setVisible(native and not w.operator_cut_button.isHidden()
-                                        and not (w.dry_run.sequence or {}).get('automatic_cut_return'))
+                                        and not (w.dry_run.sequence and w.dry_run.sequence.automatic_cut_return))
     w.fa_operator_cut_button.setEnabled(native and w.operator_cut_button.isEnabled())
     w.fa_operator_cut_button.setText(w.operator_cut_button.text())
     w.fa_operator_cut_button.setToolTip(w.operator_cut_button.toolTip())
@@ -67,9 +67,9 @@ def refresh_full_auto(w):
     if c.fresh and c.material.located:
         stock = c.material.stock
         remaining = stock.far-stock.near
-        raw_index = d.sequence.get('index') if d.sequence else d.progress_index
+        raw_index = d.sequence.index if d.sequence else d.progress_index
         index = max(0, raw_index if isinstance(raw_index, int) else 0)
-        cuts = d.sequence['cuts'][index:] if d.sequence else [float(length) for _, length, _ in w.cut_list[index:]]
+        cuts = d.sequence.cuts[index:] if d.sequence else [float(length) for _, length, _ in w.cut_list[index:]]
         segments = []
         for offset, length in enumerate(cuts):
             if remaining <= 0: break
@@ -85,7 +85,7 @@ def refresh_full_auto(w):
         view.set_board(False, 0, [])
         material = 'Stock location unknown — acquire a board to display its modeled extent.'
     view.material_note = material
-    phase = d.sequence['stage'].replace('_', ' ') if d.sequence else 'IDLE'
+    phase = str(d.sequence.stage).replace('_', ' ') if d.sequence else 'IDLE'
     output = ('TRIGGER ON commanded' if d.data.get('TRIGGER') == '1' else 'trigger OFF commanded') if fresh else 'outputs UNKNOWN'
     w.fa_auto_status_label.setText(f'{phase} / {d.data.get("STATE", "UNKNOWN") if fresh else "STALE"} — {output}\n{d.message}')
     view.update()

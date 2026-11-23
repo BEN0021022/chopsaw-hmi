@@ -33,6 +33,7 @@ from live_health import native_health, simulator_health, simulator_data_valid, H
 from pneumatic_timing import CylinderTimingPanel, CLAMPS, simulation_clamps
 from manual_pneumatics import ManualPneumatics
 from dry_run_control import NativeDryRun, COMMAND as DRY_COMMAND, SECOND_COMMAND, TRAVEL as DRY_TRAVEL
+from sequence_state import SequenceStage
 from cutlist_manager import CutListManagerTab
 from simulator import VirtualController, TRUING_TRIM
 from sim_view import SawSimWidget, PIECE_COLORS, TRIM_COLOR, SCRAP_COLOR
@@ -948,17 +949,22 @@ class MinimalHMI(QMainWindow):
         d=self.dry_run
         if d.sequence:
             if not d.intervention.manual_window():
-                index=int(d.sequence['semi'])
+                index=int(d.sequence.semi)
                 self.auto_modes.blockSignals(True);self.auto_modes.setCurrentIndex(index);self.auto_modes.blockSignals(False)
             else:
                 if not d.intervention.paused():d.intervention.pause()
-                d.sequence['semi']=index==1
+                d.sequence.semi=index==1
         self.auto_mode_pages[index].layout().addWidget(self._auto_shared_panel)
         self.refresh_teensy_tabs()
 
     def approve_auto_cut(self):
         d=self.dry_run
-        if d.sequence and d.sequence['stage'] in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM'):
+        if d.sequence and d.sequence.stage in (
+            SequenceStage.WAIT_OPERATOR_CUT,
+            SequenceStage.EARLY_RETURN_ARM,
+            SequenceStage.EARLY_RETURN_WAIT,
+            SequenceStage.EARLY_RETURN_DISARM,
+        ):
             return d.confirm_operator_cut()
         return d.approve_cut()
 
@@ -2542,7 +2548,7 @@ class MinimalHMI(QMainWindow):
         self.auto_clear_error.setEnabled(p.ready_link() and not p.armed and (not self.dry_run.sequence or self.dry_run.intervention.recovering()) and self.dry_run.data.get('CLAMP')=='0' and p.safety.get('RESET_READY')=='1')
         self.auto_cancel_button.setEnabled(p.connected)
         self.auto_release_clamps.setEnabled(self.dry_run.allowed('DRELEASE'))
-        self.auto_pause_button.setEnabled(bool(self.dry_run.sequence and self.dry_run.sequence['stage'] not in ('PAUSED','PAUSING','FAULT_RECOVERY') and not self.dry_run.intervention.after_cut))
+        self.auto_pause_button.setEnabled(bool(self.dry_run.sequence and self.dry_run.sequence.stage not in (SequenceStage.PAUSED, SequenceStage.PAUSING, SequenceStage.FAULT_RECOVERY) and not self.dry_run.intervention.after_cut))
         self.auto_pause_button.setText('Pausing after cut...' if self.dry_run.intervention.after_cut else 'Pause Cycle')
         self.auto_resume_button.setEnabled(self.dry_run.intervention.resume_plan() is not None)
         self.auto_modes.tabBar().setEnabled((not self.dry_run.sequence or self.dry_run.intervention.manual_window()) and not self.dry_run.auto_start)
@@ -2613,9 +2619,9 @@ class MinimalHMI(QMainWindow):
         semi=self.auto_modes.currentIndex()==1
         native=self.active_controller().key==TEENSY_CARRIAGE
         d=self.dry_run
-        stage=d.sequence['stage'] if d.sequence else ''
-        waiting=stage in ('WAIT_OPERATOR_CUT','EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM','RETURN_CUT_ACK','RETURN_CUT_WAIT')
-        semi_wait=stage=='WAIT_CUT_APPROVAL' or (d.intervention.paused() and bool(d.sequence.get('semi')))
+        stage=d.sequence.stage if d.sequence else ''
+        waiting=stage in (SequenceStage.WAIT_OPERATOR_CUT,SequenceStage.EARLY_RETURN_ARM,SequenceStage.EARLY_RETURN_WAIT,SequenceStage.EARLY_RETURN_DISARM,SequenceStage.RETURN_CUT_ACK,SequenceStage.RETURN_CUT_WAIT)
+        semi_wait=stage==SequenceStage.WAIT_CUT_APPROVAL or (d.intervention.paused() and bool(d.sequence.semi))
         if getattr(self,'_rendered_auto_mode',None)!=semi:
             self.auto_mode_label.setText('SEMI-AUTO — positions each cut; waits for your cut button.' if semi else
                                          'AUTOMATIC — positions, clamps and cycles each cut.')
@@ -2623,14 +2629,14 @@ class MinimalHMI(QMainWindow):
                                               ('#f59e0b; color:#fcd34d;' if semi else '#38bdf8; color:#7dd3fc;'))
             self._rendered_auto_mode=semi
         self.operator_cut_button.setVisible(semi or waiting or semi_wait)
-        attention=stage in ('EARLY_RETURN_ARM','EARLY_RETURN_WAIT','EARLY_RETURN_DISARM')
+        attention=stage in (SequenceStage.EARLY_RETURN_ARM,SequenceStage.EARLY_RETURN_WAIT,SequenceStage.EARLY_RETURN_DISARM)
         if self.operator_cut_button.property('earlyReturnAttention')!=attention:
             self.operator_cut_button.setProperty('earlyReturnAttention',attention)
             self.operator_cut_button.style().unpolish(self.operator_cut_button)
             self.operator_cut_button.style().polish(self.operator_cut_button)
             self.operator_cut_button.update()
         self.operator_cut_button.setEnabled(native and (d.can_confirm_operator_cut() if waiting else d.can_approve_cut()))
-        truing=bool(d.sequence and d.sequence['index']<0)
+        truing=bool(d.sequence and d.sequence.index<0)
         self.operator_cut_button.setText('Wood secured / run cut\nSaw unplugged' if waiting else
                                         'True-up / advance\nSaw unplugged' if truing else 'Clamp / Cut / Advance\nSaw unplugged')
         self.operator_cut_button.setToolTip(('Press during the authorized Fast return to start this operator cut; both clamps stay OFF.' if self.carriage_tab.parallel_supported() else
@@ -2746,10 +2752,10 @@ class MinimalHMI(QMainWindow):
                                   allow_saw_travel=self.dry_run.fresh() and self.dry_run.data.get('STATE') in DRY_TRAVEL)
             receipt = p.received.get("X") if connected and p.connected and p.compatible else None
             if state.level=='healthy' and self.dry_run.sequence:
-                if self.dry_run.sequence['stage']=='WAIT_OPERATOR_CUT':
+                if self.dry_run.sequence.stage==SequenceStage.WAIT_OPERATOR_CUT:
                     state=HealthState('waiting','Waiting for operator — secure unclamped wood',('No clamp grip is measured. One explicit unplugged stroke is required.',))
-                elif self.dry_run.sequence['stage'] in ('PAUSED','PAUSING','WAIT_CUT_APPROVAL'):
-                    state=HealthState('waiting','Cycle paused' if self.dry_run.sequence['stage']!='WAIT_CUT_APPROVAL' else 'Position ready — approve cut')
+                elif self.dry_run.sequence.stage in (SequenceStage.PAUSED,SequenceStage.PAUSING,SequenceStage.WAIT_CUT_APPROVAL):
+                    state=HealthState('waiting','Cycle paused' if self.dry_run.sequence.stage!=SequenceStage.WAIT_CUT_APPROVAL else 'Position ready — approve cut')
         elif mode == "sim":
             state = simulator_health(connected=connected, fields=self._sim_health_fields,
                                      received=self._sim_health_received, started=self._health_started, now=now)
