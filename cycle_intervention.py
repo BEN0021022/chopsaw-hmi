@@ -168,7 +168,7 @@ class CycleIntervention:
         kind,stock=plan
         old=d.issuing_sequence;d.issuing_sequence=True
         try:
-            d.consent.setChecked(True);p.consent.setChecked(True)
+            d.set_authorized(True);p.consent.setChecked(True)
             if kind=='recovery_complete':
                 d.sequence=None;self.clear();d.message='All cuts were confirmed complete before the fault; cycle complete.'
                 d.changed.emit();return True

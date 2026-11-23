@@ -52,7 +52,7 @@ def run_case(exe, lengths, needs_cleanup):
             for key,value in dict(main_near=2,main_far=3,front_offset=0,rear_extent=6,
                                   keepout=1,margin=.25,max_clear_push=160).items():
                 sup.fields[key].setValue(value)
-            sup.verified.setChecked(True); sup.automatic_clear.setChecked(True); assert sup.save()
+            assert sup.save()
             w.load_cut_list_lines([f'{length} test' for length in lengths])
             original=(list(w.cut_list),w.current_cut_index,w.sim_next_piece_index)
             def acquire():

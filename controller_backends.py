@@ -1,12 +1,10 @@
-"""Controller command translation for Mega, Teensy validation, and grblHAL modes."""
+"""Controller command translation for Teensy Carriage and offline Simulator (Legacy Mega)."""
 
 from dataclasses import dataclass
 import math
 
 
 LEGACY_MEGA = "legacy_mega"
-TEENSY_HARDWARE_TEST = "teensy_hardware_test"
-TEENSY_GRBLHAL = "teensy_grblhal"
 TEENSY_CARRIAGE = "teensy_carriage"
 
 
@@ -28,7 +26,6 @@ class ControllerCapabilities:
     clamps: bool = False
     saw: bool = False
     saw_position_feedback: bool = False
-    actuator: bool = False
     current_monitoring: bool = False
 
     @property
@@ -38,8 +35,6 @@ class ControllerCapabilities:
 
 CONTROLLER_MODES = (
     ControllerMode(TEENSY_CARRIAGE, "Teensy Carriage"),
-    ControllerMode(TEENSY_HARDWARE_TEST, "Teensy Hardware Test"),
-    ControllerMode(TEENSY_GRBLHAL, "Teensy grblHAL"),
 )
 
 
@@ -96,16 +91,6 @@ class ControllerBackend:
     def saw_actuate(self):
         return []
 
-    def actuator_forward(self, enabled):
-        return []
-
-    def actuator_reverse(self, enabled):
-        return []
-
-    def actuator_direction(self, direction):
-        """Return an interlocked command sequence for off/forward/reverse."""
-        return []
-
     def stop_motion(self):
         return []
 
@@ -114,6 +99,8 @@ class ControllerBackend:
 
 
 class LegacyMegaBackend(ControllerBackend):
+    """Internal backend retained solely for the offline VirtualController simulator."""
+
     key = LEGACY_MEGA
     label = "Legacy Arduino Mega"
     capabilities = ControllerCapabilities(
@@ -182,7 +169,11 @@ class LegacyMegaBackend(ControllerBackend):
 class TeensyCarriageBackend(ControllerBackend):
     key = TEENSY_CARRIAGE
     label = "Teensy Carriage"
-    capabilities = ControllerCapabilities(carriage_jog_ready=True, motion_commands=True, homing_commands=True)
+    capabilities = ControllerCapabilities(
+        carriage_jog_ready=True,
+        motion_commands=True,
+        homing_commands=True,
+    )
 
     def startup_commands(self):
         # Reads only. A connect never configures, arms or enables the driver.
@@ -194,7 +185,7 @@ class TeensyCarriageBackend(ControllerBackend):
         return [f"XMOVE {int(math.floor(target_inches*1000+0.5))}"]
 
     def profile_select(self, profile_index):
-        mapping = {0:2,1:1,2:3}
+        mapping = {0: 2, 1: 1, 2: 3}
         return [f"XPROFILE {mapping[profile_index]}"] if profile_index in mapping else []
 
     def home(self):
@@ -204,58 +195,8 @@ class TeensyCarriageBackend(ControllerBackend):
         return ["OFF"]
 
 
-class TeensyHardwareTestBackend(ControllerBackend):
-    key = TEENSY_HARDWARE_TEST
-    label = "Teensy Hardware Test"
-    # Live pneumatic outputs are deliberately unavailable to the full HMI.
-    # Commissioning is restricted to the separate Sensor Bench, which requires
-    # explicit arming, momentary controls, a keepalive, and firmware timeouts.
-    capabilities = ControllerCapabilities()
-
-    def startup_commands(self):
-        return ["PINMAP", "I2C", "STATUS"]
-
-    def stop_motion(self):
-        return ["OFF"]
-
-
-class TeensyGrblHalBackend(ControllerBackend):
-    key = TEENSY_GRBLHAL
-    label = "Teensy grblHAL"
-    capabilities = ControllerCapabilities(
-        homing_commands=True,
-        motion_commands=True,
-        # Prototype commands exist, but the UI remains locked until grblHAL
-        # acknowledgements, alarms, and status reports are parsed.
-        manual_motion_ready=False,
-        automatic_cycle_ready=False,
-    )
-
-    def startup_commands(self):
-        return ["$I", "$$", "$G", "?"]
-
-    def home(self):
-        return ["$H", "?"]
-
-    def move_absolute_inches(self, target_inches):
-        return ["G20 G90", f"G1 X{target_inches:.4f}", "?"]
-
-    def stop_motion(self):
-        return ["!"]
-
-    def saw_actuate(self):
-        return []
-
-
 def create_controller_backend(mode_key):
     if mode_key == LEGACY_MEGA:
-        # Retained only for the offline simulator and the archived baseline.
-        # It is not listed as a selectable live controller in the Teensy build.
+        # Retained only for the offline simulator; not selectable for live serial ports.
         return LegacyMegaBackend()
-    if mode_key == TEENSY_CARRIAGE:
-        return TeensyCarriageBackend()
-    if mode_key == TEENSY_HARDWARE_TEST:
-        return TeensyHardwareTestBackend()
-    if mode_key == TEENSY_GRBLHAL:
-        return TeensyGrblHalBackend()
-    return TeensyHardwareTestBackend()
+    return TeensyCarriageBackend()

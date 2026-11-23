@@ -287,7 +287,7 @@ class TeensyCarriagePanel(QWidget):
         self.truing_button.clicked.connect(self.move_to_truing)
         edge_layout.addWidget(self.truing_button)
         edge_layout.addWidget(QLabel(
-            "Home, arm, and start with the edge sensor clear. Search moves A/toward saw at 40 pulses/s, "
+            "Home, arm, and start with the edge sensor clear. Search moves A/toward saw using the Gentle profile, "
             "then stops and disarms on detection. Inspect the proposed position and rearm for a separate move. "
             "Defaults are recovered geometry, awaiting physical acceptance. No clamp or saw action occurs."
         ))
@@ -557,6 +557,7 @@ class TeensyCarriagePanel(QWidget):
         elif message.kind == "BENCH_ERROR":
             self.log("Teensy rejected command: " + f.get("CODE", "UNKNOWN"))
             self.profile_pending = None
+            self.full_home_pending = None
             if self.pending:
                 self.stop()
         self.refresh()
@@ -756,7 +757,7 @@ class TeensyCarriagePanel(QWidget):
         if not self.connected:
             text = "Disconnected - select Teensy Carriage and connect"
         elif not self.compatible:
-            text = "Waiting for compatible firmware 0.22.0 and machine pin map"
+            text = "Waiting for compatible Teensy firmware and machine pin map"
         elif not link:
             text = "Waiting for fresh controller and safety feedback"
         elif self.local_fault or fault != "NONE":
@@ -766,7 +767,7 @@ class TeensyCarriagePanel(QWidget):
         elif self.homing:
             text = "HOMING: " + self.x.get("HOME_STATE", "")
         elif self.edge_searching:
-            text = "FINDING BOARD EDGE - toward saw at 40 pulses/s"
+            text = "FINDING BOARD EDGE - toward saw (Gentle profile)"
         elif busy:
             text = "MOVING" if remaining else "Waiting for move acknowledgment"
         elif self.stopping:

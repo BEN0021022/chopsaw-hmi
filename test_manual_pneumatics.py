@@ -105,7 +105,7 @@ def run():
         assert panel.request('cycle')
         w.toggle_connection(); pump(.5)
         assert not panel.phase and not panel.cycle_button.isEnabled()
-        assert 'Connect matching' in panel.status.text()
+        assert 'Connect compatible' in panel.status.text()
         w.close(); app.processEvents()
     print('Manual pneumatics: native lockout, independent controls, retained clamp, motion exclusion, timing and cancellation OK')
 

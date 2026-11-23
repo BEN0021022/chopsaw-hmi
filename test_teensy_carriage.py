@@ -228,7 +228,7 @@ def run():
         assert not p.armed and not p.go_button.isEnabled()
         packet(p, FAULT="DRIVER_ALARM", POS_KNOWN=0)
         assert not p.move_to(135) and not p.go_button.isEnabled()
-        assert "Stage 4" in w.migration_checklist.toPlainText()
+        assert not hasattr(w, "migration_tab")
 
         ready(p)
         p.consent.setChecked(True)
@@ -318,11 +318,10 @@ def run():
         w.tabs.setCurrentWidget(w.legacy_tab)
         assert w.position_label.text() == 'UNKNOWN'
         assert w.keypad.display.isReadOnly() is False
-        assert w.manual_teensy_setup.isHidden() and w.manual_teensy_actions.isHidden() and w.enable_chk.isHidden()
+        assert not hasattr(w, 'manual_teensy_setup') and not hasattr(w, 'manual_teensy_actions') and w.enable_chk.isHidden()
         # Home and keypad now prepare their controller mode automatically.
         # That acknowledged multi-step flow is exercised in test_direct_controls.
         p.home_search.setValue(2)
-        assert w.manual_home_search.value() == 2
 
         # Old hidden enable-checkbox gestures are retired. Direct mode handoff,
         # Home, Enter, Stop and actuator exclusion use the actual-sketch harness.
@@ -393,7 +392,7 @@ def run():
         assert len(w.cut_list)==3 and len(wire.writes)==before
         # Only partial carriage telemetry is provided here: the new action
         # broker requires pneumatic feedback too and must not infer readiness.
-        assert w.auto_teensy_setup.isHidden()
+        assert not hasattr(w, 'auto_teensy_setup')
         assert not w.qjog_left_01.isEnabled() and not w.load_button.isEnabled()
         assert not w.auto_jog(3) and not w.load_position()
         packet(p,CONFIGURED=1,POS_KNOWN=1,HOME_OFFSET=-200,HOME_STATE='DONE')

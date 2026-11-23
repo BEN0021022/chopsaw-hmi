@@ -79,7 +79,7 @@ def run(exe,legacy=False,old_return=False):
     if legacy:
      sup.second_enabled.setChecked(True);assert not sup.save()
      sup.fields['outfeed_near'].setValue(11.5);sup.fields['outfeed_far'].setValue(12.5);assert sup.save()
-     d.consent.setChecked(True);assert not d.configure()
+     d.set_authorized(True);assert not d.configure()
      assert not any(c.startswith(('DSET','DCLAMP2','DCUTM')) for c in wire.writes)
      w.close();wire.close();print('Second clamp legacy capability lockout passed');return
     w.homing_speed.setValue(1200);w.homing_accel.setValue(1500);w.save_homing_settings()

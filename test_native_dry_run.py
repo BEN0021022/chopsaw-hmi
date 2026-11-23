@@ -104,7 +104,6 @@ def run(exe):
             for key,value in dict(main_near=9,main_far=10,front_offset=0,rear_extent=6,
                                   keepout=1,margin=.25,max_clear_push=162).items():
                 sup.fields[key].setValue(value)
-            sup.verified.setChecked(True); sup.automatic_clear.setChecked(True)
             assert sup.save()
             assert sup.register_stock(), 'Explicit operator material registration, no actuator write'
             for key in TIMING_KEYS:
@@ -112,7 +111,7 @@ def run(exe):
             # Observed phase coverage needs a spin-up longer than the 100ms
             # host sample interval; do not depend on Home's clock alignment.
             w.cylinder_timing.fields['trigger.spinup'].setValue(300)
-            d.consent.setChecked(True)
+            d.set_authorized(True)
             assert d.configure(); flush(); tick()
             assert not d.pending and d.settings_match()
             assert d.data['HASH']==str(timing_hash(d.loaded))
@@ -154,7 +153,7 @@ def run(exe):
             w.clear_at_list_end.setChecked(True) # explicit end-of-list clearing mode
             w.board_sensor_location_input.setValue(10.5)
             records(wire.exchange('@SENSOR_ZONE 10.5'))
-            sup.verified.setChecked(True); assert sup.save()  # explicitly verify changed test-fixture truing datum
+            assert sup.save()  # explicitly verify changed test-fixture truing datum
             before=(list(w.cut_list),w.current_cut_index,w.sim_next_piece_index)
             before_trigger_commands=sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)
             assert d.can_begin_auto(), (d.message,p.x)
@@ -274,7 +273,7 @@ def run(exe):
             assert d.data['STATE']=='OFF' and not d.can_start()
             assert d.data['TRIGGER']=='0' and d.data['LOCK']=='1'
             d.acknowledge(); flush(); tick()
-            assert not d.local_fault and not d.consent.isChecked()
+            assert not d.local_fault and not d.authorized
             # Contradictory outputs/phase must be rejected before enabling a control.
             corrupt=dict(d.data,STATE='OFF',CLAMP='1')
             d.handle('BENCH_DRY,'+','.join(f'{k}:{v}' for k,v in corrupt.items()))

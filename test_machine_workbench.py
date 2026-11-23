@@ -48,7 +48,6 @@ def run():
             assert bench.current_context.position is None
             assert bench.current_decision.code == 'STATE_UNKNOWN'
             assert bench.lookahead.rowCount() == 0
-            assert not bench.checks
             assert all('checklist' not in bench.pages.tabText(i).lower() for i in range(bench.pages.count()))
             path = Path(folder)/'report.json'
             assert bench.export_report(path=path)
@@ -56,8 +55,6 @@ def run():
             assert report['checklist']=={}
             assert not report['geometry']['verified']
             assert report['preview_source'] == 'live readback'
-            bench.reset_checklist()
-            assert not bench.checks
             assert (coordinator.geometry, coordinator.material, coordinator.paused, list(coordinator.events)) == before
             assert {key:w.settings.value(key) for key in w.settings.allKeys()} == settings
             assert bench.export_report(path=Path(folder)/'missing'/'report.json') is False

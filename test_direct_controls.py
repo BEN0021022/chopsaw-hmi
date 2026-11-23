@@ -50,8 +50,8 @@ def run(exe):
                                   keepout=1,margin=.5,max_clear_push=160).items():
                 sup.fields[key].setValue(value)
             assert sup.save() # numeric data only, no verification checkbox
-            assert sup.verified.isHidden() and sup.automatic_clear.isHidden()
-            assert d.enable_manual_button.isHidden() and w.auto_teensy_setup.isHidden()
+            assert not hasattr(sup, 'verified') and not hasattr(sup, 'automatic_clear')
+            assert not hasattr(d, 'enable_manual_button') and not hasattr(w, 'auto_teensy_setup')
             w.tabs.setCurrentWidget(w.legacy_tab);w.resize(1280,900);w.show();w.activateWindow();app.processEvents()
             # Type before Home, but Enter must not queue or start a move.
             assert w.keypad.isEnabled() and not w.keypad.enter_button.isEnabled()

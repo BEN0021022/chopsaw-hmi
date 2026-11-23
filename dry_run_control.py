@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from dataclasses import asdict, replace
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QCheckBox, QPushButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from sensor_bench.protocol import parse_line
 from simulator import VirtualController
 from supervision_ui import SupervisionAdapter
@@ -62,6 +62,7 @@ class NativeDryRun(QObject):
         self.auto_start_at = 0
         self.trigger_held = False
         self.last_trigger_hold = 0
+        self.authorized = False
         self.progress_index=None; self.progress_batch=None
         self.message = 'Connect compatible Teensy firmware. Second clamp requires 0.24+.'
         self.timer = QTimer(self); self.timer.setInterval(100); self.timer.timeout.connect(self.tick); self.timer.start()
@@ -69,31 +70,18 @@ class NativeDryRun(QObject):
     def controls(self):
         self.widget = QWidget()
         layout = QVBoxLayout(self.widget); layout.setContentsMargins(0,0,0,0)
-        self.consent = QCheckBox('Unloaded test: no stock; saw unplugged; suppression and air checks complete')
-        self.consent.toggled.connect(self.consent_changed)
-        # Auto retains its separate preparation control. Manual uses one explicit
-        # session-enable gesture; hidden objects preserve shared state/bindings.
-        self.consent.setParent(self.widget); self.consent.hide()
-        self.configure_button = QPushButton('Load dry-run timings')
-        self.configure_button.setEnabled(False)
-        self.configure_button.clicked.connect(self.configure)
-        self.arm_button = QPushButton('Arm unloaded pneumatics')
-        self.arm_button.setEnabled(False)
-        self.arm_button.clicked.connect(lambda: self.request('arm'))
-        self.configure_button.setParent(self.widget); self.configure_button.hide()
-        self.arm_button.setParent(self.widget); self.arm_button.hide()
-        self.trigger_consent = QCheckBox('Trigger test ONLY: saw mains physically unplugged; no stock; keep saw UP')
-        self.trigger_consent.toggled.connect(self.trigger_consent_changed)
-        self.trigger_consent.setParent(self.widget); self.trigger_consent.hide()
-        note=QLabel('SAW MAINS UNPLUGGED — integrated timing dry run only.')
+        note=QLabel('Controller-sequenced pneumatics — verify guard, stock and air before operating.')
         note.setWordWrap(True); layout.addWidget(note)
-        self.enable_manual_button=QPushButton('Enable unpowered manual controls')
-        self.enable_manual_button.clicked.connect(self.enable_manual)
-        self.enable_manual_button.setParent(self.widget); self.enable_manual_button.hide()
-        self.label = QLabel(self.message); self.label.setWordWrap(True)
-        self.label.setStyleSheet('color:#fbbf24;font-size:13px;')
-        self.label.setParent(self.widget); self.label.hide()  # Manual status above already displays this message.
         return self.widget
+
+    def set_authorized(self, enabled):
+        enabled = bool(enabled)
+        if self.authorized == enabled:
+            return
+        self.authorized = enabled
+        if not enabled and self.native() and not self.intervention.recovering() and (self.data.get('ARMED')=='1' or self.sequence):
+            self.stop('Controller authorization cleared')
+        self.changed.emit()
 
     def native(self):
         return self.owner.is_connected() and not isinstance(self.owner.ser,VirtualController) and self.owner.carriage_tab.connected
@@ -110,15 +98,14 @@ class NativeDryRun(QObject):
             self.manual_start=None; self.auto_start=None; self.trigger_held=False
             self.intervention.clear()
             self.supervision.reset_session()
-            if hasattr(self,'consent'): self.consent.setChecked(False)
-            if hasattr(self,'trigger_consent'): self.trigger_consent.setChecked(False)
+            self.authorized = False
 
     def fresh(self):
         return self.native() and self.compatible and self.received is not None and time.monotonic()-self.received <= 2
 
     def safe_link(self, require_consent=True):
         p=self.owner.carriage_tab
-        return (self.fresh() and (not require_consent or self.consent.isChecked()) and not self.local_fault and p.ready_link()
+        return (self.fresh() and (not require_consent or self.authorized) and not self.local_fault and p.ready_link()
                 and p.fresh('INPUTS') and not p.local_fault and p.x.get('FAULT')=='NONE'
                 and p.safety.get('FAULT')=='NONE' and p.safety.get('DOOR_CLOSED')=='1'
                 and p.inputs.get('FENCE_DOOR')=='0' and p.x.get('ALARM_RAW')=='1'
@@ -151,16 +138,6 @@ class NativeDryRun(QObject):
         return self.native() and (bool(getattr(getattr(self.owner,'direct_controls',None),'intent',None)) or bool(self.manual_start) or bool(self.auto_start) or self.awaiting_stop or self.sequence is not None or bool(self.local_fault) or
                                  self.data.get('ARMED')=='1' or self.data.get('STATE','OFF') not in ('OFF','FAULT'))
 
-    def consent_changed(self, checked):
-        if not checked and self.native() and not self.intervention.recovering() and (self.data.get('ARMED')=='1' or self.sequence):
-            self.stop('Dry-run consent removed')
-        self.changed.emit()
-
-    def trigger_consent_changed(self, checked):
-        if not checked and self.native() and self.compatible and not self.intervention.recovering():
-            self.request('unpress')
-        self.changed.emit()
-
     def can_enable_manual(self):
         p=self.owner.carriage_tab
         return (self.safe_link(False) and not self.pending and not self.manual_start and not self.auto_start and not self.sequence
@@ -171,8 +148,7 @@ class NativeDryRun(QObject):
     def enable_manual(self):
         if self.data.get('MANUAL')=='1': self.stop(); return True
         if not self.can_enable_manual(): return False
-        self.consent.setChecked(True)
-        self.trigger_consent.setChecked(True)
+        self.set_authorized(True)
         self.manual_start='config'
         if not self.configure():
             self.manual_start=None; return False
@@ -551,27 +527,15 @@ class NativeDryRun(QObject):
                 self.intervention.tick()
                 if self.sequence['stage'] not in ('PAUSING','PAUSED','FAULT_RECOVERY'):self.advance_sequence()
             finally: self.issuing_sequence=False
-        if hasattr(self,'label'):
-            self.label.setText(self.message)
-            self.configure_button.setEnabled(self.safe_link() and not self.pending and not self.owner.carriage_tab.armed and self.data.get('STATE')=='OFF')
-            self.arm_button.setEnabled(self.allowed(f'DARM {self.token}'))
-            self.enable_manual_button.setText('Disable manual controls / STOP' if self.data.get('MANUAL')=='1' else
-                                             'Enabling manual controls…' if self.manual_start else 'Enable unpowered manual controls')
-            self.enable_manual_button.setEnabled(self.can_enable_manual() or self.data.get('MANUAL')=='1')
-        if hasattr(self.owner,'auto_dry_run'):
-            self.owner.auto_dry_status.setText(self.message)
-            self.owner.auto_dry_run.setEnabled(self.can_start())
-            self.owner.auto_dry_configure.setEnabled(self.configure_button.isEnabled() and not self.sequence)
-            self.owner.auto_dry_stop.setEnabled(self.native() and self.compatible)
-            if self.native(): self.owner.start_cycle_button.setEnabled(self.can_begin_auto() or self.owner.direct_controls.can_motion('auto'))
+        if self.native() and hasattr(self.owner, 'start_cycle_button'):
+            self.owner.start_cycle_button.setEnabled(self.can_begin_auto() or self.owner.direct_controls.can_motion('auto'))
         self.owner.direct_controls.tick()
         self.capture_diagnostics()
         self.changed.emit()
 
     def acknowledge(self):
         if self.native() and self.data.get('CLAMP')=='0' and self.owner.carriage_tab.ready_link() and self.owner.carriage_tab.safety.get('RESET_READY')=='1':
-            self.owner.carriage_tab.acknowledge(); self.local_fault=''; self.consent.setChecked(False)
-            self.trigger_consent.setChecked(False)
+            self.owner.carriage_tab.acknowledge(); self.local_fault=''; self.authorized = False
 
     def cancel_cycle(self):
         self.stop(discard_recovery=True);self.message='Cycle canceled; cut list retained. Start begins a new batch.';self.changed.emit()
@@ -631,7 +595,7 @@ class NativeDryRun(QObject):
 
     def begin_auto(self):
         if not self.can_begin_auto(): return False
-        self.consent.setChecked(True); self.owner.carriage_tab.consent.setChecked(True)
+        self.set_authorized(True); self.owner.carriage_tab.consent.setChecked(True)
         self.auto_start='off'; self.auto_start_at=time.monotonic()
         self.issuing_sequence=True
         try: sent=self.owner.send_command('DOFF')

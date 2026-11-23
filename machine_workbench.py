@@ -6,7 +6,7 @@ from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QDoubleSpinBox,
     QCheckBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
-    QHeaderView, QScrollArea, QFileDialog, QTextBrowser, QLineEdit,
+    QHeaderView, QScrollArea, QFileDialog, QTextBrowser,
 )
 from automation_supervision import Material, Span, assess_main_clamp
 from machine_preview import example_scenarios, evaluate, preview_cut_list
@@ -170,7 +170,6 @@ class MachineWorkbench(QWidget):
         self.lookahead.setMinimumHeight(135); layout.addWidget(self.lookahead, 1)
         self.pages.addTab(self.scrolled(layout_page), 'Layout / scenarios')
         self.build_diagnostics()
-        self.build_report_fields()
         self.source.currentIndexChanged.connect(self.refresh)
         self.scenario.currentIndexChanged.connect(self.load_scenario)
         self.position.valueChanged.connect(self.refresh)
@@ -319,16 +318,6 @@ class MachineWorkbench(QWidget):
         event_bar = self.event_log.verticalScrollBar()
         event_bar.setValue(event_bar.maximum() if self.follow_trace.isChecked() else event_scroll)
 
-    def build_report_fields(self):
-        # Legacy report fields stay readable; no operating checklist page.
-        self.checks = {}
-        self.session_notes=QLineEdit(self);self.session_notes.hide()
-        self.checklist_export_feedback=QLabel(self);self.checklist_export_feedback.hide()
-
-    def reset_checklist(self):
-        for box in self.checks.values(): box.setChecked(False)
-        self.session_notes.clear()
-
     def export_report(self, *_args, path=None):
         if path is None:
             path, _ = QFileDialog.getSaveFileName(self, 'Save commissioning report',
@@ -342,14 +331,14 @@ class MachineWorkbench(QWidget):
                 'configured_timings_ms': self.owner.cylinder_timing.snapshot(),
                 'requested_timing_values_ms': self.owner.dry_run.loaded,
                 'cut_lengths_in': [float(length) for _, length, _ in self.owner.cut_list],
-                'checklist': {key: box.isChecked() for key, box in self.checks.items()},
-                'session_notes': self.session_notes.text(),
+                'checklist': {},
+                'session_notes': '',
                 'preview_source': 'offline example' if self.source.currentIndex() else 'live readback',
                 'preview': {'context': asdict(self.current_context), 'decision': asdict(self.current_decision)}
                            if self.current_context else None,
             })
         except (OSError, ValueError, TypeError) as error:
             message = 'Report could not be saved: '+str(error)
-            self.export_feedback.setText(message); self.checklist_export_feedback.setText(message); return False
+            self.export_feedback.setText(message); return False
         message = 'Report saved: '+str(path)
-        self.export_feedback.setText(message); self.checklist_export_feedback.setText(message); return True
+        self.export_feedback.setText(message); return True

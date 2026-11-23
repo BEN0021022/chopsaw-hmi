@@ -9,7 +9,7 @@ from PyQt6.QtCore import QSettings as RealQSettings
 from PyQt6.QtWidgets import QApplication
 
 import main
-from controller_backends import TEENSY_GRBLHAL, TEENSY_HARDWARE_TEST, create_controller_backend
+from controller_backends import TEENSY_CARRIAGE, create_controller_backend
 
 
 class FakeSerial:
@@ -38,26 +38,20 @@ def main_test():
         window.ser = FakeSerial()
         window.connection_controls_enabled = True
 
-        window.controller = create_controller_backend(TEENSY_GRBLHAL)
-        window.selected_controller_mode = TEENSY_GRBLHAL
+        window.controller = create_controller_backend(TEENSY_CARRIAGE)
+        window.selected_controller_mode = TEENSY_CARRIAGE
         window.apply_controller_capabilities()
-        assert not window.legacy_tab.isEnabled()
-        assert not window.auto_tab.isEnabled()
         assert window.full_auto_tab.isEnabled()  # Read-only layout/scenarios stay accessible.
         assert window.full_auto_legacy.isEnabled()  # View remains readable; actuation is gated per button.
         assert not window.fa_start_cycle_button.isEnabled()
         assert not window.controller_combo.isEnabled()
 
+        writes_before = list(window.ser.writes)
         window.clamp_left_engaged = False
         assert window.cylinder_extend(1) is False
         assert not window.clamp_left_engaged
         assert window._actuate_saw() is False
         assert not window.clamps_engaged_cutting
-
-        window.controller = create_controller_backend(TEENSY_HARDWARE_TEST)
-        writes_before = list(window.ser.writes)
-        assert not window.set_actuator_direction("forward")
-        assert not window.cylinder_extend(1)
         assert window.ser.writes == writes_before
 
         window.close()

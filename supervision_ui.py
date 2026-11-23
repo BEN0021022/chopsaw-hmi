@@ -5,6 +5,7 @@ matching controller capability and acknowledged enable configuration.
 """
 import json
 import math
+import time
 from dataclasses import replace
 from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QFormLayout, QLabel, QDoubleSpinBox, QCheckBox, QPushButton
 from automation_supervision import AutomationCoordinator, Geometry, Clamp, Span, Context, Outcome
@@ -77,10 +78,6 @@ class SupervisionAdapter:
         layout.addLayout(second_form)
         self.second_note=QLabel('Second clamp is disabled until enabled and dimensions saved. ON must clamp; OFF must release. Timers report commanded state, not verified grip.')
         self.second_note.setWordWrap(True);layout.addWidget(self.second_note)
-        self.verified=QCheckBox('Measured footprints, pusher envelope, blade keepout and native truing datum verified for unplugged tests')
-        self.verified.setChecked(g.verified); self.verified.setParent(group); self.verified.hide()
-        self.automatic_clear=QCheckBox('Enable bounded automatic detector-zone clearing after its dry-run acceptance')
-        self.automatic_clear.setChecked(g.automatic_clearance); self.automatic_clear.setParent(group); self.automatic_clear.hide()
         save=QPushButton('Save machine dimensions'); save.clicked.connect(self.save); layout.addWidget(save)
         self.feedback=QLabel('Dimensions loaded.' if g.verified else 'Enter the physical machine dimensions once.')
         self.feedback.setWordWrap(True); layout.addWidget(self.feedback)
@@ -150,7 +147,6 @@ class SupervisionAdapter:
         event=(self.last_decision.code,self.last_decision.reason)
         if event!=self.last_event:
             self.owner.log.append('SUPERVISION: '+': '.join(event)); self.last_event=event
-            import time
             self.owner.dry_run.diagnostics.note(self.last_decision.code, self.last_decision.reason, time.monotonic(), {
                 'geometry_revision': self.last_decision.config_revision,
                 'material_revision': self.last_decision.material_revision,

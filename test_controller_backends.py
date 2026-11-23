@@ -1,20 +1,18 @@
-"""Command-contract tests for every controller backend (no hardware required)."""
+"""Command-contract tests for active controller backends (no hardware required)."""
 
 from controller_backends import (
     CONTROLLER_MODES,
     LEGACY_MEGA,
-    TEENSY_GRBLHAL,
     TEENSY_CARRIAGE,
-    TEENSY_HARDWARE_TEST,
     create_controller_backend,
 )
 
 
-def test_legacy_mega_is_archived_not_selectable():
+def test_legacy_mega_is_simulator_only_not_selectable():
     assert LEGACY_MEGA not in {mode.key for mode in CONTROLLER_MODES}
+    assert [mode.key for mode in CONTROLLER_MODES] == [TEENSY_CARRIAGE]
     backend = create_controller_backend(LEGACY_MEGA)
-    # The implementation remains only to support the offline simulator and the
-    # archived baseline; the live Teensy UI cannot select it.
+    # Retained solely for the offline VirtualController simulator.
     assert backend.capabilities.manual_motion_ready
     assert backend.capabilities.automatic_cycle_ready
     assert backend.capabilities.automatic_cutting_ready
@@ -24,33 +22,9 @@ def test_legacy_mega_is_archived_not_selectable():
     assert backend.truing_cycle(10.8) == ["J10.8000"]
 
 
-def test_teensy_test_contract_is_diagnostics_only():
-    backend = create_controller_backend(TEENSY_HARDWARE_TEST)
-    assert not backend.capabilities.manual_motion_ready
-    assert not backend.capabilities.automatic_cycle_ready
-    assert not backend.capabilities.clamps
-    assert not backend.capabilities.actuator
-    assert backend.startup_commands() == ["PINMAP", "I2C", "STATUS"]
-    assert backend.clamp_extend(1) == []
-    assert backend.clamp_retract(1) == []
-    assert backend.actuator_direction("forward") == []
-    assert backend.actuator_direction("invalid") == []
-
-
-def test_grblhal_is_motion_prototype_only():
-    backend = create_controller_backend(TEENSY_GRBLHAL)
-    assert backend.capabilities.homing_commands
-    assert backend.capabilities.motion_commands
-    assert not backend.capabilities.manual_motion_ready
-    assert not backend.capabilities.automatic_cycle_ready
-    assert backend.home() == ["$H", "?"]
-    assert backend.move_absolute_inches(12.5) == ["G20 G90", "G1 X12.5000", "?"]
-    assert backend.clamp_extend(1) == []
-    assert backend.saw_actuate() == []
-
-
 def test_carriage_contract_has_no_legacy_or_automatic_fallback():
     backend = create_controller_backend(TEENSY_CARRIAGE)
+    assert create_controller_backend("unknown_mode").key == TEENSY_CARRIAGE
     assert backend.capabilities.carriage_jog_ready
     assert not backend.capabilities.manual_motion_ready
     assert not backend.capabilities.automatic_cycle_ready
@@ -67,9 +41,7 @@ def test_carriage_contract_has_no_legacy_or_automatic_fallback():
 
 def main():
     tests = [
-        test_legacy_mega_is_archived_not_selectable,
-        test_teensy_test_contract_is_diagnostics_only,
-        test_grblhal_is_motion_prototype_only,
+        test_legacy_mega_is_simulator_only_not_selectable,
         test_carriage_contract_has_no_legacy_or_automatic_fallback,
     ]
     for test in tests:

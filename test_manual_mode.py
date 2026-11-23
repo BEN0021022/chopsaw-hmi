@@ -50,7 +50,7 @@ def make_window(auto_clamp):
     for sb in (w.norm_accel, w.gentle_accel, w.fast_accel):
         sb.setValue(50000)
     w.cylinder_timing.fields['board.settle'].setValue(20)
-    for device in ('main','outfeed','fence'):
+    for device in ('main','outfeed'):
         w.cylinder_timing.fields[f'{device}.engage_settle'].setValue(20)
     w.home_motor()
     pump_until(lambda: w.homed_label.text() == "HOMED", 15, "homing")

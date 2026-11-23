@@ -2,6 +2,7 @@
 
 import sys
 import os
+from collections import deque
 import serial
 import serial.tools.list_ports
 import time
@@ -45,11 +46,23 @@ from controller_backends import (
     CONTROLLER_MODES,
     LEGACY_MEGA,
     TEENSY_CARRIAGE,
-    TEENSY_HARDWARE_TEST,
     create_controller_backend,
 )
 import updater
 from teensy_carriage import TeensyCarriagePanel
+
+
+class _MemoryLog:
+    """Lightweight ring buffer replacing the hidden QTextBrowser log."""
+
+    def __init__(self, maxlen=500):
+        self._lines = deque(maxlen=maxlen)
+
+    def append(self, text):
+        self._lines.append(str(text))
+
+    def toPlainText(self):
+        return "\n".join(self._lines)
 
 
 class _UpdateChecker(QThread):
@@ -161,7 +174,6 @@ class MinimalHMI(QMainWindow):
         self.clamp_left_engaged = False
         self.clamp_right_engaged = False
         self.clamps_engaged_cutting = False   # True while saw is down, awaiting sensor return
-        self.actuator_direction = "off"
         # Auto clamp/saw sequencing. OFF = manual mode: the HMI sends no cylinder
         # (C1-3 / D1-3) or saw (V1) commands, so it stays compatible with firmware
         # that has no cylinder support (e.g. Closed-Loop AUTO V2.5, where C1 would
@@ -312,11 +324,11 @@ class MinimalHMI(QMainWindow):
             self.controller_combo.addItem(mode.label, mode.key)
         controller_index = self.controller_combo.findData(self.selected_controller_mode)
         if controller_index < 0:
-            controller_index = self.controller_combo.findData(TEENSY_HARDWARE_TEST)
+            controller_index = self.controller_combo.findData(TEENSY_CARRIAGE)
         if controller_index >= 0:
             self.controller_combo.setCurrentIndex(controller_index)
             self.selected_controller_mode = (
-                self.controller_combo.currentData() or TEENSY_HARDWARE_TEST
+                self.controller_combo.currentData() or TEENSY_CARRIAGE
             )
             self.controller = create_controller_backend(self.selected_controller_mode)
         self.controller_combo.currentIndexChanged.connect(self.on_controller_mode_changed)
@@ -391,13 +403,8 @@ class MinimalHMI(QMainWindow):
         self.tabs.addTab(self.full_auto_tab, "FULL AUTO")
         self.tabs.addTab(self.speed_tab, "SETTINGS")
         self.tabs.addTab(self.preset_tab, "CUT LISTS")
-        self.migration_tab = self.create_migration_tab()
-        self.tabs.addTab(self.migration_tab, "MIGRATION")
-        self.tabs.setTabVisible(self.tabs.indexOf(self.migration_tab),False)
 
-        # Log (hidden — keep object so log.append() calls don't crash)
-        self.log = QTextBrowser()
-        self.log.document().setMaximumBlockCount(500)
+        self.log = _MemoryLog(maxlen=500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
         self.dry_run.changed.connect(self.manual_pneumatics.refresh)
         self.dry_run.changed.connect(self.refresh_teensy_tabs)
@@ -415,29 +422,6 @@ class MinimalHMI(QMainWindow):
         warning = self.cut_history.warning
         self.cut_history_warning.setText(warning)
         self.cut_history_warning.setVisible(bool(warning))
-
-    def create_migration_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.addWidget(QLabel("Migration checklist - software completion and physical acceptance tracked separately"))
-        refresh = QPushButton("Refresh checklist")
-        self.migration_checklist = QTextBrowser()
-        self.migration_checklist.setOpenLinks(False)
-        self.migration_checklist.setStyleSheet("QTextBrowser { font-family:'Segoe UI'; font-size:15px; padding:12px; }")
-        refresh.clicked.connect(self.refresh_migration_checklist)
-        layout.addWidget(refresh)
-        layout.addWidget(self.migration_checklist, 1)
-        self.refresh_migration_checklist()
-        return tab
-
-    def refresh_migration_checklist(self):
-        root = getattr(sys, "_MEIPASS", get_app_dir())
-        path = os.path.join(root, "TEENSY_APP_MIGRATION_CHECKLIST.md")
-        try:
-            with open(path, encoding="utf-8") as stream:
-                self.migration_checklist.setMarkdown(stream.read())
-        except OSError as error:
-            self.migration_checklist.setPlainText(f"Checklist unavailable: {error}")
 
     def create_legacy_tab(self):
         w = QWidget(); content = QHBoxLayout(w)
@@ -460,34 +444,6 @@ class MinimalHMI(QMainWindow):
         left.addWidget(dash)
 
         ctrl = QWidget(); v = QVBoxLayout(ctrl); v.setContentsMargins(0,0,0,0)
-        self.manual_teensy_setup = QGroupBox("Teensy preparation - shared with CARRIAGE")
-        prep = QVBoxLayout(self.manual_teensy_setup)
-        self.manual_teensy_status = QLabel()
-        self.manual_teensy_status.setWordWrap(True)
-        prep.addWidget(self.manual_teensy_status)
-        isolation_note=QLabel("Unloaded test only: saw unplugged, blade trigger locked OFF; driver and carriage clearance checked.")
-        isolation_note.setWordWrap(True); prep.addWidget(isolation_note)
-        self.manual_isolation = QCheckBox("Unloaded / unplugged and driver checks confirmed")
-        self.manual_isolation.toggled.connect(lambda checked: self.carriage_tab.consent.setChecked(checked))
-        prep.addWidget(self.manual_isolation)
-        row = QHBoxLayout()
-        self.manual_configure = QPushButton("Confirm driver setup")
-        self.manual_configure.clicked.connect(lambda: self.send_command("XCONFIG 0 1"))
-        self.manual_arm = QPushButton("ARM MANUAL CONTROL")
-        self.manual_arm.clicked.connect(lambda: self.carriage_tab.toggle_arm())
-        row.addWidget(self.manual_configure); row.addWidget(self.manual_arm)
-        prep.addLayout(row)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Home search limit (in):"))
-        self.manual_home_search = QDoubleSpinBox()
-        self.manual_home_search.setRange(0.25,162); self.manual_home_search.setDecimals(2); self.manual_home_search.setValue(2)
-        self.manual_home_search.valueChanged.connect(lambda value: self.carriage_tab.home_search.setValue(value))
-        row.addWidget(self.manual_home_search)
-        prep.addLayout(row)
-        home_hint=QLabel("HOME runs while disarmed. Set the maximum search distance before starting.")
-        home_hint.setWordWrap(True); prep.addWidget(home_hint)
-        v.addWidget(self.manual_teensy_setup)
-        self.manual_teensy_setup.hide()
         self.enable_chk = QCheckBox("Motor Power Enabled")
         self.enable_chk.toggled.connect(self.toggle_motor_power)
         v.addWidget(self.enable_chk)
@@ -495,18 +451,6 @@ class MinimalHMI(QMainWindow):
         self.manual_home_button = QPushButton("Home")
         self.manual_home_button.clicked.connect(self.home_motor)
         v.addWidget(self.manual_home_button)
-        self.manual_teensy_actions = QWidget()
-        actions = QHBoxLayout(self.manual_teensy_actions); actions.setContentsMargins(0,0,0,0)
-        self.manual_stop = QPushButton("STOP / DISARM")
-        self.manual_stop.setStyleSheet("background:#b91c1c; color:white; font-weight:bold")
-        self.manual_stop.clicked.connect(lambda: self.carriage_tab.stop())
-        self.manual_reset = QPushButton("Acknowledge fault")
-        self.manual_reset.clicked.connect(lambda: self.dry_run.acknowledge())
-        self.manual_release = QPushButton("Release motor")
-        self.manual_release.clicked.connect(lambda: self.carriage_tab.stop("XDISABLE"))
-        for button in (self.manual_stop,self.manual_reset,self.manual_release): actions.addWidget(button)
-        v.addWidget(self.manual_teensy_actions)
-        self.manual_teensy_actions.hide()
 
         ctrl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         left.addWidget(ctrl)
@@ -694,25 +638,6 @@ class MinimalHMI(QMainWindow):
         main_layout.addWidget(self.current_settings_panel)
 
         left_col.addWidget(current_group)
-
-        self.auto_teensy_setup = QGroupBox("Prepare carriage")
-        prep=QVBoxLayout(self.auto_teensy_setup)
-        self.auto_isolation=QCheckBox("Unloaded / unplugged and driver checks confirmed")
-        self.auto_isolation.toggled.connect(lambda checked: self.carriage_tab.consent.setChecked(checked))
-        prep.addWidget(self.auto_isolation)
-        hint=QLabel("Saw mains unplugged. Home first; Start Auto loads timings and runs the combined sequence.")
-        hint.setWordWrap(True); prep.addWidget(hint)
-        row=QHBoxLayout()
-        self.auto_configure=QPushButton("Setup")
-        self.auto_configure.setToolTip("Confirm the verified driver setup")
-        self.auto_configure.clicked.connect(lambda: self.send_command("XCONFIG 0 1"))
-        self.auto_home=QPushButton("HOME")
-        self.auto_home.clicked.connect(self.home_motor)
-        row.addWidget(self.auto_configure); row.addWidget(self.auto_home)
-        self.auto_arm=QPushButton("ARM CARRIAGE")
-        self.auto_arm.clicked.connect(lambda: self.carriage_tab.toggle_arm())
-        row.addWidget(self.auto_arm); prep.addLayout(row)
-        left_col.addWidget(self.auto_teensy_setup)
 
         # Jog controls (AUTO)
         jog = QGroupBox("Jog"); jg = QVBoxLayout(jog)
@@ -995,24 +920,6 @@ class MinimalHMI(QMainWindow):
 
         sv.addWidget(self.auto_status_label)
         right_col.addWidget(status_group)
-        self.auto_dry_group = QGroupBox('Unloaded cut-list test')
-        dry_layout = QVBoxLayout(self.auto_dry_group)
-        self.auto_dry_consent = QCheckBox('Unloaded / unplugged; air checks confirmed')
-        self.auto_dry_consent.toggled.connect(self.dry_run.consent.setChecked)
-        self.dry_run.consent.toggled.connect(self.auto_dry_consent.setChecked)
-        dry_layout.addWidget(self.auto_dry_consent)
-        dry_hint=QLabel('Blade trigger locked OFF. Home first. Trip and hold the board detector until truing starts. Cut-list progress is preserved.')
-        dry_hint.setWordWrap(True); dry_layout.addWidget(dry_hint)
-        self.auto_dry_configure=QPushButton('Load dry-run timings')
-        self.auto_dry_configure.clicked.connect(self.dry_run.configure)
-        self.auto_dry_run=QPushButton('Run unloaded cut-list test')
-        self.auto_dry_run.clicked.connect(self.dry_run.start_sequence)
-        self.auto_dry_stop=QPushButton('Stop dry run / release clamp')
-        self.auto_dry_stop.clicked.connect(lambda: self.dry_run.stop())
-        self.auto_dry_status=QLabel('Requires matching 0.22.0 firmware.'); self.auto_dry_status.setWordWrap(True)
-        for widget in (self.auto_dry_configure,self.auto_dry_run,self.auto_dry_stop,self.auto_dry_status): dry_layout.addWidget(widget)
-        right_col.insertWidget(0, self.auto_dry_group)
-
 
         # --- MODIFIED: Removed setMaximumWidth(420) to allow widening ---
         right_wrap = QWidget(); right_wrap.setLayout(right_col)
@@ -1395,26 +1302,6 @@ class MinimalHMI(QMainWindow):
         self._update_cylinder_ui(cyl_id)
         return True
 
-    def set_actuator_direction(self, direction):
-        """Set off/forward/reverse through the backend's off-first interlock."""
-        direction = str(direction).strip().lower()
-        if direction not in {"off", "forward", "reverse"}:
-            self.log.append(f"ACTUATOR BLOCKED: invalid direction '{direction}'.")
-            return False
-        controller = self.active_controller()
-        if not controller.capabilities.actuator:
-            self.log.append(
-                f"UNSUPPORTED: {controller.label} has no validated actuator output."
-            )
-            return False
-        if not self.send_backend_commands(
-            controller.actuator_direction(direction),
-            f"set actuator direction to {direction}",
-        ):
-            return False
-        self.actuator_direction = direction
-        return True
-
     def _update_cylinder_ui(self, cyl_id):
         engaged_map = {
             1: self.clamp_left_engaged,
@@ -1740,20 +1627,14 @@ class MinimalHMI(QMainWindow):
         manual_ready = connected and capabilities.manual_motion_ready
         auto_ready = connected and capabilities.automatic_cycle_ready
         native_manual = controller.key == TEENSY_CARRIAGE
-        self.auto_dry_group.hide()  # Native Start Auto now owns acknowledged preparation.
         self.cylinder_timing.set_simulator_mode(isinstance(self.ser, VirtualController))
         self.tabs.setTabText(self.tabs.indexOf(self.legacy_tab),"MANUAL" if native_manual else "MANUAL / SIM")
         self.legacy_tab.setEnabled(manual_ready or (connected and native_manual))
-        self.manual_teensy_setup.hide()
-        self.manual_teensy_actions.hide()
-        self.enable_chk.hide()
-        self.start_cycle_button.setText('Start Auto — dry run' if native_manual else 'START CYCLE')
+        self.enable_chk.setVisible(not native_manual)
+        self.enable_chk.setEnabled(not native_manual)
+        self.start_cycle_button.setText('Start Auto' if native_manual else 'START CYCLE')
         self.manual_home_button.setText("Home")
-        self.enable_chk.setToolTip(
-            "Check to enable and arm through the shared driver checks. Uncheck to release the motor; Home must be repeated. "
-            "Reflects the controller enable output, not measured motor power."
-            if native_manual else "Enable or release the simulated carriage motor."
-        )
+        self.enable_chk.setToolTip("Enable or release the simulated carriage motor.")
         if not native_manual:
             self.enable_chk.blockSignals(True)
             self.enable_chk.setChecked(isinstance(self.ser, VirtualController) and self.ser.motor_enabled)
@@ -1762,7 +1643,6 @@ class MinimalHMI(QMainWindow):
                 widget.setEnabled(True)
         self.auto_tab.setEnabled(auto_ready or native_manual)  # offline list planning remains available
         self.current_group.setVisible(not native_manual)
-        self.auto_teensy_setup.hide()
         self.cancel_cycle_button.setText("STOP / DISARM" if native_manual else "CANCEL CYCLE")
         self.resume_on_reset_button.setEnabled(auto_ready)
         self.resume_on_reset_button.setVisible(not native_manual)
@@ -1801,13 +1681,6 @@ class MinimalHMI(QMainWindow):
                 self.manual_home_button.setEnabled(self.direct_controls.can_motion('home'))
                 self.keypad.setEnabled(self.carriage_tab.ready_link())
                 self.keypad.enter_button.setEnabled(self.direct_controls.can_motion())
-                return
-            if self.dry_run.motion_locked():
-                for widget in (self.manual_home_button,self.keypad,self.enable_chk,self.manual_configure,
-                               self.manual_arm,self.manual_release,self.load_button,self.auto_arm,self.auto_home,
-                               self.auto_configure,self.auto_jog_left_btn,self.auto_jog_right_btn,
-                               self.qjog_left_01,self.qjog_right_01,self.qjog_left_025,self.qjog_right_025,
-                               self.qjog_left_1,self.qjog_right_1,self.qjog_left_2,self.qjog_right_2): widget.setEnabled(False)
             return
         free = self.is_connected() and not self.manual_pneumatics.motion_locked()
         self.keypad.enter_button.setEnabled(free and self.ser.motor_enabled)
@@ -2293,7 +2166,7 @@ class MinimalHMI(QMainWindow):
             if hasattr(self, "log"):
                 self.log.append("SAFETY BLOCK: disconnect before changing controller mode.")
             return
-        mode_key = self.controller_combo.currentData() or TEENSY_HARDWARE_TEST
+        mode_key = self.controller_combo.currentData() or TEENSY_CARRIAGE
         self.selected_controller_mode = mode_key
         self.controller = create_controller_backend(mode_key)
         if hasattr(self, "log"):
@@ -2627,26 +2500,7 @@ class MinimalHMI(QMainWindow):
 
         link = p.ready_link()
         busy = bool(p.pending or p.profile_pending or p.homing or p.edge_searching or int(p.x.get("REMAINING","0")))
-        self.manual_teensy_status.setText(p.status.text())
-        self.manual_isolation.blockSignals(True)
-        self.manual_isolation.setChecked(p.consent.isChecked())
-        self.manual_isolation.blockSignals(False)
-        self.manual_configure.setEnabled(p.allowed("XCONFIG 0 1"))
-        self.manual_arm.setText("DISARM MANUAL CONTROL" if p.armed else "ARM MANUAL CONTROL")
-        self.manual_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
         self.manual_home_button.setEnabled(self.direct_controls.can_motion('home'))
-        self.manual_home_search.blockSignals(True)
-        self.manual_home_search.setValue(p.home_search.value())
-        self.manual_home_search.blockSignals(False)
-        self.manual_home_search.setEnabled(not p.armed and not busy)
-        self.manual_stop.setEnabled(p.connected)
-        self.manual_reset.setEnabled(link and not p.armed)
-        self.manual_release.setEnabled(p.connected and p.compatible)
-        enabled = link and p.x.get("ENA") == "0"
-        self.enable_chk.blockSignals(True)
-        self.enable_chk.setChecked(enabled)
-        self.enable_chk.blockSignals(False)
-        self.enable_chk.setEnabled(link and (enabled or p.allowed("XARM 1")))
         known = link and p.x.get("POS_KNOWN") == "1" and not p.local_fault
         self.update_homed_status(1 if known else 0)
         if not known:
@@ -2684,10 +2538,6 @@ class MinimalHMI(QMainWindow):
         elif not busy: self.auto_position_label.setText(self.position_label.text())
         saw=p.safety.get("SAW_POSITION","UNKNOWN") if p.fresh("SAFETY") else "UNKNOWN"
         self.set_pill(self.fa_saw_position_label,saw,"#22c55e" if saw == "UP" else "#ef4444" if saw == "CONFLICT" else "#475569")
-        self.auto_isolation.blockSignals(True)
-        self.auto_isolation.setChecked(p.consent.isChecked()); self.auto_isolation.blockSignals(False)
-        self.auto_configure.setEnabled(p.allowed("XCONFIG 0 1"))
-        self.auto_home.setEnabled(self.direct_controls.can_motion('home'))
         self.auto_home_button.setEnabled(self.direct_controls.can_motion('home'))
         self.auto_clear_error.setEnabled(p.ready_link() and not p.armed and (not self.dry_run.sequence or self.dry_run.intervention.recovering()) and self.dry_run.data.get('CLAMP')=='0' and p.safety.get('RESET_READY')=='1')
         self.auto_cancel_button.setEnabled(p.connected)
@@ -2699,8 +2549,6 @@ class MinimalHMI(QMainWindow):
         for checkbox in (self.repeat_pattern,self.clear_between_boards,self.clear_at_list_end):
             checkbox.setEnabled(not self.dry_run.sequence and not self.dry_run.auto_start
                                 and (checkbox is not self.clear_at_list_end or not self.repeat_pattern.isChecked()))
-        self.auto_arm.setText("DISARM" if p.armed else "ARM")
-        self.auto_arm.setEnabled(p.connected and (p.armed or p.allowed("XARM 1")))
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(self.dry_run.can_begin_auto() or self.direct_controls.can_motion('auto'))
         self.start_cycle_button.setText('Start next board — dry run' if self.dry_run.waiting_for_board() else
