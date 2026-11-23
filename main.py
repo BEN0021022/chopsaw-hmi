@@ -75,7 +75,12 @@ from live_health import (
 from machine_workbench import MachineWorkbench
 from production_dashboard import ProductionDashboardTab
 from sequence_state import SequenceStage
-from serial_handler import SignalBridge, listen_for_data
+from serial_handler import (
+    SignalBridge,
+    is_teensy_port,
+    listen_for_data,
+    pick_preferred_serial_port,
+)
 from sim_cycle import SimulatorCycleMixin
 from simulator import VirtualController
 from teensy_carriage import TeensyCarriagePanel
@@ -130,6 +135,7 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
 
         # Serial
         self.ser = None
+        self._serial_write_lock = threading.Lock()
         self.listener_thread = None
         self.listener_stop_event = threading.Event()
         self.signal_bridge = SignalBridge()
@@ -905,14 +911,12 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self.port_combo.clear()
         for port in ports:
             description = f"{port.device} - {port.description}" if port.description else port.device
+            if is_teensy_port(port) and "teensy" not in description.lower():
+                description += " [Teensy]"
             self.port_combo.addItem(description, port.device)
         self.port_combo.addItem("SIMULATOR - virtual machine", "SIM")
         self.port_combo.setEnabled(True)
-        devices = [port.device for port in ports] + ["SIM"]
-        if previous_port in devices:
-            target_port = previous_port
-        else:
-            target_port = ports[0].device if ports else "SIM"
+        target_port = pick_preferred_serial_port(ports, previous_port)
         index = self.port_combo.findData(target_port)
         if index >= 0:
             self.port_combo.setCurrentIndex(index)
@@ -989,11 +993,12 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self._simulation_pneumatic_pending = False
         # Stop before closing the serial port; firmware watchdog is the fallback.
         if getattr(self, "carriage_tab", None) and self.carriage_tab.connected:
-            if self.ser and self.ser.is_open:
-                try:
-                    self.ser.write(b"OFF\n")
-                except (serial.SerialException, OSError):
-                    pass
+            with self._serial_write_lock:
+                if self.ser and self.ser.is_open:
+                    try:
+                        self.ser.write(b"OFF\n")
+                    except (serial.SerialException, OSError):
+                        pass
             self.carriage_tab.session(False)
         self.listener_stop_event.set()
         port = self.ser
@@ -1005,11 +1010,12 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         thread = self.listener_thread
         if thread and thread.is_alive() and threading.current_thread() is not thread:
             thread.join(timeout=1.0)
-        try:
-            if port and port.is_open:
-                port.close()
-        except (serial.SerialException, OSError):
-            pass
+        with self._serial_write_lock:
+            try:
+                if port and port.is_open:
+                    port.close()
+            except (serial.SerialException, OSError):
+                pass
         self.listener_thread = None
 
     def handle_serial_disconnect(self, error):
@@ -1073,15 +1079,18 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
             if not allowed:
                 self.log.append(f"BLOCKED in Teensy Carriage mode: {cmd}")
                 return False
-        if self.ser and self.ser.is_open:
-            try:
-                self.ser.write((cmd + '\n').encode('utf-8'))
-                self.log.append(f"Sent: '{cmd}'")
-                return True
-            except (serial.SerialException, OSError) as error:
-                self.handle_serial_disconnect(error)
+        with self._serial_write_lock:
+            if self.ser and self.ser.is_open:
+                try:
+                    self.ser.write((cmd + '\n').encode('utf-8'))
+                    self.log.append(f"Sent: '{cmd}'")
+                    return True
+                except (serial.SerialException, OSError) as error:
+                    write_error = error
+            else:
+                self.log.append("Cannot send command, not connected.")
                 return False
-        self.log.append("Cannot send command, not connected.")
+        self.handle_serial_disconnect(write_error)
         return False
 
     def active_controller(self):

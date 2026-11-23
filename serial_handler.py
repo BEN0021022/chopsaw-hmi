@@ -3,10 +3,37 @@
 import time
 
 import serial
-from PyQt6.QtCore import pyqtSignal, QObject
+from PyQt6.QtCore import QObject, pyqtSignal
+
+TEENSY_USB_VID = 0x16C0  # PJRC / Teensyduino USB Vendor ID
+
+
+def is_teensy_port(port) -> bool:
+    """Return True if a pyserial ListPortInfo entry identifies a Teensy board."""
+    vid = getattr(port, "vid", None)
+    if vid == TEENSY_USB_VID:
+        return True
+    text = " ".join(
+        str(getattr(port, attr, "") or "")
+        for attr in ("description", "manufacturer", "product")
+    ).lower()
+    return "teensy" in text
+
+
+def pick_preferred_serial_port(ports, previous_port: str | None) -> str:
+    """Choose the saved port if still present, else an auto-detected Teensy, else first port or SIM."""
+    devices = [port.device for port in ports]
+    if previous_port in devices or previous_port == "SIM":
+        return previous_port
+    for port in ports:
+        if is_teensy_port(port):
+            return port.device
+    return ports[0].device if ports else "SIM"
+
 
 class SignalBridge(QObject):
     """A bridge for emitting signals from the non-GUI serial thread to the main GUI thread."""
+
     message_received = pyqtSignal(str)
     position_updated = pyqtSignal(float)
     homed_status_updated = pyqtSignal(int)
@@ -67,35 +94,47 @@ def _safe_emit(signal, *args):
         return False
 
 
+def _dispatch_line(line: str, signal_bridge: SignalBridge):
+    signal_bridge.message_received.emit(line)
+    if line.startswith("POS:"):
+        _parse_status_line(line, signal_bridge)
+    elif line.startswith("CAL_SUCCESS:"):
+        try:
+            vals = line.split(':', 1)[1].split(',')
+            signal_bridge.calibration_updated.emit(float(vals[0]), float(vals[1]))
+        except (IndexError, ValueError):
+            signal_bridge.message_received.emit(f"Malformed calibration line: '{line}'")
+    elif line.startswith("STATUS:HOME_POS:"):
+        try:
+            home_pos = float(line.split(':')[2])
+            signal_bridge.home_position_updated.emit(home_pos)
+        except (IndexError, ValueError):
+            signal_bridge.message_received.emit(f"Malformed home position line: '{line}'")
+
+
 def listen_for_data(ser, signal_bridge, stop_event=None):
     """
-    Listens for incoming data from the serial port in a separate thread
-    and emits signals via the signal_bridge.
+    Listen for incoming lines from a real Serial port (blocking timeout read,
+    no 10 ms polling jitter) or a non-blocking VirtualController.
     """
+    blocking_serial = isinstance(ser, serial.Serial)
     while stop_event is None or not stop_event.is_set():
         try:
             if not ser.is_open:
                 if stop_event is None or not stop_event.is_set():
                     _safe_emit(signal_bridge.disconnected, "Serial port closed.")
                 break
-            if ser.in_waiting > 0:
+            if blocking_serial:
+                raw = ser.readline()
+                if not raw:
+                    continue
+                line = raw.decode('utf-8', errors='ignore').strip()
+                if line:
+                    _dispatch_line(line, signal_bridge)
+            elif ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
                 if line:
-                    signal_bridge.message_received.emit(line)
-                    if line.startswith("POS:"):
-                        _parse_status_line(line, signal_bridge)
-                    elif line.startswith("CAL_SUCCESS:"):
-                        try:
-                            vals = line.split(':', 1)[1].split(',')
-                            signal_bridge.calibration_updated.emit(float(vals[0]), float(vals[1]))
-                        except (IndexError, ValueError):
-                            signal_bridge.message_received.emit(f"Malformed calibration line: '{line}'")
-                    elif line.startswith("STATUS:HOME_POS:"):
-                        try:
-                            home_pos = float(line.split(':')[2])
-                            signal_bridge.home_position_updated.emit(home_pos)
-                        except (IndexError, ValueError):
-                            signal_bridge.message_received.emit(f"Malformed home position line: '{line}'")
+                    _dispatch_line(line, signal_bridge)
             else:
                 time.sleep(0.01)
         except (serial.SerialException, OSError) as error:
