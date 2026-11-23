@@ -72,9 +72,7 @@ class CutHistory:
         row = {key:'' for key in FIELDS}
         row.update(timestamp_utc=datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
                    event_id=event_id, session_id=self.session_id,
-                   # All current native combined cycles are unplugged tests.
-                   # Production permissions are not changed by adding metrics.
-                   run_type='dry_run', event_type='completed_cycle' if delta == 1 else 'counter_gap',
+                   run_type='production', event_type='completed_cycle' if delta == 1 else 'counter_gap',
                    completed_count=delta, cut_type=data['cut_type'],
                    cut_number=data['cut_number'] if data['cut_number'] is not None else '',
                    cut_length_in=data['cut_length_in'], cut_length_source=data['cut_length_source'],

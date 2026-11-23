@@ -32,7 +32,7 @@ class CutHistoryTests(unittest.TestCase):
             self.assertEqual(row['cut_length_in'],'18.0')
             self.assertEqual(row['board_length_in'],'145.25')
             self.assertEqual(row['board_preset_in'],'144.5')
-            self.assertEqual(row['run_type'],'dry_run')
+            self.assertEqual(row['run_type'],'production')
             self.assertEqual(row['board_length_source'],'edge_estimate')
             self.assertTrue(journal.close())
             second=CutHistory(folder,'test')

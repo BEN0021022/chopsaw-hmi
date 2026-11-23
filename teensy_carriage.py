@@ -108,12 +108,12 @@ class TeensyCarriagePanel(QWidget):
         setup = QGroupBox("Prepare carriage motion")
         setup_layout = QVBoxLayout(setup)
         isolation_note = QLabel(
-            "Unloaded test: saw unplugged; trigger locked OFF; carriage clear; driver green ON/red OFF."
+            "Pre-move check: guard closed; carriage clear; driver green ON/red OFF."
         )
         isolation_note.setWordWrap(True)
         setup_layout.addWidget(isolation_note)
         self.consent = QCheckBox(
-            "Unloaded / unplugged and driver checks confirmed"
+            "Carriage and driver checks confirmed"
         )
         self.consent.toggled.connect(self._consent_changed)
         setup_layout.addWidget(self.consent)

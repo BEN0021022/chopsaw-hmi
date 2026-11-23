@@ -558,7 +558,7 @@ def build_auto_tab(w):
     w.auto_mode_label.setWordWrap(True)
     cyc.insertWidget(0, w.auto_mode_label)
 
-    w.operator_cut_button = QPushButton('Wood secured / run cut\nSaw unplugged')
+    w.operator_cut_button = QPushButton('Wood secured / run cut')
     w.operator_cut_button.setMinimumHeight(66)
     w.operator_cut_button.setStyleSheet(
         'QPushButton { background:#f59e0b; color:#111827; font-size:19px; font-weight:bold; } '

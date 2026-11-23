@@ -291,7 +291,7 @@ class NativeDryRun(QObject):
             self.message='Second clamp requires firmware 0.24 or newer. Disable it or update firmware.';self.changed.emit();return False
         values=self.configuration_values()
         if any(not 0<=value<=5000 for value in values) or min(values[6],values[9])<100:
-            self.message='Dry-run delays must be 0–5000 ms; travel limits 100–5000 ms.'; self.changed.emit(); return False
+            self.message='Timing delays must be 0–5000 ms; travel limits 100–5000 ms.'; self.changed.emit(); return False
         self.token=secrets.randbelow(0x7ffffffe)+1; self.loaded=values
         self.pending={'kind':'config','at':time.monotonic()}
         for index,value in enumerate(values):
@@ -370,7 +370,7 @@ class NativeDryRun(QObject):
                         and f.get('DRY_RUN')=='UNLOADED_V6' and f.get('BLADE_LOCK')=='UNPLUGGED_CYCLE'
                         and f.get('TRIGGER_TEST')=='HOLD_V1' and f.get('CYCLE')=='CLAMP_TRIGGER_TRAVEL_V1'
                         and f.get('OPERATOR_CUT')=='UNCLAMPED_ONESHOT_V1')
-            if self.compatible and not compatible: self.stop('Dry-run identity changed')
+            if self.compatible and not compatible: self.stop('Controller pneumatic identity changed')
             self.compatible=compatible
             compatible=compatible and (f.get('FW') not in ('0.25.0','0.26.0','0.27.0') or (self.owner.carriage_tab.continuous_supported() and self.owner.carriage_tab.parallel_supported()))
             compatible=compatible and (f.get('FW') not in ('0.26.0','0.27.0') or self.owner.carriage_tab.automatic_return_supported())
@@ -420,9 +420,9 @@ class NativeDryRun(QObject):
                            and (f['CYCLE']=='0' or f['OPERATOR']=='1' or phase in ('CLAMP_DELAY','CLAMP_SETTLE','RELEASE_DELAY','RELEASE_CLEAR') or mask==plan))
                 except (KeyError,ValueError):valid=False
             if not valid:
-                self.stop('Invalid dry-run readback'); return
+                self.stop('Invalid controller pneumatic readback'); return
             if self.data and int(f['UP_MS'])<int(self.data['UP_MS']):
-                self.stop('Dry-run controller restarted'); return
+                self.stop('Controller restarted'); return
             self.data=f; self.received=time.monotonic()
             if f['STATE'] in ('OFF','FAULT') and f['ARMED']=='0': self.awaiting_stop=False
             if self.token and f['CFG']==str(self.token) and self.loaded is not None and f['HASH']!=str(timing_hash(self.loaded)):
@@ -441,12 +441,12 @@ class NativeDryRun(QObject):
                     self.pending=None;self.manual_start=None;self.auto_start=None;self.trigger_held=False
                     if self.intervention.recovering():self.intervention.observe_fault_completion()
                     else:self.message=reason
-            elif not self.local_fault and not self.sequence and not self.message.startswith('Unloaded dry list complete'):
+            elif not self.local_fault and not self.sequence and not self.message.startswith('Cut list complete'):
                 trigger=('PRESSED while held (commanded)' if f['TRIGGER']=='1' else
                          'released; hold-to-test ready' if f['MANUAL']=='1' else 'locked OFF')
-                self.message='Unloaded dry run: '+f['STATE']+'; trigger '+trigger+'.'
+                self.message='Controller pneumatic status: '+f['STATE']+'; trigger '+trigger+'.'
         elif message.kind=='BENCH_ERROR' and f.get('CODE','').startswith(('DRY_','BLADE_')):
-            self.stop('Controller rejected dry-run request: '+f.get('CODE','UNKNOWN'))
+            self.stop('Controller rejected pneumatic request: '+f.get('CODE','UNKNOWN'))
         if message.kind in ('BENCH_X','BENCH_DRY'): self.supervision.observe(message.kind)
         self.capture_diagnostics()
         self.changed.emit()
@@ -544,7 +544,7 @@ class NativeDryRun(QObject):
                 if not self.local_fault: self.stop(self.feedback_problem())
             elif not self.awaiting_stop and now-self.last_keepalive>=.25 and self.data.get('ARMED')=='1':
                 self.owner.send_command('KEEPALIVE'); self.last_keepalive=now
-        if self.pending and now-self.pending['at']>2: self.stop('Dry-run acknowledgment timed out')
+        if self.pending and now-self.pending['at']>2: self.stop('Controller acknowledgment timed out')
         if self.manual_start and not self.pending:
             if not self.safe_link(): self.stop('Manual setup feedback lost')
             elif self.manual_start=='config' and self.data.get('CFG')==str(self.token):
@@ -745,7 +745,7 @@ class NativeDryRun(QObject):
         if not sent:
             self.stop('Cannot select Gentle acquisition profile')
             return False
-        self.message = 'Dry list: arming acquisition; keep board detector clear until SEARCH.'
+        self.message = 'Arming board acquisition; keep board detector clear until SEARCH.'
         return True
 
     def can_start(self):
@@ -838,11 +838,11 @@ class NativeDryRun(QObject):
             else str(s.stage)
         )
         self.message = (
-            f"Dry list board {s.board}: {label} — "
-            f"{'truing' if s.index < 0 else 'cut ' + str(s.index + 1)}; saw mains MUST stay unplugged."
+            f"Board {s.board}: {label} — "
+            f"{'truing' if s.index < 0 else 'cut ' + str(s.index + 1)}."
         )
         if time.monotonic() - s.at > 180:
-            self.stop('Dry-list phase exceeded 180 seconds')
+            self.stop('Cycle phase exceeded 180 seconds')
 
     def _advance_acquisition(self, s: SequenceState, p) -> bool:
         stage = s.stage
@@ -900,7 +900,7 @@ class NativeDryRun(QObject):
         stage = s.stage
         if stage == SequenceStage.FEED_PROFILE and p.x.get('PROFILE_ID') == '2':
             if not self.owner.send_command('XARM 1'):
-                self.stop('Cannot arm dry-list feed')
+                self.stop('Cannot arm feed move')
                 return True
             s.transition(SequenceStage.FEED_ARM)
         elif stage == SequenceStage.RESUME_POSITION_PROFILE and p.x.get('PROFILE_ID') == str(s.resume_profile):
@@ -910,7 +910,7 @@ class NativeDryRun(QObject):
             s.transition(SequenceStage.FEED_ARM)
         elif stage == SequenceStage.FEED_ARM and p.armed and p.x.get('JOG_READY') == '1':
             if not p.move_to(s.target):
-                self.stop('Dry-list feed rejected')
+                self.stop('Feed move rejected')
                 return True
             s.move_id = int(p.x['MOVE_ID'])
             s.transition(SequenceStage.MOVE)
@@ -1002,7 +1002,7 @@ class NativeDryRun(QObject):
                 s.cut_return_target = round(plan.target * 1000)
                 s.cut_return_min = math.ceil(minimum * 1000)
         if not self.request('arm'):
-            self.stop('Cannot arm unloaded pneumatics')
+            self.stop('Cannot arm pneumatics')
             return True
         s.transition(SequenceStage.CLAMP)
         return False
@@ -1121,7 +1121,6 @@ class NativeDryRun(QObject):
                     if s.early_return
                     else 'Carriage stays forward; more cuts fit this board.'
                 )
-                + ' Saw mains stay unplugged.'
             )
             return True
         elif stage == SequenceStage.OPERATOR_ARM and not p.armed:
@@ -1205,7 +1204,7 @@ class NativeDryRun(QObject):
                 self.message = f"Board {s.board} complete. Load the next board; next cut is {s.next_index + 1}. Press Start next board when ready."
             else:
                 self.sequence = None
-                self.message = 'Unloaded dry list complete; production cut-list progress unchanged.'
+                self.message = 'Cut list complete.'
             return True
         elif stage in (SequenceStage.BOARD_TOO_SHORT, SequenceStage.OPERATOR_REQUIRED) and s.acquisition_rejection:
             self.message = self.acquisition_rejection_message()
@@ -1330,7 +1329,7 @@ class NativeDryRun(QObject):
         self.supervision.coordinator.paused = None
         self.diagnostics.note(
             'OPERATOR_CUT_REQUEST',
-            'One unplugged stroke requested; main clamp inhibited, grip not measured.',
+            'One operator-confirmed unclamped stroke requested; main clamp inhibited, grip not measured.',
             time.monotonic(),
             {
                 'cut_index': s.index,
@@ -1339,6 +1338,6 @@ class NativeDryRun(QObject):
                 'carriage_position': self.supervision.context().position,
             },
         )
-        self.message = 'Operator requested one unplugged stroke; main clamp inhibited.'
+        self.message = 'Operator requested one unclamped stroke; main clamp inhibited.'
         self.changed.emit()
         return True

@@ -244,7 +244,7 @@ class ManualPneumatics(QGroupBox):
             self.labels['trigger'].setText(('PRESSED commanded' if native.data.get('TRIGGER')=='1' else
                                            'RELEASED') if fresh else 'UNKNOWN')
             self.status.setText((self.owner.direct_controls.message or native.message) if native.compatible else 'Connect compatible Teensy firmware.')
-            self.note.setText('Manual Cycle uses the main clamp plus any explicitly engaged, enabled outfeed clamp. If main is inhibited, engage the outfeed clamp first. Trigger → saw down/up → trigger release → clamp release. Saw unplugged for testing.')
+            self.note.setText('Manual Cycle uses the main clamp plus any explicitly engaged, enabled outfeed clamp. If main is inhibited, engage the outfeed clamp first. Trigger → saw down/up → trigger release → clamp release.')
             self.recover_release.setVisible(fresh and native.data.get('ARMED')=='0' and native.data.get('CLAMP')=='1')
             actual_fault=bool(native.local_fault or self.owner.carriage_tab.local_fault or native.data.get('FAULT','NONE')!='NONE'
                               or self.owner.carriage_tab.x.get('FAULT','NONE')!='NONE')

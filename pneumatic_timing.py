@@ -97,7 +97,7 @@ class CylinderTimingPanel(QGroupBox):
         self.save_button = QPushButton('Save Timing Settings')
         self.save_button.clicked.connect(self.save)
         layout.addWidget(self.save_button)
-        self.feedback = QLabel('Save retains settings on this PC. For native unloaded tests, explicitly Load dry-run timings while disarmed; wait for acknowledgment.')
+        self.feedback = QLabel('Save retains settings on this PC. Timings load automatically to the controller before Manual enable or Start Auto.')
         self.feedback.setWordWrap(True)
         self.feedback.setStyleSheet('color:#94a3b8; font-size:13px;')
         layout.addWidget(self.feedback)
@@ -109,9 +109,9 @@ class CylinderTimingPanel(QGroupBox):
     def set_simulator_mode(self, simulator):
         self.mode_hint.setText(
             'Simulator: normal-cycle delays are active. Confirmation/travel limits remain planned.' if simulator else
-            'Saw-unplugged tests: Manual enable / Start Auto load main-clamp, saw and trigger timings. '
+            'Live controller: Manual enable / Start Auto load main-clamp, saw and trigger timings. '
             'Delays 0–5000 ms; travel limits 100–5000 ms. Full cycle includes spin-up and brake waits. '
-            'Held-trigger individual tests remain hold-to-test. Timers do not verify grip or blade stop. '
+            'Held-trigger manual controls remain hold-to-test. Timers do not verify grip or blade stop. '
             'Second/outfeed delays are independent on firmware 0.24+, enabled separately in Machine dimensions. '
             'Clamp confirmation feedback remains planned.'
         )

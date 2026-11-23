@@ -83,7 +83,7 @@ def run_case(exe, lengths, needs_cleanup):
             if needs_cleanup: assert any(c.startswith('XMOVE 10550') for c in wire.writes)
             acquire()
             until(lambda:d.sequence is None)
-            assert d.message.startswith('Unloaded dry list complete'),d.message
+            assert d.message.startswith('Cut list complete'),d.message
             assert wire.strokes==len(lengths)+2
             assert (w.cut_list,w.current_cut_index,w.sim_next_piece_index)==original
             assert w.cut_history.flush()

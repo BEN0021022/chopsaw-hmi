@@ -1037,9 +1037,9 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
                 elif stopping:
                     dry.sequence = None
                     dry.pending = None
-                    dry.message = 'Unloaded dry list stopped.'
+                    dry.message = 'Cut list stopped.'
                 elif not dry.intervention.paused() and cmd not in ('HELLO', 'PINMAP', 'STATUS', 'PING', 'KEEPALIVE'):
-                    self.log.append('BLOCKED: unloaded list owns machine sequencing.')
+                    self.log.append('BLOCKED: active cut list owns machine sequencing.')
                     return False
             if (
                 dry.motion_locked()
@@ -1050,10 +1050,10 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
                 and not DRY_COMMAND.fullmatch(cmd)
                 and not SECOND_COMMAND.fullmatch(cmd)
             ):
-                self.log.append('BLOCKED: unloaded pneumatics own machine control.')
+                self.log.append('BLOCKED: active pneumatic cycle owns machine control.')
                 return False
             if cmd == 'XDISABLE' and dry.motion_locked():
-                self.log.append('BLOCKED: stop the unloaded test before releasing motor holding.')
+                self.log.append('BLOCKED: stop active cycle before releasing motor holding.')
                 return False
             allowed = (
                 dry.allowed(cmd)
@@ -1451,9 +1451,9 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self.start_cycle_button.setText(
             'Continue cut list / next board'
             if self.dry_run.waiting_for_board()
-            else 'Start Semi-Auto — dry run'
+            else 'Start Semi-Auto'
             if self.auto_modes.currentIndex() == 1
-            else 'Start Auto — dry run'
+            else 'Start Auto'
         )
         progress = (self.dry_run.progress_batch, self.dry_run.progress_index)
         if getattr(self, '_native_progress_rendered', None) != progress:
@@ -1587,11 +1587,11 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         )
         truing = bool(d.sequence and d.sequence.index < 0)
         self.operator_cut_button.setText(
-            'Wood secured / run cut\nSaw unplugged'
+            'Wood secured / run cut'
             if waiting
-            else 'True-up / advance\nSaw unplugged'
+            else 'True-up / advance'
             if truing
-            else 'Clamp / Cut / Advance\nSaw unplugged'
+            else 'Clamp / Cut / Advance'
         )
         self.operator_cut_button.setToolTip(
             (
@@ -1661,7 +1661,7 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
                     state = HealthState(
                         'waiting',
                         'Waiting for operator — secure unclamped wood',
-                        ('No clamp grip is measured. One explicit unplugged stroke is required.',),
+                        ('No clamp grip is measured. Explicit operator confirmation is required.',),
                     )
                 elif self.dry_run.sequence.stage in (
                     SequenceStage.PAUSED,

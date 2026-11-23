@@ -140,7 +140,7 @@ def run(exe,overlap=False):
             assert wire.strokes==5 and w._displayed_cut_index==3
             assert tuple(w.cut_list)==original and w.current_cut_index==0
             assert d.progress_index==3 and '> Cut' not in w.cut_list_display.toPlainText()
-            assert d.message.startswith('Unloaded dry list complete')
+            assert d.message.startswith('Cut list complete')
             assert d.data['CLAMP']=='0' and d.data['SAW']=='0' and d.data['TRIGGER']=='0'
             # Search + first truing stay Gentle. Later feed is Normal; Load Fast.
             for stage,x in seen:

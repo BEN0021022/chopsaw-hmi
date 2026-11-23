@@ -87,7 +87,7 @@ class CycleDiagnostics:
     def report(self, now):
         return {'format': 'chopsaw-commissioning-v1',
                 'exported_utc': datetime.now(timezone.utc).isoformat(),
-                'scope': 'Saw-unplugged commissioning; observed host intervals, not firmware duration or grip/blade-stop proof.',
+                'scope': 'Observed host intervals, not firmware duration or grip/blade-stop proof.',
                 'dropped_events': self.dropped_events, 'dropped_phases': self.dropped_phases,
                 'latest': self.latest, 'phases': self.phase_rows(now), 'events': list(self.events)}
 

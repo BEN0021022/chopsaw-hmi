@@ -176,7 +176,7 @@ def run(exe):
             records(wire.exchange('@PIN 21 1'))  # release after truing accepted
             records(wire.exchange('@AUTO_SENSOR 1'))  # independent push-only remnant physics
             until(lambda:d.sequence is None)
-            assert d.message.startswith('Unloaded dry list complete'), d.message
+            assert d.message.startswith('Cut list complete'), d.message
             assert wire.strokes==4 and d.data['STATE']=='OFF' and not p.armed
             import csv
             assert w.cut_history.flush()
@@ -185,7 +185,7 @@ def run(exe):
             assert len(history)==4, history  # Manual, truing, then two list cuts.
             assert [row['cut_type'] for row in history]==['cut','truing','cut','cut']
             assert [row['cut_length_in'] for row in history[-2:]]==['2.0','3.0']
-            assert all(row['run_type']=='dry_run' for row in history)
+            assert all(row['run_type']=='production' for row in history)
             assert history[0]['cut_length_in']=='' and history[0]['board_length_in']==''
             assert all(row['board_length_source']=='edge_estimate' for row in history[1:])
             assert len({row['board_id'] for row in history[1:]})==1
@@ -277,7 +277,7 @@ def run(exe):
             # Contradictory outputs/phase must be rejected before enabling a control.
             corrupt=dict(d.data,STATE='OFF',CLAMP='1')
             d.handle('BENCH_DRY,'+','.join(f'{k}:{v}' for k,v in corrupt.items()))
-            assert d.local_fault=='Invalid dry-run readback'
+            assert d.local_fault=='Invalid controller pneumatic readback'
             flush()
             assert w.cut_history.flush()
             with w.cut_history.path.open(newline='',encoding='utf-8') as stream:
