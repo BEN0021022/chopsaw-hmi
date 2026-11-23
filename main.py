@@ -73,6 +73,7 @@ from live_health import (
     simulator_health,
 )
 from machine_workbench import MachineWorkbench
+from production_dashboard import ProductionDashboardTab
 from sequence_state import SequenceStage
 from serial_handler import SignalBridge, listen_for_data
 from sim_cycle import SimulatorCycleMixin
@@ -332,6 +333,9 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self.speed_tab = self.create_speed_tab()
         self.full_auto_tab = self.create_full_auto_tab()
         self.preset_tab = self.create_preset_tab()
+        self.dashboard_tab = ProductionDashboardTab(
+            self.cut_history.path, flush_fn=self.cut_history.flush
+        )
 
         self.carriage_tab = TeensyCarriagePanel(
             self.send_command, lambda line: self.log.append(line), self
@@ -358,16 +362,11 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self.tabs.addTab(self.carriage_tab, "CARRIAGE")
         self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
-        self.tabs.currentChanged.connect(
-            lambda _index: (
-                self.cut_length_keypad.hide()
-                if self.tabs.currentWidget() is not self.auto_tab
-                else None
-            )
-        )
+        self.tabs.currentChanged.connect(self._on_main_tab_changed)
         self.tabs.addTab(self.full_auto_tab, "FULL AUTO")
         self.tabs.addTab(self.speed_tab, "SETTINGS")
         self.tabs.addTab(self.preset_tab, "CUT LISTS")
+        self.tabs.addTab(self.dashboard_tab, "STATS")
 
         self.log = _MemoryLog(maxlen=500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
@@ -379,6 +378,15 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         root.addWidget(self.cut_history_warning)
         self.set_controls_enabled(False)
         self.update_clamp_ui()
+
+    def _on_main_tab_changed(self, _index):
+        current = self.tabs.currentWidget()
+        if current is not self.auto_tab:
+            self.cut_length_keypad.hide()
+        if current is self.dashboard_tab:
+            self.dashboard_tab.refresh()
+        elif current is self.preset_tab:
+            self.preset_tab.refresh_summary()
 
     def create_legacy_tab(self):
         return build_manual_tab(self)
