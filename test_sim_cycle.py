@@ -92,7 +92,7 @@ pump_until(lambda: w.sim_board_trimmed and not w.clamps_engaged_cutting
            and w.auto_cycle_state == "WAITING_FOR_TRUING_CUT", 25, "truing cut")
 assert seen_bsen["v"], "board sensor never tripped during detect"
 print(f"truing done, board remaining {w.sim_board_remaining:.2f}")
-assert abs(w.sim_board_remaining - 144.5) < 0.01
+assert abs(w.sim_board_remaining - 144.0) < 0.01
 w.cut_complete_pressed()
 
 # Cuts 1 and 2 need CUT COMPLETE; cut 3 is the early-return cut
@@ -111,7 +111,7 @@ pump_until(lambda: w.sim_next_piece_index == 3 and not w.clamps_engaged_cutting,
 assert "Complete" in w.auto_status_label.text(), w.auto_status_label.text()
 print(f"cycle complete; ejected: {w.saw_sim._eject['label']}")
 
-expected_remaining = 145.5 - 1.0 - (18 + 0.1) - (24 + 0.1) - (30 + 0.1)
+expected_remaining = 145.0 - 1.0 - (18 + 0.1) - (24 + 0.1) - (30 + 0.1)
 assert abs(w.sim_board_remaining - expected_remaining) < 0.01, w.sim_board_remaining
 assert w.sim_next_piece_index == 3
 assert w.saw_sim._eject["label"] == '30"'

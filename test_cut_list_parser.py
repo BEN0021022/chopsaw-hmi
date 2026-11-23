@@ -36,10 +36,11 @@ class CutListParserTests(unittest.TestCase):
 
     def test_group_cuts_by_board_and_render_html(self):
         cuts = [(1, 60.0, "A"), (2, 60.0, "B"), (3, 40.0, "C")]
-        groups, used = group_cuts_by_board(cuts, board_length=144.5, kerf=0.1)
+        groups, used = group_cuts_by_board(cuts, board_length=144.0, kerf=0.1)
         self.assertEqual(groups, [0, 0, 1])
-        self.assertAlmostEqual(used[0], 120.2)
-        self.assertAlmostEqual(used[1], 40.1)
+        # Includes leading truing-cut kerf (0.1) + each piece's (length + 0.1)
+        self.assertAlmostEqual(used[0], 120.3)
+        self.assertAlmostEqual(used[1], 40.2)
         html = render_cut_list_html(cuts, groups, active_index=1)
         self.assertIn("&gt; Cut 2:", html)
         self.assertIn("#38bdf8", html)

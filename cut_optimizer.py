@@ -64,7 +64,10 @@ def summarize_cut_list(
     remainders = [max(0.0, board_length - used) for used in group_used_map.values()]
     waste_in = sum(remainders)
     utilization_pct = (total_used_in / total_stock_in * 100.0) if total_stock_in > 0 else 0.0
-    oversized_count = sum(1 for _, length, _ in cuts if length + kerf > board_length + 1e-9)
+    truing_kerf = max(0.0, float(kerf))
+    oversized_count = sum(
+        1 for _, length, _ in cuts if truing_kerf + length + truing_kerf > board_length + 1e-9
+    )
     return CutListSummary(
         cut_count=len(cuts),
         board_count=board_count,
@@ -287,11 +290,13 @@ def optimize_cut_list(
 ) -> OptimizationResult:
     """Optimize cut order via BFD-seeded Branch-and-Bound for minimum boards & best offcut.
 
-    - Uses exact 0.0001" fixed-point math matching `group_cuts_by_board`.
+    - Uses exact 0.0001" fixed-point math with 0.0" board overage and 1 leading
+      truing-cut kerf reserved per board (`sum(L + kerf) <= board_length - kerf`,
+      matching `group_cuts_by_board`).
     - Ties at minimum board count favor concentrating scrap into one long usable remnant.
     - Orders boards tightest-first (largest usable remnant last) and, when
-      `longest_last=True`, orders cuts within each board shortest-to-longest so the
-      longest piece is cut last (maximizing pusher clearance from the blade/clamp).
+      `longest_last=True`, orders cuts within each board shortest-to-longest so short
+      chunks cut first and the longest piece cuts last with full clamp clearance.
     """
     started = time.perf_counter()
     before = summarize_cut_list(cuts, board_length, kerf)
@@ -306,12 +311,14 @@ def optimize_cut_list(
             oversized=[],
         )
 
-    cap = round(board_length * _SCALE)
+    truing_kerf = max(0.0, float(kerf))
+    # Reserve 1 leading truing-cut kerf per board (0.0" overage).
+    cap = round((board_length - truing_kerf) * _SCALE)
     fit_items: list[tuple[int, float, str, int]] = []
     oversized: list[tuple[int, float, str]] = []
     for num, length, desc in cuts:
-        need = round((length + kerf) * _SCALE)
-        if need <= cap:
+        need = round((length + truing_kerf) * _SCALE)
+        if cap > 0 and need <= cap:
             fit_items.append((num, float(length), desc, need))
         else:
             oversized.append((num, float(length), desc))

@@ -39,7 +39,7 @@ class CutListManagerTab(QWidget):
         self.on_load_lines = on_load_lines
         self.on_switch_to_auto = on_switch_to_auto
         self.log_fn = log_fn
-        self._get_board_length = get_board_length or (lambda: 144.5)
+        self._get_board_length = get_board_length or (lambda: 144.0)
         self._get_kerf = get_kerf or (lambda: 0.1)
 
         self.lists = []

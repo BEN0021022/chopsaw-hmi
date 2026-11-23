@@ -64,18 +64,28 @@ def parse_cut_list_lines(lines):
 
 
 def group_cuts_by_board(cut_list, board_length, kerf):
-    """Assign each cut to a sequential board group and compute used length per group."""
+    """Assign each cut to a sequential board group and compute used length per group.
+
+    Reserves one leading truing-cut kerf per board (0.0" overage), so N cuts on a
+    board consume `kerf + sum(length + kerf) = sum(length) + (N + 1) * kerf`.
+    """
     cut_groups = []
     group_used_map = {}
+    if not cut_list:
+        return cut_groups, group_used_map
+    truing_kerf = max(0.0, float(kerf))
     group_index = 0
-    group_used = 0.0
+    group_used = truing_kerf
+    cuts_in_group = 0
     for _, length, _ in cut_list:
-        needed = length + kerf
-        if group_used + needed > board_length and group_used > 0:
+        needed = length + truing_kerf
+        if cuts_in_group > 0 and group_used + needed > board_length + 1e-9:
             group_used_map[group_index] = group_used
             group_index += 1
-            group_used = 0.0
+            group_used = truing_kerf
+            cuts_in_group = 0
         group_used += needed
+        cuts_in_group += 1
         cut_groups.append(group_index)
     group_used_map[group_index] = group_used
     return cut_groups, group_used_map

@@ -168,7 +168,7 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self.current_position = 0.0
 
         self.home_position = HOME_POSITION_INCHES
-        self.standard_board_length = 144.5
+        self.standard_board_length = 144.0
         # (radio label, usable board length, carriage load position).
         # load_pos None = use the live home position. Load positions are
         # usable length + 15" of lead-in.

@@ -50,33 +50,34 @@ class CutOptimizerTests(unittest.TestCase):
         self.assertEqual([c[1] for c in result.cuts], [40.0, 60.0, 30.0, 30.0])
 
     def test_kerf_accounting_and_longest_last_ordering(self):
-        # With 0.1" kerf on a 100.0" board, three 33.3" cuts need 3 * 33.4 = 100.2 > 100.0 -> 2 boards
-        cuts = [(1, 33.3, "a"), (2, 33.3, "b"), (3, 33.3, "c")]
-        result = optimize_cut_list(cuts, board_length=100.0, kerf=0.1)
-        self.assertEqual(result.after.board_count, 2)
+        # Zero-overage + truing kerf: four 36" cuts on a 12' (144.0") board at 0.12" kerf
+        # need 0.12 + 4 * 36.12 = 144.60" > 144.0" -> must NOT squeeze onto 1 board.
+        four_36 = [(i + 1, 36.0, f"Frame End #{i + 1}") for i in range(4)]
+        r_four = optimize_cut_list(four_36, board_length=144.0, kerf=0.12)
+        self.assertEqual(r_four.after.board_count, 2)
 
-        # Longest-last ordering inside a single board keeps the longest piece last
-        mixed = [(1, 50.0, "long"), (2, 12.0, "short"), (3, 24.0, "med")]
-        r_last = optimize_cut_list(mixed, board_length=144.5, kerf=0.1, longest_last=True)
-        self.assertEqual([c[1] for c in r_last.cuts], [12.0, 24.0, 50.0])
+        # Short pieces cut first (longest-last) so a 7" chunk cuts before longer clamped pieces
+        mixed = [(1, 50.0, "long"), (2, 7.0, "Bench Upper"), (3, 36.0, "Frame End")]
+        r_last = optimize_cut_list(mixed, board_length=144.0, kerf=0.12, longest_last=True)
+        self.assertEqual([c[1] for c in r_last.cuts], [7.0, 36.0, 50.0])
 
     def test_oversized_cuts_preserved_and_reported(self):
         cuts = [(1, 160.0, "beam"), (2, 40.0, "stud"), (3, 40.0, "stud")]
-        result = optimize_cut_list(cuts, board_length=144.5, kerf=0.1)
+        result = optimize_cut_list(cuts, board_length=144.0, kerf=0.1)
         self.assertEqual(len(result.oversized), 1)
         self.assertEqual(result.oversized[0][1], 160.0)
         self.assertEqual(len(result.cuts), 3)
         self.assertEqual(result.after.oversized_count, 1)
 
     def test_realistic_shop_batch_speed_and_summary(self):
-        # 48 mixed production cuts on 144.5" boards with 0.125" kerf
+        # 48 mixed production cuts on 144.0" boards with 0.125" kerf
         lengths = [78.75] * 6 + [46.5] * 8 + [34.25] * 10 + [22.0] * 12 + [17.5] * 12
         cuts = [(i + 1, length, f"Rafter #{i + 1}") for i, length in enumerate(lengths)]
-        result = optimize_cut_list(cuts, board_length=144.5, kerf=0.125, time_limit_s=0.25)
+        result = optimize_cut_list(cuts, board_length=144.0, kerf=0.125, time_limit_s=0.25)
         self.assertLess(result.elapsed_ms, 400.0)
         self.assertLessEqual(result.after.board_count, result.before.board_count)
         self.assertEqual(len(result.cuts), len(cuts))
-        summary = summarize_cut_list(result.cuts, 144.5, 0.125)
+        summary = summarize_cut_list(result.cuts, 144.0, 0.125)
         text = format_summary_text(summary)
         self.assertIn("48 cuts", text)
         self.assertIn("waste", text)
