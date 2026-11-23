@@ -48,6 +48,7 @@ from cut_list_parser import (
     parse_cut_list_lines,
     render_cut_list_html,
 )
+from cut_optimizer import format_summary_text, optimize_cut_list, summarize_cut_list
 from cutlist_manager import CutListManagerTab
 from direct_controls import DirectControls
 from dry_run_control import (
@@ -151,6 +152,7 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self.stepper_steps_per_inch = STEPS_PER_INCH
         self.encoder_ticks_per_inch = self.stepper_steps_per_inch * 20.0
         self.cut_list = []
+        self._pre_optimize_cut_list = None
         self.auto_cycle_state = "IDLE"
         self.cycle_generation = 0  # invalidates delayed clamp/saw callbacks
         self.next_cut_number = 1
@@ -349,6 +351,7 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
                     lambda _value, p=profile: self.mark_teensy_profile_edit(p)
                 )
         self.auto_jog_input.valueChanged.connect(self.refresh_teensy_tabs)
+        self.kerf_input.valueChanged.connect(self.update_cut_list_display)
         for radio, _, _ in self.board_size_radios:
             radio.toggled.connect(self.refresh_teensy_tabs)
 
@@ -393,6 +396,8 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
             on_load_lines=self.load_cut_list_lines,
             on_switch_to_auto=lambda: self.tabs.setCurrentWidget(self.auto_tab),
             log_fn=lambda msg: self.log.append(msg),
+            get_board_length=self.get_active_board_length,
+            get_kerf=lambda: self.kerf_input.value(),
         )
 
     def create_full_auto_tab(self):
@@ -621,10 +626,65 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
 
     def clear_cut_list(self):
         self.cut_list.clear()
+        self._clear_optimize_undo()
         self.next_cut_number = 1
         self.current_cut_index = 0
         self._sync_sim_index()
         self.update_cut_list_display()
+
+    def _clear_optimize_undo(self):
+        self._pre_optimize_cut_list = None
+        if hasattr(self, "undo_optimize_button"):
+            self.undo_optimize_button.hide()
+
+    def optimize_current_cut_list(self):
+        if not self.cut_list:
+            self.log.append("Optimize skipped: cut list is empty.")
+            return
+        if self.dry_run.sequence:
+            self.log.append("Optimize blocked while a cycle is active.")
+            return
+        board_length = self.get_active_board_length()
+        kerf = self.kerf_input.value()
+        result = optimize_cut_list(self.cut_list, board_length, kerf)
+        self._pre_optimize_cut_list = list(self.cut_list)
+        self.cut_list = result.cuts
+        self.next_cut_number = len(self.cut_list) + 1
+        self.current_cut_index = 0
+        self._sync_sim_index()
+        if hasattr(self, "undo_optimize_button"):
+            self.undo_optimize_button.show()
+        self.update_cut_list_display()
+        if result.boards_saved > 0:
+            msg = (
+                f"Optimized cut list ({'exact' if result.optimal else 'best found'}, {result.elapsed_ms:.0f} ms): "
+                f"{result.before.board_count} → {result.after.board_count} boards "
+                f"(saved {result.boards_saved}), best offcut {result.after.largest_offcut_in:.1f}\"."
+            )
+        elif result.after.largest_offcut_in > result.before.largest_offcut_in + 0.05:
+            msg = (
+                f"Minimum {result.after.board_count} boards ({result.elapsed_ms:.0f} ms): "
+                f"improved best offcut {result.before.largest_offcut_in:.1f}\" → {result.after.largest_offcut_in:.1f}\"."
+            )
+        else:
+            msg = (
+                f"Already at minimum {result.after.board_count} boards ({result.elapsed_ms:.0f} ms); "
+                "reordered each board with longest cut last."
+            )
+        self.log.append(msg)
+        self._set_cycle_status("STATUS: " + msg)
+
+    def undo_optimize_cut_list(self):
+        if not self._pre_optimize_cut_list or self.dry_run.sequence:
+            return
+        self.cut_list = list(self._pre_optimize_cut_list)
+        self.next_cut_number = len(self.cut_list) + 1
+        self.current_cut_index = 0
+        self._sync_sim_index()
+        self._clear_optimize_undo()
+        self.update_cut_list_display()
+        self.log.append("Restored pre-optimization cut list order.")
+        self._set_cycle_status("STATUS: Restored previous cut list order.")
 
     def get_active_board_length(self):
         for radio, board_length, _ in self.board_size_radios:
@@ -656,12 +716,23 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
             if hasattr(self, 'fa_cut_list_display'):
                 self.fa_cut_list_display.setText("")
                 self.fa_cut_list_display.setPlaceholderText("No cuts in list.")
+            if hasattr(self, 'cut_list_summary_label'):
+                self.cut_list_summary_label.setText("")
+                self.cut_list_summary_label.hide()
             self._set_board_fill(0.0, "#38bdf8", "No cuts loaded")
+            if hasattr(self, 'preset_tab'):
+                self.preset_tab.refresh_summary()
             return
 
         board_length = self.get_active_board_length()
         kerf = self.kerf_input.value()
         cut_groups, group_used_map = group_cuts_by_board(self.cut_list, board_length, kerf)
+        if hasattr(self, 'cut_list_summary_label'):
+            summary = summarize_cut_list(self.cut_list, board_length, kerf)
+            self.cut_list_summary_label.setText(format_summary_text(summary))
+            self.cut_list_summary_label.show()
+        if hasattr(self, 'preset_tab'):
+            self.preset_tab.refresh_summary()
 
         active_index = self.current_cut_index
         d = self.dry_run
@@ -729,6 +800,7 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
     def _rebuild_cut_list(self, lines):
         cuts, warnings = parse_cut_list_lines(lines)
         self.cut_list = cuts
+        self._clear_optimize_undo()
         self.next_cut_number = len(cuts) + 1
         for warning in warnings:
             self.log.append(warning)
@@ -1368,6 +1440,10 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
                 and not self.dry_run.auto_start
                 and (checkbox is not self.clear_at_list_end or not self.repeat_pattern.isChecked())
             )
+        if hasattr(self, 'optimize_list_button'):
+            can_edit_list = not self.dry_run.sequence and not self.dry_run.auto_start
+            self.optimize_list_button.setEnabled(can_edit_list and bool(self.cut_list))
+            self.undo_optimize_button.setEnabled(can_edit_list and bool(self._pre_optimize_cut_list))
         self.cancel_cycle_button.setEnabled(p.connected)
         self.start_cycle_button.setEnabled(
             self.dry_run.can_begin_auto() or self.direct_controls.can_motion('auto')

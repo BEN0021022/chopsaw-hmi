@@ -415,6 +415,12 @@ def build_auto_tab(w):
     """)
     vcl.addWidget(w.board_fill_bar)
 
+    w.cut_list_summary_label = QLabel("")
+    w.cut_list_summary_label.setWordWrap(True)
+    w.cut_list_summary_label.setStyleSheet("font-size: 12px; color: #93c5fd;")
+    w.cut_list_summary_label.hide()
+    vcl.addWidget(w.cut_list_summary_label)
+
     w.cut_list_display = QTextEdit()
     w.cut_list_display.setStyleSheet("font-size: 22px;")
     w.cut_list_display.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -426,10 +432,24 @@ def build_auto_tab(w):
     w.load_list_button.clicked.connect(w.load_list_from_file)
     w.update_from_box_button = QPushButton("Update from Box")
     w.update_from_box_button.clicked.connect(w.update_list_from_box)
+    w.optimize_list_button = QPushButton("Optimize")
+    w.optimize_list_button.setToolTip(
+        "Pack cuts onto the fewest boards (Branch-and-Bound), concentrating scrap into one offcut and putting each board's longest cut last."
+    )
+    w.optimize_list_button.setStyleSheet(
+        "background-color: #0284c7; color: white; font-weight: 600;"
+    )
+    w.optimize_list_button.clicked.connect(w.optimize_current_cut_list)
+    w.undo_optimize_button = QPushButton("Undo")
+    w.undo_optimize_button.setToolTip("Restore the cut list order from before Optimize.")
+    w.undo_optimize_button.clicked.connect(w.undo_optimize_cut_list)
+    w.undo_optimize_button.hide()
     w.clear_list_button = QPushButton("Clear List")
     w.clear_list_button.clicked.connect(w.clear_cut_list)
     list_button_layout.addWidget(w.load_list_button)
     list_button_layout.addWidget(w.update_from_box_button)
+    list_button_layout.addWidget(w.optimize_list_button)
+    list_button_layout.addWidget(w.undo_optimize_button)
     list_button_layout.addWidget(w.clear_list_button)
     vcl.addLayout(list_button_layout)
     center_col.addWidget(cut_list_group, 1)
