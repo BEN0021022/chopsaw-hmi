@@ -367,14 +367,14 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         for radio, _, _ in self.board_size_radios:
             radio.toggled.connect(self.refresh_teensy_tabs)
 
+        self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.auto_tab, "AUTO")
         self.tabs.addTab(self.full_auto_tab, "FULL AUTO")
-        self.tabs.addTab(self.legacy_tab, "MANUAL / SIM")
         self.tabs.addTab(self.preset_tab, "CUT LISTS")
         self.tabs.addTab(self.dashboard_tab, "STATS")
         self.tabs.addTab(self.speed_tab, "SETTINGS")
         self.tabs.currentChanged.connect(self._on_main_tab_changed)
-        self.tabs.setCurrentWidget(self.auto_tab)
+        self.tabs.setCurrentWidget(self.legacy_tab)
 
         self.log = _MemoryLog(maxlen=500)
         self.manual_pneumatics.state_changed.connect(self.refresh_manual_motion_locks)
@@ -1307,11 +1307,34 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
             )
             self.log.append(f"Applied {name} profile params: speed={spd:.0f}, accel={acc:.0f}")
 
+    def _can_apply_teensy_profile(self, profile, rate, accel):
+        p = self.carriage_tab
+        return (
+            p.ready_link()
+            and not p.local_fault
+            and not p.stopping
+            and not p.armed
+            and not p.pending
+            and not p.profile_pending
+            and p.x.get("FAULT") == "NONE"
+            and p.safety.get("FAULT") == "NONE"
+            and p.safety.get("DOOR_CLOSED") == "1"
+            and p.safety.get("SAW_POSITION") == "UP"
+            and p.x.get("ALARM_RAW") == "1"
+            and p.x.get("REMAINING") == "0"
+            and profile in (1, 2, 3)
+            and 1 <= int(rate) <= 20000
+            and 1 <= int(accel) <= 50000
+        )
+
     def apply_current_profile_params(self):
         name = self.settings_profile_combo.currentData()
         if self.active_controller().key == TEENSY_CARRIAGE:
             profile = TEENSY_PROFILE_MAP[name]
             rate, accel = (widget.value() for widget in self.profile_setting_widgets()[profile])
+            if not self._can_apply_teensy_profile(profile, rate, accel):
+                return False
+            self.carriage_tab.consent.setChecked(True)
             return self.carriage_tab.edit_profile(profile, rate, accel)
         return self.switch_profile(name, True)
 
@@ -1542,7 +1565,7 @@ class MinimalHMI(SimulatorCycleMixin, QMainWindow):
         self.settings_profile_combo.setEnabled(edit)
         profile = TEENSY_PROFILE_MAP[self.settings_profile_combo.currentData()]
         rate, accel = (int(widget.value()) for widget in self.profile_setting_widgets()[profile])
-        self.apply_profile_btn.setEnabled(p.allowed(f"XPROFILE {profile} {rate} {accel}"))
+        self.apply_profile_btn.setEnabled(self._can_apply_teensy_profile(profile, rate, accel))
         selected = p.profile_values[profile]
         note = (
             "Waiting for fresh compatible controller feedback"
