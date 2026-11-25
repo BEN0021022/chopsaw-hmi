@@ -1145,7 +1145,7 @@ class NativeDryRun(QObject):
         if stage == SequenceStage.FINISH_BOARD:
             self.finish_board(s.transition)
             return True
-        if stage == SequenceStage.CLEAR_PROFILE and not p.profile_pending and p.x.get('PROFILE_ID') == '1':
+        if stage == SequenceStage.CLEAR_PROFILE and not p.profile_pending and p.x.get('PROFILE_ID') == '3':
             decision = self.supervision.review('clear_sensor')
             if (
                 not decision.proceeds
@@ -1170,22 +1170,12 @@ class NativeDryRun(QObject):
             s.move_id = int(p.x['MOVE_ID'])
             s.transition(SequenceStage.CLEAR_MOVE)
         elif stage == SequenceStage.CLEAR_MOVE and not p.pending and int(p.x['MOVE_ID']) != s.move_id and p.x.get('REMAINING') == '0':
-            self.owner.send_command('XARM 0')
-            s.transition(SequenceStage.CLEAR_VERIFY)
-        elif stage == SequenceStage.CLEAR_VERIFY and not p.armed:
-            if p.fresh('INPUTS') and p.inputs.get('BOARD_EDGE') == '1':
-                if s.clear_since is None:
-                    s.clear_since = time.monotonic()
-                if time.monotonic() - s.clear_since >= 0.25:
-                    if not self.owner.send_command('XARM 1'):
-                        self.stop('Cannot arm return after clearance')
-                        return True
-                    s.transition(SequenceStage.LOAD_ARM)
-            else:
-                s.clear_since = None
-            if time.monotonic() - s.at > 2:
-                self.stop('Detector did not clear after bounded push; no retry')
+            # Head straight back to Load so the carriage exits the laser beam
+            # before verifying that the board sensor is clear.
+            if not p.armed and not self.owner.send_command('XARM 1'):
+                self.stop('Cannot arm return after cleanup push')
                 return True
+            s.transition(SequenceStage.LOAD_ARM)
         elif stage == SequenceStage.LOAD_ARM and p.armed and p.x.get('JOG_READY') == '1':
             if not p.move_load_to(self.owner.native_load_target()):
                 self.stop('Return-to-load rejected')
@@ -1194,7 +1184,23 @@ class NativeDryRun(QObject):
             s.transition(SequenceStage.LOAD_WAIT)
         elif stage == SequenceStage.LOAD_WAIT and not p.pending and int(p.x['MOVE_ID']) != s.move_id and p.x.get('REMAINING') == '0':
             self.owner.send_command('XARM 0')
-            s.transition(SequenceStage.DONE)
+            if s.verify_clear_after_load:
+                s.clear_since = None
+                s.transition(SequenceStage.CLEAR_VERIFY)
+            else:
+                s.transition(SequenceStage.DONE)
+        elif stage == SequenceStage.CLEAR_VERIFY and not p.armed:
+            if p.fresh('INPUTS') and p.inputs.get('BOARD_EDGE') == '1':
+                if s.clear_since is None:
+                    s.clear_since = time.monotonic()
+                if time.monotonic() - s.clear_since >= 0.25:
+                    s.verify_clear_after_load = False
+                    s.transition(SequenceStage.DONE)
+            else:
+                s.clear_since = None
+            if time.monotonic() - s.at > 3.0:
+                self.stop('Board sensor still blocked after cleanup and return to Load; clear debris and reset.')
+                return True
         elif stage == SequenceStage.DONE and not p.armed:
             if s.next_index >= len(s.cuts) and s.repeat:
                 s.index = s.next_index = 0
@@ -1241,11 +1247,13 @@ class NativeDryRun(QObject):
         if decision.outcome == Outcome.ADAPT:
             s.clear_target = decision.target
             s.clear_plan = decision
-            if not p.select_profile(1):
-                self.stop('Cannot select cleanup Gentle profile')
+            s.verify_clear_after_load = True
+            if not p.select_profile(3):
+                self.stop('Cannot select cleanup Fast profile')
                 return
             next_stage(SequenceStage.CLEAR_PROFILE)
         else:
+            s.verify_clear_after_load = decision.code == 'CARRIAGE_OCCLUDING_SENSOR'
             if not self.owner.send_command('XARM 1'):
                 self.stop('Cannot arm carriage return')
                 return

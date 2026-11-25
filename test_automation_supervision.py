@@ -111,13 +111,25 @@ class Policies(unittest.TestCase):
         c=context(position=20,material=Material(Span(0,20),'estimated',True))
         d=plan_sensor_clearance(c)
         self.assertEqual(d.outcome,Outcome.ADAPT)
-        self.assertAlmostEqual(d.target,10.55)
-        self.assertGreater(d.target,0)
+        self.assertAlmostEqual(d.target,7.0)
+        self.assertGreater(d.target,c.geometry.cut_keepout)
+        # Tight max_clear_push falls back cleanly to sensor - margin (10.55")
+        tight=context(position=20,geometry=geometry(max_clear_push=10),material=Material(Span(0,20),'estimated',True))
+        self.assertAlmostEqual(plan_sensor_clearance(tight).target,10.55)
 
-    def test_no_cleanup_when_clear(self):
+    def test_no_cleanup_when_clear_or_carriage_occluding_sensor(self):
         c=context(position=8,material=Material(Span(0,8),'estimated',True),sensor_clear=True)
         self.assertEqual(plan_sensor_clearance(c).code,'ACQUISITION_ZONE_CLEAR')
         self.assertIsNone(plan_sensor_clearance(c).target)
+        # Board is past the sensor (far=8 < 10.8), while carriage body [8, 14] blocks sensor at 10.8
+        occluded=context(position=8,material=Material(Span(0,8),'estimated',True),sensor_clear=False)
+        d=plan_sensor_clearance(occluded)
+        self.assertTrue(d.proceeds)
+        self.assertEqual(d.code,'CARRIAGE_OCCLUDING_SENSOR')
+        self.assertIsNone(d.target)
+        # If neither board nor carriage overlaps sensor (pos=2, pusher [2,8]), blocked sensor is a real mismatch
+        mismatch=context(position=2,material=Material(Span(0,2),'estimated',True),sensor_clear=False)
+        self.assertEqual(plan_sensor_clearance(mismatch).code,'MATERIAL_SENSOR_DISAGREEMENT')
 
     def test_cleanup_guards_and_no_blind_retry(self):
         c=context(position=20,material=Material(Span(0,20),'estimated',True))

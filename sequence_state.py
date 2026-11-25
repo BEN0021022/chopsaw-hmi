@@ -158,6 +158,7 @@ class SequenceState:
     clear_target: float | None = None
     clear_plan: Decision | None = None
     clear_since: float | None = None
+    verify_clear_after_load: bool = False
 
     def __post_init__(self):
         if not isinstance(self.stage, SequenceStage):

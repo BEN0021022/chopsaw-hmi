@@ -198,8 +198,8 @@ def run(exe):
             assert (w.cut_list,w.current_cut_index,w.sim_next_piece_index)==before
             assert 'XPROFILE 2' in wire.writes and any(c.startswith('XLOAD ') for c in wire.writes)
             assert sum(c=='DCUT' for c in wire.writes)==4
-            assert any(c=='XPROFILE 1' for c in wire.writes), 'Clearance uses Gentle, not return speed'
-            assert any(c.startswith('XMOVE 10250') for c in wire.writes), 'Minimum sensor-zone clearing, not zero/full ejection'
+            assert any(c=='XPROFILE 3' for c in wire.writes), 'Clearance uses Fast profile for light scrap'
+            assert any(c.startswith('XMOVE 7000') for c in wire.writes), 'Bounded 7-inch sensor-zone clearing, not zero/full ejection'
             assert d.supervision.coordinator.material.stock.far<10.5
             assert sum(c=='DTPRESS' or c.startswith('DMANUAL ') for c in wire.writes)==before_trigger_commands
             assert any(c.startswith(('XEDGE ','XACQUIRE ')) and c.split()[2]=='10500' for c in wire.writes), 'Use shared Settings geometry'

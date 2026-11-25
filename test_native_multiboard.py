@@ -64,6 +64,15 @@ def run_case(exe, lengths, needs_cleanup):
                 assert p.x['TRIM_MILLI']=='120'
                 records(wire.exchange('@AUTO_SENSOR 1'))
             acquire()
+            if needs_cleanup:
+                # Simulate real hardware where the carriage body itself blocks the
+                # laser at 7.0" until it pulls back toward Load Position.
+                until(lambda:d.sequence and d.sequence['stage']=='CLEAR_MOVE')
+                records(wire.exchange('@AUTO_SENSOR 0'))
+                records(wire.exchange('@PIN 21 0'))
+                until(lambda:d.sequence and d.sequence['stage']=='LOAD_WAIT')
+                records(wire.exchange('@PIN 21 1'))
+                records(wire.exchange('@AUTO_SENSOR 1'))
             until(lambda:d.waiting_for_board())
             assert d.sequence['stage']=='WAIT_NEW_BOARD',d.message
             expected_index=3 if len(lengths)==5 else 1
@@ -80,7 +89,12 @@ def run_case(exe, lengths, needs_cleanup):
             frozen=list(w.cut_list); w.cut_list.append((99,1,'changed'))
             assert not d.can_begin_auto() and not w.start_auto_cycle()
             w.cut_list=frozen
-            if needs_cleanup: assert any(c.startswith('XMOVE 10550') for c in wire.writes)
+            if needs_cleanup:
+                non_ka = [c for c in wire.writes if c != 'KEEPALIVE']
+                assert any(c.startswith('XMOVE 7000') for c in non_ka), non_ka[-15:]
+                clear_idx = next(i for i, c in enumerate(non_ka) if c.startswith('XMOVE 7000'))
+                assert non_ka[clear_idx - 2:clear_idx + 1] == ['XPROFILE 3', 'XARM 1', 'XMOVE 7000'], non_ka[clear_idx - 3:clear_idx + 3]
+                assert non_ka[clear_idx + 1].startswith('XLOAD '), non_ka[clear_idx:clear_idx + 3]
             acquire()
             until(lambda:d.sequence is None)
             assert d.message.startswith('Cut list complete'),d.message

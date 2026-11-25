@@ -281,6 +281,9 @@ def plan_clamped_cut_return(ctx, next_length, kerf, load_position, clear_after):
                     permitted_clamps=holding.permitted_clamps,target=load_position)
 
 
+CLEAR_SCRAP_TARGET_INCHES = 7.0
+
+
 def plan_sensor_clearance(ctx):
     state=validate_next_action(ctx,'clear_sensor')
     if not state.proceeds: return state
@@ -288,20 +291,32 @@ def plan_sensor_clearance(ctx):
     if not g.verified: return Decision(Outcome.OPERATOR_REQUIRED,'GEOMETRY_REQUIRED','Sensor clearance geometry is not commissioned.')
     if ctx.sensor_clear is None: return Decision(Outcome.BLOCK,'SENSOR_UNKNOWN','Board detector state is unknown.')
     if not m.located: return Decision(Outcome.OPERATOR_REQUIRED,'MATERIAL_UNKNOWN','Remnant position is unknown; reconcile material before returning.')
-    expected_blocked=m.stock.overlaps(g.sensor)
-    if expected_blocked != (not ctx.sensor_clear):
+    stock_blocks=m.stock.overlaps(g.sensor)
+    pusher_blocks=g.pusher(ctx.position).overlaps(g.sensor)
+    if not stock_blocks:
+        if ctx.sensor_clear:
+            return Decision(Outcome.PROCEED,'ACQUISITION_ZONE_CLEAR','Detector zone is clear; downstream material is not assumed gone.')
+        if pusher_blocks:
+            return Decision(Outcome.PROCEED,'CARRIAGE_OCCLUDING_SENSOR','Remnant is past the detector; returning carriage to Load to verify detector clear.')
         return Decision(Outcome.OPERATOR_REQUIRED,'MATERIAL_SENSOR_DISAGREEMENT','Detector and tracked material disagree; do not blindly push or assume empty.')
     if ctx.sensor_clear:
-        return Decision(Outcome.PROCEED,'ACQUISITION_ZONE_CLEAR','Detector zone is clear; downstream material is not assumed gone.')
+        return Decision(Outcome.OPERATOR_REQUIRED,'MATERIAL_SENSOR_DISAGREEMENT','Detector and tracked material disagree; do not blindly push or assume empty.')
     if not m.contact:
         return Decision(Outcome.OPERATOR_REQUIRED,'PUSHER_CONTACT_UNKNOWN','Pusher has withdrawn; remnant contact must be re-established explicitly.')
-    target=ctx.position+(g.sensor.near-g.margin-m.stock.far)
+    sensor_clear_target=ctx.position+(g.sensor.near-g.margin-m.stock.far)
+    safe_min=max(g.physical_min,g.cut_keepout)+g.pusher_front_offset+1/127.12
+    preferred=max(safe_min,min(sensor_clear_target,CLEAR_SCRAP_TARGET_INCHES))
+    if preferred < ctx.position and ctx.position - preferred <= g.max_clear_push:
+        target=preferred
+    else:
+        target=sensor_clear_target
     if (target < g.physical_min or g.pusher(target).near < g.physical_min or
+            g.pusher(target).near <= g.cut_keepout or
             target >= ctx.position or ctx.position-target > g.max_clear_push):
         return Decision(Outcome.OPERATOR_REQUIRED,'CLEARANCE_OUT_OF_RANGE','Required clearing push exceeds commissioned range; clear manually.')
     if not g.automatic_clearance:
         return Decision(Outcome.OPERATOR_REQUIRED,'CLEARANCE_NOT_COMMISSIONED','Bounded sensor-clearing move is planned but automatic clearing is not commissioned.',target=target)
-    return Decision(Outcome.ADAPT,'CLEAR_ACQUISITION_ZONE','Push only to clear the acquisition zone, verify detector clear, then return.',target=target)
+    return Decision(Outcome.ADAPT,'CLEAR_ACQUISITION_ZONE','Push remnant clear of detector, return to Load, then verify detector clear.',target=target)
 
 
 class AutomationCoordinator:

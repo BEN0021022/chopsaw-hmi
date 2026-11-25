@@ -125,7 +125,7 @@ def run(exe):
             w.load_cut_list_lines(['34 a','34 b','34 c']);count=len(wire.writes)
             acquire();until(lambda:d.waiting_for_board())
             assert d.sequence['next_index']==0 and d.progress_index==0
-            assert any(c.startswith('XMOVE 103') for c in wire.writes[count:])
+            assert any(c.startswith('XMOVE 7000') for c in wire.writes[count:])
             strokes=wire.strokes;tick(181000);assert wire.strokes==strokes and d.waiting_for_board()
             output=Path('tmp/ui-intervention');output.mkdir(parents=True,exist_ok=True)
             app.processEvents();w.grab().save(str(output/'repeat-ready.png'))
