@@ -119,6 +119,34 @@ def test_schedule_update_dev_mode():
     print("schedule_update_dev_mode OK")
 
 
+def test_schedule_update_backs_up_current_exe(monkeypatch, tmp_dir):
+    current_exe = tmp_dir / "ChopSawHMI.exe"
+    new_exe = tmp_dir / "downloaded.exe"
+    current_exe.write_bytes(b"old-exe")
+    new_exe.write_bytes(b"new-exe")
+    launched = []
+    had_frozen = hasattr(updater.sys, "frozen")
+    old_frozen = getattr(updater.sys, "frozen", False)
+    updater.sys.frozen = True
+    try:
+        monkeypatch(updater.sys, "executable", str(current_exe))
+        monkeypatch(updater.subprocess, "Popen", lambda *a, **k: launched.append((a, k)))
+        assert updater.schedule_update(new_exe) is True
+    finally:
+        if had_frozen:
+            updater.sys.frozen = old_frozen
+        else:
+            delattr(updater.sys, "frozen")
+    batch = tmp_dir / "_update.bat"
+    assert batch.exists() and len(launched) == 1
+    script = batch.read_text(encoding="utf-8")
+    backup_line = f'copy /Y "{current_exe}" "{tmp_dir / "ChopSawHMI.prev.exe"}" >NUL'
+    swap_line = f'copy /Y "{new_exe}" "{current_exe}" >NUL'
+    assert backup_line in script and swap_line in script
+    assert script.index(backup_line) < script.index(swap_line)
+    print("schedule_update_backs_up_current_exe OK")
+
+
 def test_select_exact_app_assets(monkeypatch):
     monkeypatch(updater, '_current_version', lambda: '1.0.2')
     assets = [

@@ -201,7 +201,8 @@ def download_update(info, progress_cb=None, timeout=60.0, cancel_cb=None):
 def schedule_update(new_exe):
     """
     Write and launch _update.bat beside the running EXE. The batch waits for
-    this process to exit, copies new_exe over the current EXE, and restarts it.
+    this process to exit, saves a rollback copy of the current EXE as
+    '<stem>.prev.exe', copies new_exe over the current EXE, and restarts it.
     Only works in a frozen PyInstaller build; returns False in dev mode or on
     any failure.
     """
@@ -211,6 +212,7 @@ def schedule_update(new_exe):
         current_exe = Path(sys.executable)
         new_exe = Path(new_exe)
         install_dir = current_exe.parent
+        backup_exe = current_exe.with_name(f"{current_exe.stem}.prev{current_exe.suffix}")
         batch = install_dir / "_update.bat"
         pid = os.getpid()
 
@@ -223,6 +225,7 @@ if not errorlevel 1 (
     goto waitloop
 )
 timeout /t 2 /nobreak >NUL
+copy /Y "{current_exe}" "{backup_exe}" >NUL
 copy /Y "{new_exe}" "{current_exe}" >NUL
 set PYINSTALLER_RESET_ENVIRONMENT=1
 set _MEIPASS2=
